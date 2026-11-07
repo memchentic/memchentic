@@ -1,0 +1,40 @@
+# Local development overlay — copy to local.yaml (gitignored).
+# Merged via COMPOSE_FILE=docker-compose.yaml:local.yaml in docker/.env.
+#
+# Adds source bind mounts, uvicorn --reload, and the Vite GUI service.
+
+services:
+  api:
+    command:
+      [
+        "uvicorn",
+        "memchentic.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8080",
+        "--reload",
+        "--reload-dir",
+        "/opt/memchentic/src",
+      ]
+    volumes:
+      - ../api:/opt/memchentic
+      - ../models:/opt/memchentic/models
+      - ../gui/dist:/opt/memchentic/gui/dist:ro
+
+  gui:
+    image: node:22-alpine
+    working_dir: /opt/memchentic
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
+    ports:
+      - "${MEMCHENTIC_GUI_PORT:-15173}:5173"
+    volumes:
+      - ../gui:/opt/memchentic
+      - gui-node-modules:/opt/memchentic/node_modules
+    environment:
+      VITE_API_PROXY: http://api:8080
+    depends_on:
+      - api
+
+volumes:
+  gui-node-modules:

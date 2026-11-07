@@ -1,5 +1,8 @@
 name: memchentic
 
+# Production-shaped stack: images and named volumes only (no source bind mounts).
+# Local bind mounts + Vite GUI live in local.yaml (see COMPOSE_FILE in .env).
+
 services:
   db:
     image: pgvector/pgvector:pg16
@@ -26,10 +29,6 @@ services:
       DATABASE_URL: postgresql+asyncpg://memchentic:memchentic@db:5432/memchentic
       EMBEDDING_MODEL_PATH: /opt/memchentic/models/all-MiniLM-L6-v2
     working_dir: /opt/memchentic
-    volumes:
-      - ../api:/opt/memchentic
-      - ../models:/opt/memchentic/models
-      - ../gui/dist:/opt/memchentic/gui/dist:ro
     depends_on:
       db:
         condition: service_healthy
@@ -39,20 +38,5 @@ services:
       timeout: 5s
       retries: 12
 
-  gui:
-    image: node:22-alpine
-    working_dir: /opt/memchentic
-    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
-    ports:
-      - "${MEMCHENTIC_GUI_PORT:-15173}:5173"
-    volumes:
-      - ../gui:/opt/memchentic
-      - gui-node-modules:/opt/memchentic/node_modules
-    environment:
-      VITE_API_PROXY: http://api:8080
-    depends_on:
-      - api
-
 volumes:
   db-data:
-  gui-node-modules:

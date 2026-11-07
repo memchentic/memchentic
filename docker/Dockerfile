@@ -24,4 +24,4 @@ RUN mkdir -p /opt/memchentic/models /opt/memchentic/gui/dist
 
 EXPOSE 8080
 
-CMD ["uvicorn", "memchentic.main:app", "--host", "0.0.0.0", "--port", "8080", "--reload", "--reload-dir", "/opt/memchentic/src"]
+CMD ["uvicorn", "memchentic.main:app", "--host", "0.0.0.0", "--port", "8080"]

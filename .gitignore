@@ -49,7 +49,8 @@ Thumbs.db
 *.key
 .secrets/
 
-# Docker
+# Docker — local bind-mount overlay (copy from local.yaml.example)
+docker/local.yaml
 docker-compose.override.yml
 
 # Node
@@ -57,4 +58,7 @@ node_modules/
 gui/dist/
 
 # Product docs (local for now; re-track when ready to publish)
-docs/
+# Keep the README logo under docs/assets/ tracked.
+docs/*
+!docs/assets/
+!docs/assets/**

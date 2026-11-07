@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+uv.lock
+
+# ONNX / models (download at build or first run)
+**/*.onnx
+**/tokenizer.json
+**/tokenizer_config.json
+models/
+data/models/
+
+# Local runtime / compose data
+data/
+!data/.gitkeep
+*.db
+*.sqlite*
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Secrets / local operator
+*.pem
+*.key
+.secrets/
+
+# Docker
+docker-compose.override.yml

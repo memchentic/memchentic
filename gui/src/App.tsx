@@ -1,14 +1,18 @@
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useAuth } from "./auth";
 import Layout from "./components/Layout";
 import ApiKeysPage from "./pages/ApiKeysPage";
-import BrowsePage from "./pages/BrowsePage";
 import EntryPage from "./pages/EntryPage";
-import SearchPage from "./pages/SearchPage";
+import MemoriesPage from "./pages/MemoriesPage";
 import SignInPage from "./pages/SignInPage";
 import TeamDetailPage from "./pages/TeamDetailPage";
 import TeamsPage from "./pages/TeamsPage";
 import UsersPage from "./pages/UsersPage";
+
+function SearchRedirect() {
+  const location = useLocation();
+  return <Navigate to={{ pathname: "/", search: location.search }} replace />;
+}
 
 function Private({ children }: { children: React.ReactNode }) {
   const { me, loading } = useAuth();
@@ -35,8 +39,8 @@ export default function App() {
           </Private>
         }
       >
-        <Route index element={<BrowsePage />} />
-        <Route path="search" element={<SearchPage />} />
+        <Route index element={<MemoriesPage />} />
+        <Route path="search" element={<SearchRedirect />} />
         <Route path="entries/:id" element={<EntryPage />} />
         <Route path="teams" element={<TeamsPage />} />
         <Route path="teams/:id" element={<TeamDetailPage />} />

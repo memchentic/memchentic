@@ -3,7 +3,6 @@ import {
   faBook,
   faChevronDown,
   faKey,
-  faMagnifyingGlass,
   faRightFromBracket,
   faUsers,
   faUserGroup,
@@ -13,8 +12,7 @@ import { Link, NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "../auth";
 
 const links = [
-  { to: "/", label: "Browse", icon: faBook, end: true },
-  { to: "/search", label: "Search", icon: faMagnifyingGlass },
+  { to: "/", label: "Memories", icon: faBook, end: true },
   { to: "/teams", label: "Teams", icon: faUserGroup },
   { to: "/users", label: "Users", icon: faUsers },
 ];

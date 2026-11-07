@@ -1,61 +1,138 @@
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faChevronLeft, faChevronRight, faPlus } from "@fortawesome/free-solid-svg-icons";
+import {
+  faChevronLeft,
+  faChevronRight,
+  faMagnifyingGlass,
+  faPlus,
+} from "@fortawesome/free-solid-svg-icons";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { ENTRY_TYPES, ErrorNote, MemoryList, PageHeader, SpaceSelect, type MemoryRow } from "../components/ui";
 
 const PAGE = 25;
 
-export default function BrowsePage() {
+export default function MemoriesPage() {
+  const [params, setParams] = useSearchParams();
+  const q = (params.get("q") ?? "").trim();
+  const [draft, setDraft] = useState(params.get("q") ?? "");
   const [space, setSpace] = useState("");
   const [kind, setKind] = useState("");
   const [offset, setOffset] = useState(0);
   const [rows, setRows] = useState<MemoryRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
+  const searching = q.length > 0;
 
   const load = useCallback(async () => {
-    const params = new URLSearchParams({ limit: String(PAGE), offset: String(offset) });
-    if (space) params.set("space_id", space);
-    if (kind) params.set("kind", kind);
     try {
-      setRows(await api<MemoryRow[]>(`/api/memories?${params}`));
+      if (searching) {
+        const qs = new URLSearchParams({ q, kind: kind || "entry" });
+        if (space) qs.set("space_id", space);
+        setRows(await api<MemoryRow[]>(`/api/memories/search?${qs}`));
+      } else {
+        const listParams = new URLSearchParams({ limit: String(PAGE), offset: String(offset) });
+        if (space) listParams.set("space_id", space);
+        if (kind) listParams.set("kind", kind);
+        setRows(await api<MemoryRow[]>(`/api/memories?${listParams}`));
+      }
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [space, kind, offset]);
+  }, [searching, q, space, kind, offset]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    setDraft(params.get("q") ?? "");
+  }, [params]);
+
+  function submitSearch(e: FormEvent) {
+    e.preventDefault();
+    const next = draft.trim();
+    setOffset(0);
+    if (next) setParams({ q: next });
+    else setParams({});
+  }
+
   return (
     <div>
-      <PageHeader title="Browse">
-        <SpaceSelect value={space} onChange={(v) => { setSpace(v); setOffset(0); }} />
-        <select className="input w-auto" value={kind} onChange={(e) => { setKind(e.target.value); setOffset(0); }}>
+      <PageHeader title="Memories">
+        <SpaceSelect
+          value={space}
+          onChange={(v) => {
+            setSpace(v);
+            setOffset(0);
+          }}
+        />
+        <select
+          className="input w-auto"
+          value={kind}
+          onChange={(e) => {
+            setKind(e.target.value);
+            setOffset(0);
+          }}
+        >
           <option value="">Entries + guides</option>
           <option value="entry">Entries</option>
           <option value="guide">Guides</option>
         </select>
-        <button className="btn" type="button" onClick={() => setShowNew((s) => !s)}>
-          <FontAwesomeIcon icon={faPlus} /> New
-        </button>
+        {!searching && (
+          <button className="btn" type="button" onClick={() => setShowNew((s) => !s)}>
+            <FontAwesomeIcon icon={faPlus} /> New
+          </button>
+        )}
       </PageHeader>
       <div className="page-body">
+        <form className="mb-6 flex flex-wrap gap-2" onSubmit={submitSearch}>
+          <input
+            className="input min-w-64 flex-1"
+            placeholder="Keyword or natural language"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+          />
+          <button className="btn" type="submit">
+            <FontAwesomeIcon icon={faMagnifyingGlass} /> Find
+          </button>
+        </form>
+        {searching && (
+          <p className="mb-4 text-xs text-faint">Hybrid ranking: full-text and vector similarity fused.</p>
+        )}
         <ErrorNote error={error} />
-        {showNew && <NewMemory defaultSpace={space} onCreated={() => { setShowNew(false); void load(); }} />}
-        <MemoryList rows={rows} empty="Nothing here yet." />
-        <div className="mt-6 flex items-center gap-2">
-          <button className="btn" type="button" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE))}>
-            <FontAwesomeIcon icon={faChevronLeft} /> Prev
-          </button>
-          <button className="btn" type="button" disabled={rows.length < PAGE} onClick={() => setOffset(offset + PAGE)}>
-            Next <FontAwesomeIcon icon={faChevronRight} />
-          </button>
-          <span className="text-xs text-faint">from #{offset + 1}</span>
-        </div>
+        {!searching && showNew && (
+          <NewMemory
+            defaultSpace={space}
+            onCreated={() => {
+              setShowNew(false);
+              void load();
+            }}
+          />
+        )}
+        <MemoryList rows={rows} empty={searching ? "No matches." : "Nothing here yet."} />
+        {!searching && (
+          <div className="mt-6 flex items-center gap-2">
+            <button
+              className="btn"
+              type="button"
+              disabled={offset === 0}
+              onClick={() => setOffset(Math.max(0, offset - PAGE))}
+            >
+              <FontAwesomeIcon icon={faChevronLeft} /> Prev
+            </button>
+            <button
+              className="btn"
+              type="button"
+              disabled={rows.length < PAGE}
+              onClick={() => setOffset(offset + PAGE)}
+            >
+              Next <FontAwesomeIcon icon={faChevronRight} />
+            </button>
+            <span className="text-xs text-faint">from #{offset + 1}</span>
+          </div>
+        )}
       </div>
     </div>
   );

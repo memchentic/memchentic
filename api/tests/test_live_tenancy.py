@@ -226,6 +226,47 @@ def test_api_keys_bind_to_user_and_admin_key_is_admin(client: httpx.Client) -> N
         assert _tool(client, ADMIN_KEY, "me", {})["structuredContent"]["is_admin"] is True
 
 
+def test_api_key_cycle_is_own_only_and_admin_can_cycle_others(client: httpx.Client) -> None:
+    """Users list/cycle only themselves; admins can cycle another account."""
+    token_a, user_a, _ = _user(client)
+    token_b, user_b, _ = _user(client)
+    auth_a = {"Authorization": f"Bearer {token_a}"}
+    auth_b = {"Authorization": f"Bearer {token_b}"}
+
+    first = client.post("/api/api-keys/cycle", headers=auth_a, json={}).json()
+    assert first["key"].startswith("mc_")
+    listed = client.get("/api/api-keys", headers=auth_a).json()
+    assert len(listed) == 1
+    assert listed[0]["user_id"] == user_a
+    assert all(row["user_id"] == user_a for row in listed)
+
+    second = client.post("/api/api-keys/cycle", headers=auth_a, json={}).json()
+    assert second["key"] != first["key"]
+    assert client.get("/api/api-keys", headers=auth_a).json()[0]["prefix"] == second["prefix"]
+    # Prior secret no longer authenticates.
+    denied = client.get("/api/me", headers={"Authorization": f"Bearer {first['key']}"})
+    assert denied.status_code in {401, 403}
+
+    assert client.post(
+        "/api/api-keys/cycle", headers=auth_b, json={"user_id": user_a}
+    ).status_code == 403
+
+    if not ADMIN_KEY:
+        return
+    admin = {"Authorization": f"Bearer {ADMIN_KEY}"}
+    admin_list = client.get("/api/api-keys", headers=admin).json()
+    assert user_a in {row["user_id"] for row in admin_list}
+    assert user_b not in {row["user_id"] for row in admin_list}
+    cycled = client.post(
+        "/api/api-keys/cycle", headers=admin, json={"user_id": user_b}
+    ).json()
+    assert cycled["user_id"] == user_b
+    assert client.get("/api/api-keys", headers=auth_b).json()[0]["prefix"] == cycled["prefix"]
+    assert user_b in {
+        row["user_id"] for row in client.get("/api/api-keys", headers=admin).json()
+    }
+
+
 def test_near_duplicate_refused_without_force(client: httpx.Client) -> None:
     """A second identical entry is refused unless ``force`` is set."""
     token, _, _ = _user(client)

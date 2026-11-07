@@ -93,6 +93,13 @@ class ApiKeyIn(BaseModel):
     user_id: str | None = None
 
 
+class ApiKeyCycleIn(BaseModel):
+    """Replace a user's active keys with one new random secret."""
+
+    user_id: str | None = None
+    name: str = "default"
+
+
 class GuideIn(BaseModel):
     title: str
     body: str
@@ -585,7 +592,11 @@ async def list_keys(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> list[dict]:
-    keys = await api_key_service.list_api_keys(session, principal)
+    """List active keys: own for users, all accounts for admins."""
+    try:
+        keys = await api_key_service.list_api_keys(session, principal)
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
     return [
         {
             "id": str(k.id),
@@ -604,15 +615,41 @@ async def create_key(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict:
-    key, raw = await api_key_service.create_api_key(
-        session, principal, name=body.name, user_id=_uid(body.user_id)
-    )
+    try:
+        key, raw = await api_key_service.create_api_key(
+            session, principal, name=body.name, user_id=_uid(body.user_id)
+        )
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
     return {
         "id": str(key.id),
         "name": key.name,
         "prefix": key.key_prefix,
         "key": raw,
         "note": "Copy now; the secret is not shown again.",
+    }
+
+
+@api_router.post("/api-keys/cycle")
+async def cycle_key(
+    body: ApiKeyCycleIn,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    """Revoke the target user's active keys and issue one new random secret."""
+    try:
+        key, raw = await api_key_service.cycle_api_key(
+            session, principal, user_id=_uid(body.user_id), name=body.name
+        )
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    return {
+        "id": str(key.id),
+        "name": key.name,
+        "prefix": key.key_prefix,
+        "user_id": str(key.user_id),
+        "key": raw,
+        "note": "Copy now; the secret is not shown again. Prior keys for this user are revoked.",
     }
 
 

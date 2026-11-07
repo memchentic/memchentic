@@ -1,53 +1,99 @@
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faCopy, faKey, faTrash } from "@fortawesome/free-solid-svg-icons";
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { faCopy, faRotate } from "@fortawesome/free-solid-svg-icons";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { ErrorNote, PageHeader } from "../components/ui";
 
-type Key = { id: string; name: string; prefix: string; created_at: string | null; user_id: string };
+type Key = {
+  id: string;
+  name: string;
+  prefix: string;
+  created_at: string | null;
+  user_id: string;
+};
+
+type DirectoryUser = {
+  id: string;
+  email: string;
+  display_name: string | null;
+};
+
+type CycleResult = { key: string; prefix: string; user_id: string };
 
 export default function ApiKeysPage() {
   const { me } = useAuth();
   const [keys, setKeys] = useState<Key[]>([]);
-  const [name, setName] = useState("");
-  const [secret, setSecret] = useState<string | null>(null);
+  const [users, setUsers] = useState<DirectoryUser[]>([]);
+  const [secret, setSecret] = useState<CycleResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [busyUserId, setBusyUserId] = useState<string | null>(null);
   const [mcpUrl, setMcpUrl] = useState("");
+  const isAdmin = Boolean(me?.is_admin);
 
   const load = useCallback(async () => {
     try {
-      setKeys(await api<Key[]>("/api/api-keys"));
+      const nextKeys = await api<Key[]>("/api/api-keys");
+      setKeys(nextKeys);
+      if (isAdmin) {
+        setUsers(await api<DirectoryUser[]>("/api/users"));
+      }
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, []);
+  }, [isAdmin]);
 
   useEffect(() => {
     void load();
-    api<{ mcp_url: string }>("/api/provider").then((p) => setMcpUrl(p.mcp_url)).catch(() => undefined);
+    api<{ mcp_url: string }>("/api/provider")
+      .then((p) => setMcpUrl(p.mcp_url))
+      .catch(() => undefined);
   }, [load]);
 
-  async function create(e: FormEvent) {
-    e.preventDefault();
-    try {
-      const res = await api<{ key: string }>("/api/api-keys", { method: "POST", body: JSON.stringify({ name }) });
-      setSecret(res.key);
-      setName("");
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+  const keysByUser = useMemo(() => {
+    const map = new Map<string, Key>();
+    for (const key of keys) {
+      const prior = map.get(key.user_id);
+      if (!prior) {
+        map.set(key.user_id, key);
+        continue;
+      }
+      const priorTs = prior.created_at ? Date.parse(prior.created_at) : 0;
+      const nextTs = key.created_at ? Date.parse(key.created_at) : 0;
+      if (nextTs >= priorTs) map.set(key.user_id, key);
     }
-  }
+    return map;
+  }, [keys]);
 
-  async function revoke(id: string) {
-    if (!confirm("Revoke this key? Harnesses using it stop working.")) return;
+  const ownKey = me?.id ? keysByUser.get(me.id) : undefined;
+
+  async function cycle(userId?: string) {
+    const target = userId ?? me?.id ?? undefined;
+    if (!target) {
+      setError("Sign in with a user account to cycle an API key.");
+      return;
+    }
+    const label = userId && userId !== me?.id ? "this user's" : "your";
+    if (
+      !confirm(
+        `Cycle ${label} API key? The current secret stops working and a new one is shown once.`,
+      )
+    ) {
+      return;
+    }
+    setBusyUserId(target);
     try {
-      await api(`/api/api-keys/${id}`, { method: "DELETE" });
+      const res = await api<CycleResult>("/api/api-keys/cycle", {
+        method: "POST",
+        body: JSON.stringify(userId ? { user_id: userId } : {}),
+      });
+      setSecret(res);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyUserId(null);
     }
   }
 
@@ -65,34 +111,28 @@ export default function ApiKeysPage() {
             </>
           )}
         </p>
-        {me?.is_admin && !me.id && (
+        {isAdmin && !me?.id && (
           <p className="mb-4 text-xs text-faint">
-            The env admin uses MEMCHENTIC_ADMIN_API_KEY; per-user keys belong to user accounts.
+            Env admin has no personal key. Cycle keys for directory users below.
           </p>
         )}
         <ErrorNote error={error} />
-        {me?.id && (
-          <form className="mb-6 flex gap-2" onSubmit={create}>
-            <input
-              className="input max-w-sm"
-              placeholder="Key name (e.g. cursor-laptop)"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              required
-            />
-            <button className="btn" type="submit">
-              <FontAwesomeIcon icon={faKey} /> Issue key
-            </button>
-          </form>
-        )}
+
         {secret && (
           <div className="panel mb-6 p-4">
-            <p className="mb-2 text-sm text-muted">Copy this key now. It is not shown again.</p>
+            <p className="mb-2 text-sm text-muted">
+              Copy this key now. It is not shown again
+              {secret.user_id !== me?.id ? " (issued for another user)" : ""}.
+            </p>
             <div className="flex items-center gap-2">
               <code className="flex-1 break-all border border-border bg-surface px-3 py-2 text-sm text-ink">
-                {secret}
+                {secret.key}
               </code>
-              <button className="btn" type="button" onClick={() => void navigator.clipboard?.writeText(secret)}>
+              <button
+                className="btn"
+                type="button"
+                onClick={() => void navigator.clipboard?.writeText(secret.key)}
+              >
                 <FontAwesomeIcon icon={faCopy} /> Copy
               </button>
               <button className="btn" type="button" onClick={() => setSecret(null)}>
@@ -101,23 +141,97 @@ export default function ApiKeysPage() {
             </div>
           </div>
         )}
-        <ul className="list-stack">
-          {keys.map((k) => (
-            <li key={k.id} className="list-row flex items-center justify-between text-sm">
-              <span>
-                <span className="text-ink">{k.name}</span>
-                <code className="ml-3 text-faint">{k.prefix}…</code>
-                <span className="ml-3 text-xs text-faint">
-                  {k.created_at ? new Date(k.created_at).toLocaleString() : ""}
-                </span>
-              </span>
-              <button className="btn" type="button" onClick={() => void revoke(k.id)}>
-                <FontAwesomeIcon icon={faTrash} /> Revoke
+
+        {!isAdmin && (
+          <section className="panel mb-6 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm text-ink">Your API key</p>
+                {ownKey ? (
+                  <p className="mt-1 text-sm text-muted">
+                    <code className="text-ink">{ownKey.prefix}…</code>
+                    <span className="ml-3 text-xs text-faint">
+                      {ownKey.created_at
+                        ? `issued ${new Date(ownKey.created_at).toLocaleString()}`
+                        : ""}
+                    </span>
+                  </p>
+                ) : (
+                  <p className="mt-1 text-sm text-faint">No active key yet.</p>
+                )}
+              </div>
+              <button
+                className="btn"
+                type="button"
+                disabled={!me?.id || busyUserId === me?.id}
+                onClick={() => void cycle()}
+              >
+                <FontAwesomeIcon icon={faRotate} />
+                {ownKey ? "Cycle key" : "Generate key"}
               </button>
-            </li>
-          ))}
-          {!keys.length && <p className="text-sm text-faint">No active keys.</p>}
-        </ul>
+            </div>
+          </section>
+        )}
+
+        {isAdmin && (
+          <section>
+            <h3 className="mb-3 text-sm font-medium text-ink">All users</h3>
+            <div className="panel overflow-x-auto">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>User</th>
+                    <th>Key</th>
+                    <th>Issued</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {users.map((u) => {
+                    const key = keysByUser.get(u.id);
+                    return (
+                      <tr key={u.id}>
+                        <td>
+                          <div className="text-ink">{u.email}</div>
+                          <div className="text-xs text-faint">
+                            {u.display_name ?? "—"}
+                            {u.id === me?.id ? " · you" : ""}
+                          </div>
+                        </td>
+                        <td className="text-muted">
+                          {key ? <code>{key.prefix}…</code> : "—"}
+                        </td>
+                        <td className="text-faint">
+                          {key?.created_at
+                            ? new Date(key.created_at).toLocaleString()
+                            : "—"}
+                        </td>
+                        <td className="text-right">
+                          <button
+                            className="btn"
+                            type="button"
+                            disabled={busyUserId === u.id}
+                            onClick={() => void cycle(u.id)}
+                          >
+                            <FontAwesomeIcon icon={faRotate} />
+                            {key ? "Cycle" : "Generate"}
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {!users.length && (
+                    <tr>
+                      <td className="text-sm text-faint" colSpan={4}>
+                        No users yet.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
       </div>
     </div>
   );

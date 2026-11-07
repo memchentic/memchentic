@@ -5,102 +5,75 @@
 <h1 align="center">memchentic</h1>
 
 <p align="center">
-  Self-hosted multi-user agent memory for Cursor, Claude, and other MCP clients.
+  Memory that sticks with your agents — across sessions, tools, and people.
 </p>
 
-memchentic stores durable agent memory behind a FastAPI + FastMCP server and a
-greyscale-dark React UI. Each user has a personal space; optional teams share
-memory with a managed roster. Search is hybrid keyword + **pgvector** on
-Postgres. Principals come from OAuth Authorize, per-user API keys, or a
-break-glass admin API key — never from client-supplied user ids.
+## Why this exists
 
-Original product. Other memory systems were research context only.
+Coding agents are brilliant in the moment and amnesiac the next. Every new
+chat relearns your stack, your preferences, the bug you already fixed, and the
+decision you already made. Context windows fill with rediscovery. Humans paste
+the same “remember this” notes into prompts. Teams lose what one person taught
+an agent last week.
+
+**memchentic** is the place those lessons live. Agents write durable memory when
+something is verified and worth keeping. They read it back at the start of the
+next job. You keep ownership of the data — self-hosted, multi-user, yours.
+
+## What it does for your workflow
+
+- **Personal continuity** — preferences, architecture calls, failed approaches,
+  and file-scoped notes survive across Cursor, Claude, and other MCP clients.
+- **Less rediscovery** — recall before you re-investigate; capture after you
+  prove something, not before.
+- **Shared team memory** — optional teams so a roster can share what belongs to
+  the product, not just one laptop.
+- **Human oversight** — a web UI to browse, search, and manage keys when you
+  want to see what agents stored.
+- **Identity you control** — sign-in via your IdP or built-in accounts; agents
+  use per-user API keys. Isolation is enforced on the server.
+
+## How it works (briefly)
+
+memchentic is an MCP memory server plus a small React console. Agents talk to
+it over streamable HTTP (`/mcp`). Memories are **entries** (facts worth
+keeping) and **guides** (lessons worth re-teaching). Search mixes keyword and
+vector recall so “that Postgres pool bug” still surfaces when the wording
+changes. Personal space is the default; teams are opt-in shared collections.
+
+The server alone is a toolbox. The **accompanying marketplace plugin** is what
+makes the loop autonomous: always-on recall and capture craft so the agent
+checks memchentic early, saves verified insights without being asked, and
+skips the whole thing when the MCP is disconnected. Install the plugin from
+this repo, connect the MCP, and the posture rides along in Cursor, Claude Code,
+Copilot, and Codex.
 
 ## Requirements
 
-| Need | Notes |
-| --- | --- |
-| Docker Engine + Compose v2 | Used for `db`, `api`, and (locally) `gui` |
-| Git | Clone and pull |
-| Host ports | Defaults: API/MCP `18080`, Vite GUI `15173` (overridable) |
-| Optional ONNX model | `scripts/fetch_minilm_onnx.sh` — hash embedder works without it |
-
-Python 3.12+ and Node 22+ are only required if you run the API or GUI outside
-Compose. The Compose stack builds and runs those inside containers.
+- Docker Engine with Compose v2
+- A host the browser and MCP clients can reach (set URLs in `.env`)
+- Optional: the MiniLM ONNX model for better embeddings (`scripts/fetch_minilm_onnx.sh`)
 
 ## Getting started
 
-1. **Clone and enter the Compose directory**
-
-   ```bash
-   git clone https://github.com/nodadyoushutup/memchentic.git
-   cd memchentic/docker
-   ```
-
-2. **Configure env and the local overlay**
-
-   ```bash
-   cp .env.example .env
-   cp local.yaml.example local.yaml
-   ```
-
-   Edit `.env`: set strong `MEMCHENTIC_ADMIN_PASSWORD` and
-   `MEMCHENTIC_ADMIN_API_KEY` (16+ characters, not placeholders). Set
-   `MEMCHENTIC_BASE_URL` and `CORS_ORIGINS` to the host address your browser
-   and MCP clients use (not loopback).
-
-   `COMPOSE_FILE=docker-compose.yaml:local.yaml` merges the production-shaped
-   base with bind mounts, uvicorn reload, and the Vite GUI. For a prod-only
-   bring-up (API + DB, no source mounts, no GUI service):
-
-   ```bash
-   COMPOSE_FILE=docker-compose.yaml
-   ```
-
-3. **Optional: fetch the embedding model**
-
-   ```bash
-   ../scripts/fetch_minilm_onnx.sh
-   ```
-
-4. **Start the stack**
-
-   ```bash
-   docker compose up -d --build
-   ```
-
-5. **Open the UI and wire MCP**
-
-   - GUI: `http://<host>:15173` (port from `MEMCHENTIC_GUI_PORT`)
-   - API health: `http://<host>:18080/api/health`
-   - MCP (streamable HTTP): `http://<host>:18080/mcp`
-
-   Sign in with the admin credentials from `.env`, or configure an OAuth
-   provider. Issue per-user API keys in the UI for agents.
-
-6. **Verify (optional)**
-
-   ```bash
-   docker compose exec api pytest -q
-   docker compose exec api ruff check src tests
-   ```
-
-After adding the ONNX model, recompute stored vectors:
-
 ```bash
-docker compose exec api python -m memchentic.embeddings.reembed
+git clone https://github.com/nodadyoushutup/memchentic.git
+cd memchentic/docker
+cp .env.example .env
+cp local.yaml.example local.yaml
+# set admin password + API key; set MEMCHENTIC_BASE_URL and CORS_ORIGINS to your host
+docker compose up -d --build
 ```
 
-## Layout
+Open the UI on port `15173` (default), sign in, and create an API key. Point
+your MCP client at `http://<host>:18080/mcp`.
 
-| Path | Owns |
-| --- | --- |
-| `docker/docker-compose.yaml` | Prod-shaped Compose (DB + API, no source mounts) |
-| `docker/local.yaml` | Local overlay (gitignored; copy from `local.yaml.example`) |
-| `api/` | Python API + MCP |
-| `gui/` | React + Tailwind UI |
-| `models/` | Local ONNX embedder files (gitignored) |
-| `marketplace/` | In-repo agent plugin |
+**Plugin:** import this GitHub repo as a marketplace and install **memchentic**,
+then keep the MCP connected so recall/capture runs on its own. Details live
+under `marketplace/`.
+
+Official docs will cover auth providers, tenancy, and ops in depth. This README
+is the front door.
 
 ## License
 

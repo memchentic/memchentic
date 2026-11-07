@@ -22,6 +22,7 @@ htmlcov/
 .tox/
 .nox/
 uv.lock
+requirements-lock.txt
 
 # ONNX / models (download at build or first run)
 **/*.onnx
@@ -50,3 +51,10 @@ Thumbs.db
 
 # Docker
 docker-compose.override.yml
+
+# Node
+node_modules/
+gui/dist/
+
+# Product docs (local for now; re-track when ready to publish)
+docs/

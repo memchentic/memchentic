@@ -1,0 +1,58 @@
+name: memchentic
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: memchentic
+      POSTGRES_PASSWORD: memchentic
+      POSTGRES_DB: memchentic
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U memchentic -d memchentic"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "${MEMCHENTIC_API_PORT:-18080}:8080"
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://memchentic:memchentic@db:5432/memchentic
+      EMBEDDING_MODEL_PATH: /opt/memchentic/models/all-MiniLM-L6-v2
+    working_dir: /opt/memchentic
+    volumes:
+      - ../api:/opt/memchentic
+      - ../models:/opt/memchentic/models
+      - ../gui/dist:/opt/memchentic/gui/dist:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  gui:
+    image: node:22-alpine
+    working_dir: /opt/memchentic
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
+    ports:
+      - "${MEMCHENTIC_GUI_PORT:-15173}:5173"
+    volumes:
+      - ../gui:/opt/memchentic
+      - gui-node-modules:/opt/memchentic/node_modules
+    environment:
+      VITE_API_PROXY: http://api:8080
+    depends_on:
+      - api
+
+volumes:
+  db-data:
+  gui-node-modules:

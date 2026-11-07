@@ -3,30 +3,36 @@
 Self-hosted **multi-user agent memory** for Cursor, Claude, and other MCP
 harnesses. Python + FastMCP. MIT.
 
-Combines the best ideas from [AgentMemory](https://github.com/rohitg00/agentmemory)
-(coding-agent UX) and [Memlord](https://github.com/MyrikLD/memlord) (workspaces,
-hybrid search, OAuth-shaped remote MCP) — without depending on either.
+Original product. Other memory systems were research context only.
 
 ## Status
 
-Planning / design. Implementation not started.
+Working Compose stack (db, api, gui). Run with
+`docker compose -f docker/docker-compose.yaml up -d --build`.
+API and MCP on `MEMCHENTIC_API_PORT` (default 18080, MCP at `/mcp`); GUI on
+`MEMCHENTIC_GUI_PORT` (default 15173). Fetch the embedding model with
+`scripts/fetch_minilm_onnx.sh`; re-embed with
+`docker compose ... exec api python -m memchentic.embeddings.reembed`.
 
 ## Docs
 
 | Doc | Purpose |
 | --- | --- |
-| [docs/DECISIONS.md](docs/DECISIONS.md) | Locked product decisions |
-| [docs/VISION.md](docs/VISION.md) | Goals and non-goals |
+| [docs/DECISIONS.md](docs/DECISIONS.md) | Locked decisions |
+| [docs/VISION.md](docs/VISION.md) | Goals / non-goals |
 | [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) | Isolation, auth, platform |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System sketch |
-| [docs/AUTH.md](docs/AUTH.md) | OAuth providers + env contract |
-| [docs/TOOLS.md](docs/TOOLS.md) | MCP tool suite (v1 / later) |
-| [docs/COMPETITIVE.md](docs/COMPETITIVE.md) | What we steal vs skip |
-| [docs/DEV.md](docs/DEV.md) | Local Docker Compose workflow |
+| [docs/AUTH.md](docs/AUTH.md) | OAuth + internal email/password |
+| [docs/TENANCY.md](docs/TENANCY.md) | Personal + teams |
+| [docs/GUI.md](docs/GUI.md) | React / Tailwind / dark UI |
+| [docs/EMBEDDINGS.md](docs/EMBEDDINGS.md) | What vectors are for |
+| [docs/TOOLS.md](docs/TOOLS.md) | MCP tools |
+| [docs/COMPETITIVE.md](docs/COMPETITIVE.md) | Research notes |
+| [docs/DEV.md](docs/DEV.md) | Compose bind-mount workflow |
 
-## Quick intent
+## Intent
 
-- Hard per-user isolation + optional shared workspaces
-- MCP streamable HTTP with **Authorize** (pluggable OIDC + optional built-in IdP)
-- Hybrid keyword + vector recall (DB choice still open — see DEV / upcoming DB talk)
-- Local Docker Compose with code bind-mount for fast iteration
+- Personal memories + optional shared teams (creator manages roster; env admin can do all)
+- MCP Authorize + per-user API keys + `MEMCHENTIC_ADMIN_API_KEY`
+- Hybrid keyword + **pgvector** on Postgres
+- Full greyscale-dark React UI (browse/search) with Tailwind + Font Awesome

@@ -1,0 +1,52 @@
+---
+description: >-
+  memchentic MCP tool routing by job — use when choosing beyond default
+  guide_find / find / remember / guide_write, or when the user asks about
+  spaces, browse, relocate, overlap, or provenance.
+alwaysApply: false
+---
+
+# memchentic Tool Routing
+
+Gate: if memchentic is not connected/ready, skip all memchentic tools.
+
+Prefer the smallest tool that answers the question. Default coding turns stay
+on recall + capture tools only.
+
+## Everyday (default rules already cover)
+
+| Job | Tool |
+| --- | --- |
+| Reusable guides before approach | `guide_find` |
+| Hybrid search → digests | `find` |
+| Full body | `open` |
+| Path-scoped digests | `about_path` |
+| Save durable entry | `remember` |
+| Save / strengthen guide | `guide_write` |
+| Patch entry | `revise` |
+
+## Situational
+
+| Job | Tool |
+| --- | --- |
+| Who am I / spaces | `me`, `space_list`, `space_show` |
+| Create a team | `space_create` (user principal; not admin API key) |
+| Paginated list | `browse` |
+| Time window | `since` |
+| Tag filter | `by_tag` |
+| Move entry | `relocate` |
+| Delete | `forget` |
+| Provenance | `trace` |
+| Near-dups / expiry hygiene | `overlap_report` |
+
+## Entry types (closed v1)
+
+`fact` · `preference` · `decision` · `instruction` · `feedback` · `insight` ·
+`note`
+
+## Explicitly not in v1
+
+Multi-agent queues/leases/meshes, vision search, server-side “reflect the
+whole graph,” third-party note-app bridges, and ops diagnose/heal packs.
+Grow the **memchentic** surface later when there is a real need — do not
+invent foreign tool names.

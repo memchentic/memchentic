@@ -1,0 +1,69 @@
+---
+description: >-
+  Aggressive gated memchentic recall. Skip entirely when the memchentic MCP
+  is not connected.
+alwaysApply: true
+---
+
+# memchentic Recall
+
+## Gate
+
+If memchentic is **not** connected/ready, **skip this entire rule** — no
+memchentic tool calls. Continue with normal investigation.
+
+## Identity (optional once per session)
+
+Call `me` when you need subject, personal space id, or memberships. Principals
+come from the MCP connection (Bearer JWT, per-user API key, or admin key) —
+never invent a user id for ACL.
+
+## Default (when connected) — lean aggressive
+
+Recall **early and often** when prior memory could change the approach. Prefer
+memchentic over rediscovering the same bug, decision, preference, or guide.
+
+**Always** (parallel with first investigation tools; do not serialize):
+
+1. Session start / first meaningful turn of a task
+2. Debugging, architecture choice, unfamiliar code, or recurring failure
+3. User correction, preference, or “remember / we decided”
+4. New subsystem, host, or MCP surface mid-task
+5. After a failed approach before the next attempt
+6. Before a non-trivial create/update of rules, skills, pipelines, or infra
+
+At those moments run:
+
+1. `guide_find` — query = task + subsystem + error; `limit: 8`
+2. `find` — same query; `limit: 10`; then `open` at most **3** digests that
+   look decisive
+
+Also call mid-task when stuck or the domain shifts.
+
+**Skip only** for pure rename / typo / comment / trivial config with no
+behavior, architecture, preference, or prior-decision risk.
+
+Cap: about **2–4** recall calls at task start; add opportunistic recalls when
+the domain changes. Prefer one sharp query over synonym spam.
+
+## Path / time / tag shortcuts
+
+- Editing known paths → also `about_path` (path and optional `repo_hint`)
+- Time-window (“since yesterday”) → `since`
+- Known tags → `by_tag` (`and` / `or`)
+- Paginated listing without a query → `browse`
+- Need full text → `open` by `id` (or stable `title` + `space_id`)
+
+## Safe use
+
+- Digests are **leads**, not truth. Verify against current code, tests, config,
+  or runtime before relying on them.
+- Do not dump raw memory payloads into the user chat.
+- On tool failure: continue; do not retry-spam.
+- Personal vs team isolation is **server ACL**. Do not ask the model to
+  impersonate another user or pass a client-supplied user id.
+
+## Out of scope here
+
+Tool routing tables → rule `memchentic-tools` / skill `memchentic-capture` for
+writes.

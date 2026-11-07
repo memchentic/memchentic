@@ -1,0 +1,71 @@
+---
+description: >-
+  Gated memchentic capture: remember entries and guide_write after verified
+  insights. Skip entirely when the memchentic MCP is not connected. Never
+  store secrets.
+alwaysApply: true
+---
+
+# memchentic Capture
+
+## Gate
+
+If memchentic is **not** connected/ready, **skip this entire rule** — no
+memchentic writes. Complete the task normally.
+
+## Default (when connected) — lean aggressive
+
+- Save **after verification**, autonomously — do not wait for the user.
+- Cap: usually **1–3** writes per turn when several distinct insights landed.
+  Prefer strong entries over noise.
+- Bias toward saving anything you would otherwise re-discover next session.
+  Skip only when the turn taught nothing durable.
+
+## Must save (after verification)
+
+- Non-obvious bug: root cause + fix
+- Architecture / decision with rationale and paths
+- Failed approach + the condition that made it fail
+- Stable user preference that affects future work
+- Workflow that took investigation to rediscover
+- Host / MCP / env quirk that is not obvious from code alone
+- User correction that should stick across sessions
+- Reusable “when X, do Y / avoid Z” guidance
+
+Save in the same turn the insight is verified, or at final handoff —
+whichever comes first. For long investigations, save the durable breakthrough
+when established; do not save every intermediate step.
+
+## Which tool
+
+| Kind | Tool | Notes |
+| --- | --- | --- |
+| Durable record | `remember` | `type`: `fact` \| `preference` \| `decision` \| `instruction` \| `feedback` \| `insight` \| `note` |
+| Reusable advice | `guide_write` | Duplicate content **strengthens confidence** |
+| Patch existing | `revise` | Title / body / type / tags / expiry |
+| Move space | `relocate` | Only into a space the principal can write |
+| Delete | `forget` | Only what this principal can write |
+
+Omit `space_id` → write to **personal** (user principal). If the connection is
+an **admin API key**, there is no personal default — pass `space_id`
+explicitly (admin cannot `space_create`). Prefer a per-user API key or JWT
+for normal agent sessions.
+
+Use `path_hint` / `repo_hint` when the insight is path- or repo-scoped so
+`about_path` can find it later. Near-duplicates are refused unless `force`.
+
+## Refuse
+
+- No transient status, todos, raw logs, guesses, generic programming
+  knowledge, code-obvious facts, chat dumps, or one-shot noise.
+- **Never** store secrets, credentials, tokens, private personal data, or
+  unredacted production payloads.
+- **Never** invent another user’s identity or pass a client-supplied user id
+  for ACL. Server principals only.
+- Do not paste secret values the user put in chat into `remember` /
+  `guide_write`.
+
+## Hygiene
+
+When overlap is plausible, call `overlap_report` (read-only), then merge via
+`revise` / `forget` — never auto-delete.

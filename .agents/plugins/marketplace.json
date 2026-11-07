@@ -1,0 +1,22 @@
+{
+  "name": "memchentic",
+  "interface": {
+    "displayName": "memchentic"
+  },
+  "plugins": [
+    {
+      "name": "memchentic",
+      "description": "memchentic MCP craft: gated recall/capture with personal+team spaces, entries vs guides, hybrid find. Pair with public global posture plugins.",
+      "version": "0.1.1",
+      "source": {
+        "source": "local",
+        "path": "./marketplace/plugins/memchentic"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

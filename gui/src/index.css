@@ -1,0 +1,567 @@
+@import "tailwindcss";
+
+/*
+ * Greyscale dark — structural kinship with Archentic framework dark
+ * (framework/runtimes/gui/src/main.css + auth.css), own product chrome.
+ *
+ * Neutrals (same ladder as Archentic dark):
+ *   oklch(0.145 0 0)  app / recessed
+ *   oklch(0.205 0 0)  raised / button rest / active-nav text
+ *   oklch(0.269 0 0)  border / hover / muted fill
+ *   oklch(0.439 0 0)  focus / strong border
+ *   oklch(0.708 0 0)  muted text
+ *   oklch(0.985 0 0)  ink
+ *
+ * Layout: flat full-bleed; panels square + hairline; only controls round.
+ * Primary actions are charcoal raised buttons — not inverted white plates.
+ * Inverted ink fill is reserved for active nav pills (Archentic nav-active).
+ */
+@theme {
+  --color-surface: oklch(0.145 0 0);
+  --color-surface-2: oklch(0.205 0 0);
+  --color-surface-3: oklch(0.269 0 0);
+  --color-border: oklch(0.269 0 0);
+  --color-border-strong: oklch(0.439 0 0);
+  --color-ink: oklch(0.985 0 0);
+  --color-muted: oklch(0.708 0 0);
+  --color-faint: oklch(0.55 0 0);
+  --color-accent: oklch(0.985 0 0);
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.625rem;
+  --font-sans:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  --font-display:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  --shadow-raised: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+}
+
+:root {
+  color-scheme: dark;
+  --control-height: 2.25rem;
+  --content-pad: 0.75rem;
+  --content-pad-tight: 0.5rem;
+  --border-width: 1px;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  scrollbar-color: var(--color-border) transparent;
+  scrollbar-width: thin;
+}
+
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-border-strong);
+  outline-offset: 2px;
+}
+
+/* —— shell —— */
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--color-surface);
+  color: var(--color-ink);
+}
+
+.shell-nav {
+  position: relative;
+  z-index: 40;
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  min-height: 2.75rem;
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border: 0;
+  border-bottom: var(--border-width) solid var(--color-border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--color-ink);
+  box-shadow: none;
+}
+
+.shell-brand {
+  display: inline-flex;
+  min-height: var(--control-height);
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--color-ink);
+  text-decoration: none;
+}
+
+.shell-brand-mark {
+  display: block;
+  width: 1.75rem;
+  height: 1.75rem;
+  flex-shrink: 0;
+  color: var(--color-ink);
+}
+
+.shell-brand-wordmark {
+  border-left: var(--border-width) solid
+    color-mix(in oklab, currentColor 25%, transparent);
+  padding-left: 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.nav-primary {
+  display: flex;
+  min-width: 0;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.125rem;
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+.nav-link {
+  display: inline-flex;
+  min-height: var(--control-height);
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: var(--radius-sm);
+  border: var(--border-width) solid transparent;
+  background: transparent;
+  padding: 0.375rem 0.75rem;
+  color: var(--color-muted);
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-decoration: none;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease;
+}
+
+.nav-link:hover {
+  background: var(--color-surface-3);
+  color: var(--color-ink);
+}
+
+.nav-link-active {
+  background: var(--color-ink);
+  color: var(--color-surface-2);
+}
+
+.nav-link-active:hover {
+  background: var(--color-ink);
+  color: var(--color-surface-2);
+}
+
+.nav-actions {
+  display: flex;
+  margin-left: auto;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.nav-control {
+  display: inline-flex;
+  min-height: var(--control-height);
+  align-items: center;
+  gap: 0.5rem;
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  padding: 0.375rem 0.75rem;
+  color: var(--color-ink);
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: background-color 160ms ease;
+}
+
+.nav-control:hover {
+  background: var(--color-surface-3);
+}
+
+.user-menu {
+  position: relative;
+}
+
+.user-menu-trigger {
+  max-width: 16rem;
+}
+
+.user-menu-label {
+  min-width: 0;
+}
+
+.user-menu-chevron {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  opacity: 0.7;
+  transition: transform 160ms ease;
+}
+
+.user-menu-chevron-open {
+  transform: rotate(180deg);
+}
+
+.user-menu-panel {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  right: 0;
+  z-index: 50;
+  display: flex;
+  min-width: 11rem;
+  flex-direction: column;
+  gap: 0.125rem;
+  padding: 0.35rem;
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  box-shadow: 0 0.5rem 1.25rem color-mix(in oklab, black 35%, transparent);
+}
+
+.user-menu-item {
+  display: inline-flex;
+  width: 100%;
+  min-height: var(--control-height);
+  align-items: center;
+  gap: 0.5rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  padding: 0.375rem 0.75rem;
+  color: var(--color-ink);
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color 160ms ease;
+}
+
+.user-menu-item:hover {
+  background: var(--color-surface-3);
+}
+
+.shell-main {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.page {
+  width: 100%;
+  max-width: 90rem;
+  margin-inline: auto;
+  padding: 0;
+  background: var(--color-surface);
+  color: var(--color-ink);
+}
+
+.page-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--content-pad);
+  min-height: calc(var(--control-height) + 2 * var(--content-pad-tight));
+  padding: var(--content-pad-tight) var(--content-pad);
+  border: 0;
+  border-bottom: var(--border-width) solid var(--color-border);
+  background: transparent;
+}
+
+.page-header-title {
+  margin: 0;
+  overflow: hidden;
+  color: var(--color-ink);
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: -0.0125em;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.page-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--content-pad-tight);
+}
+
+.page-body {
+  padding: var(--content-pad);
+}
+
+/* —— controls —— */
+.btn {
+  display: inline-flex;
+  min-height: var(--control-height);
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-2);
+  padding: 0.5rem 1rem;
+  color: var(--color-ink);
+  font-size: 0.875rem;
+  font-weight: 600;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.btn:hover {
+  background: var(--color-surface-3);
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
+.btn-primary {
+  /* Same raised charcoal as Archentic fw-button — weight carries hierarchy. */
+  font-weight: 600;
+}
+
+.input {
+  width: 100%;
+  min-height: var(--control-height);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  padding: 0.5rem 0.9rem;
+  color: var(--color-ink);
+  font-size: 1rem;
+  font-weight: 400;
+  outline: none;
+}
+
+.input:focus {
+  border-color: var(--color-border-strong);
+}
+
+textarea.input {
+  min-height: 7rem;
+  padding-top: 0.65rem;
+  padding-bottom: 0.65rem;
+}
+
+select.input,
+select.input option,
+select.input optgroup {
+  background-color: var(--color-surface);
+  color: var(--color-ink);
+}
+
+/* —— surfaces / lists / tables —— */
+.card-panel,
+.panel {
+  border: var(--border-width) solid var(--color-border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--color-ink);
+}
+
+.list-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.25rem 0;
+}
+
+.list-row {
+  display: block;
+  border-radius: var(--radius-md);
+  background: transparent;
+  padding: 0.75rem 1rem;
+  color: var(--color-ink);
+  text-decoration: none;
+  transition: background-color 160ms ease;
+}
+
+.list-row:hover {
+  background: var(--color-surface-3);
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 0.875rem;
+}
+
+.data-table thead {
+  border-bottom: var(--border-width) solid var(--color-border);
+  color: var(--color-faint);
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.data-table th,
+.data-table td {
+  padding: 0.75rem 1rem;
+}
+
+.data-table tbody tr {
+  border-bottom: var(--border-width) solid var(--color-border);
+  transition: background-color 160ms ease;
+}
+
+.data-table tbody tr:last-child {
+  border-bottom: 0;
+}
+
+.data-table tbody tr:hover {
+  background: var(--color-surface-3);
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: 999px;
+  background: var(--color-surface-3);
+  padding: 0.1rem 0.55rem;
+  color: var(--color-muted);
+  font-size: 0.75rem;
+}
+
+.flash-error {
+  border: var(--border-width) solid
+    color-mix(in oklab, oklch(0.72 0.1 25) 45%, var(--color-border));
+  background: color-mix(in oklab, oklch(0.72 0.1 25) 18%, var(--color-surface));
+  padding: 0.85rem 1rem;
+  color: var(--color-ink);
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+/* —— auth (Archentic auth-login-* density) —— */
+.auth-shell {
+  display: grid;
+  min-height: 100%;
+  min-height: 100dvh;
+  place-items: center;
+  padding: max(1rem, env(safe-area-inset-top, 0px))
+    max(1rem, env(safe-area-inset-right, 0px))
+    max(1rem, env(safe-area-inset-bottom, 0px))
+    max(1rem, env(safe-area-inset-left, 0px));
+  background: var(--color-surface);
+}
+
+.auth-card {
+  display: grid;
+  width: min(100%, 27rem);
+  gap: 1.25rem;
+  padding: clamp(1.25rem, 3.5vw, 2rem);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: var(--shadow-raised);
+}
+
+.auth-header {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.auth-header h1 {
+  margin: 0;
+  font-size: clamp(1.75rem, 6vw, 2.5rem);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+}
+
+.auth-header p {
+  margin: 0;
+  max-width: 36rem;
+  color: var(--color-muted);
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.auth-form {
+  display: grid;
+  gap: 1rem;
+}
+
+.auth-field {
+  display: grid;
+  gap: 0.45rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--color-muted);
+}
+
+.auth-switch {
+  margin: 0.35rem 0 0;
+  text-align: center;
+  color: var(--color-muted);
+  font-size: 0.875rem;
+}
+
+.auth-switch-action {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-ink);
+  font: inherit;
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+  cursor: pointer;
+}
+
+.auth-meta {
+  border-top: var(--border-width) solid var(--color-border);
+  padding-top: 1rem;
+  color: var(--color-faint);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.centered-panel {
+  display: flex;
+  min-height: 100%;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  background: var(--color-surface);
+}
+
+.centered-panel > section {
+  width: min(100%, 42rem);
+  padding: 2rem;
+  border: var(--border-width) solid var(--color-border);
+  color: var(--color-muted);
+}

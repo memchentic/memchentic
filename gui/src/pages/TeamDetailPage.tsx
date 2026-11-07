@@ -146,7 +146,11 @@ export default function TeamDetailPage() {
               </thead>
               <tbody>
                 {team.members.map((m) => (
-                  <tr key={m.user_id}>
+                  <tr
+                    key={m.user_id}
+                    className="cursor-pointer"
+                    onClick={() => navigate(`/users/${m.user_id}`)}
+                  >
                     <td className="text-ink">
                       {m.display_name || m.email || m.user_id}
                       {m.user_id === team.created_by && (
@@ -156,7 +160,14 @@ export default function TeamDetailPage() {
                     <td className="text-muted">{m.email ?? "—"}</td>
                     <td className="text-right">
                       {canManage && m.user_id !== team.created_by && (
-                        <button className="btn" type="button" onClick={() => void remove(m.user_id)}>
+                        <button
+                          className="btn"
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void remove(m.user_id);
+                          }}
+                        >
                           <FontAwesomeIcon icon={faUserMinus} /> Remove
                         </button>
                       )}

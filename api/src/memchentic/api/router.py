@@ -21,8 +21,10 @@ from memchentic.auth.sessions import (
 from memchentic.auth.tokens import ACCESS_TOKEN_SECONDS, issue_access_token
 from memchentic.auth.users import (
     authenticate_internal,
+    get_user,
     get_user_by_email,
     list_users,
+    providers_for,
     register_internal_user,
 )
 from memchentic.deps import db_session, get_principal
@@ -319,9 +321,38 @@ async def users(
             "display_name": u.display_name,
         }
         if principal.is_admin:
-            row["provider"] = u.provider
+            row["providers"] = providers_for(u)
             row["created_at"] = u.created_at.isoformat() if u.created_at else None
         out.append(row)
+    return out
+
+
+@api_router.get("/users/{user_id}")
+async def show_user(
+    user_id: str,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    """Directory detail plus teams the caller is allowed to know about."""
+    try:
+        uid = uuid.UUID(user_id)
+    except ValueError as exc:
+        raise HTTPException(404, "Not found") from exc
+    user = await get_user(session, uid)
+    if not user:
+        raise HTTPException(404, "Not found")
+    teams = await space_service.list_visible_teams_for_user(session, principal, uid)
+    out: dict[str, Any] = {
+        "id": str(user.id),
+        "email": user.email,
+        "display_name": user.display_name,
+        "teams": [
+            {"id": str(s.id), "name": s.name, "kind": s.kind.value} for s in teams
+        ],
+    }
+    if principal.is_admin:
+        out["providers"] = providers_for(user)
+        out["created_at"] = user.created_at.isoformat() if user.created_at else None
     return out
 
 

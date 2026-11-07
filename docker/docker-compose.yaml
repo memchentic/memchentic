@@ -1,24 +1,26 @@
 name: memchentic
 
 # Production-shaped stack: images and named volumes only (no source bind mounts).
-# Local bind mounts + Vite GUI live in local.yaml (see COMPOSE_FILE in .env).
+# Project name: memchentic (Compose `name:`).
+# Services: application (FastAPI + FastMCP + React SPA) + postgres.
+# Local bind mounts live in local.yaml (see COMPOSE_FILE in .env).
 
 services:
-  db:
+  postgres:
     image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: memchentic
       POSTGRES_PASSWORD: memchentic
       POSTGRES_DB: memchentic
     volumes:
-      - db-data:/var/lib/postgresql/data
+      - postgres-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U memchentic -d memchentic"]
       interval: 5s
       timeout: 5s
       retries: 10
 
-  api:
+  application:
     build:
       context: ..
       dockerfile: docker/Dockerfile
@@ -26,11 +28,11 @@ services:
       - "${MEMCHENTIC_API_PORT:-18080}:8080"
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://memchentic:memchentic@db:5432/memchentic
-      EMBEDDING_MODEL_PATH: /opt/memchentic/models/all-MiniLM-L6-v2
+      # EMBEDDING_MODEL_PATH comes from image ENV / .env (baked MiniLM by default).
+      DATABASE_URL: postgresql+asyncpg://memchentic:memchentic@postgres:5432/memchentic
     working_dir: /opt/memchentic
     depends_on:
-      db:
+      postgres:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/api/health || exit 1"]
@@ -39,4 +41,6 @@ services:
       retries: 12
 
 volumes:
-  db-data:
+  postgres-data:
+    # Keep the pre-rename volume so local data survives the service rename.
+    name: memchentic_db-data

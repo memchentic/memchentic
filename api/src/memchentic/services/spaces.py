@@ -6,7 +6,7 @@ from typing import Literal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import aliased, selectinload
 
 from memchentic.auth.principal import Principal
 from memchentic.models.entities import Space, SpaceKind, SpaceMember, User
@@ -97,6 +97,53 @@ async def show_space(
     if principal.user_id not in member_ids:
         return None
     return space
+
+
+async def list_visible_teams_for_user(
+    session: AsyncSession, principal: Principal, target_user_id: uuid.UUID
+) -> list[Space]:
+    """List unarchived teams that include ``target_user_id`` and the caller may see.
+
+    Admins see every team the target belongs to. Other principals only see teams
+    where both they and the target are members. Personal spaces are excluded.
+
+    Args:
+        session: Database session.
+        principal: Authenticated caller (never a client-supplied identity).
+        target_user_id: Directory user whose memberships to summarize.
+
+    Returns:
+        Team spaces ordered by name.
+    """
+    if principal.is_admin:
+        result = await session.execute(
+            select(Space)
+            .join(SpaceMember, SpaceMember.space_id == Space.id)
+            .where(
+                SpaceMember.user_id == target_user_id,
+                Space.kind == SpaceKind.team,
+                Space.archived_at.is_(None),
+            )
+            .order_by(Space.name.asc())
+        )
+        return list(result.scalars().unique())
+    if not principal.user_id:
+        return []
+    target_m = aliased(SpaceMember)
+    caller_m = aliased(SpaceMember)
+    result = await session.execute(
+        select(Space)
+        .join(target_m, target_m.space_id == Space.id)
+        .join(caller_m, caller_m.space_id == Space.id)
+        .where(
+            target_m.user_id == target_user_id,
+            caller_m.user_id == principal.user_id,
+            Space.kind == SpaceKind.team,
+            Space.archived_at.is_(None),
+        )
+        .order_by(Space.name.asc())
+    )
+    return list(result.scalars().unique())
 
 
 def can_manage_team(space: Space, principal: Principal) -> bool:

@@ -52,7 +52,9 @@ Copilot, and Codex.
 
 - Docker Engine with Compose v2
 - A host the browser and MCP clients can reach (set URLs in `.env`)
-- Optional: the MiniLM ONNX model for better embeddings (`scripts/fetch_minilm_onnx.sh`)
+- Embeddings: MiniLM ONNX is baked into the application image; override with
+  `EMBEDDING_MODEL_PATH`. For the local compose overlay (host `models/` mount),
+  run `scripts/fetch_minilm_onnx.sh` once so the bind mount is not empty.
 
 ## Getting started
 
@@ -65,7 +67,7 @@ cp local.yaml.example local.yaml
 docker compose up -d --build
 ```
 
-Open the UI on port `15173` (default), sign in, and create an API key. Point
+Open the UI on port `18080` (default), sign in, and create an API key. Point
 your MCP client at `http://<host>:18080/mcp`.
 
 **Plugin:** import this GitHub repo as a marketplace and install **memchentic**,

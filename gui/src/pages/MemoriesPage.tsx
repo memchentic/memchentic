@@ -4,6 +4,7 @@ import {
   faChevronRight,
   faMagnifyingGlass,
   faPlus,
+  faXmark,
 } from "@fortawesome/free-solid-svg-icons";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -58,50 +59,80 @@ export default function MemoriesPage() {
     else setParams({});
   }
 
+  function clearSearch() {
+    setDraft("");
+    setOffset(0);
+    setParams({});
+  }
+
+  const rangeStart = searching ? 1 : offset + 1;
+  const rangeEnd = searching ? rows.length : offset + rows.length;
+
   return (
     <div>
       <PageHeader title="Memories">
-        <SpaceSelect
-          value={space}
-          onChange={(v) => {
-            setSpace(v);
-            setOffset(0);
-          }}
-        />
-        <select
-          className="input w-auto"
-          value={kind}
-          onChange={(e) => {
-            setKind(e.target.value);
-            setOffset(0);
-          }}
-        >
-          <option value="">Entries + guides</option>
-          <option value="entry">Entries</option>
-          <option value="guide">Guides</option>
-        </select>
         {!searching && (
-          <button className="btn" type="button" onClick={() => setShowNew((s) => !s)}>
-            <FontAwesomeIcon icon={faPlus} /> New
+          <button
+            className={`btn${showNew ? " btn-active" : ""}`}
+            type="button"
+            onClick={() => setShowNew((s) => !s)}
+          >
+            <FontAwesomeIcon icon={showNew ? faXmark : faPlus} />
+            {showNew ? "Cancel" : "New"}
           </button>
         )}
       </PageHeader>
       <div className="page-body">
-        <form className="mb-6 flex flex-wrap gap-2" onSubmit={submitSearch}>
-          <input
-            className="input min-w-64 flex-1"
-            placeholder="Keyword or natural language"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-          />
+        <form className="toolbar" onSubmit={submitSearch}>
+          <div className="toolbar-search">
+            <FontAwesomeIcon icon={faMagnifyingGlass} className="toolbar-search-icon" />
+            <input
+              className="input"
+              placeholder="Search memories"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              aria-label="Search memories"
+            />
+          </div>
           <button className="btn" type="submit">
-            <FontAwesomeIcon icon={faMagnifyingGlass} /> Find
+            Find
           </button>
+          {searching && (
+            <button className="btn" type="button" onClick={clearSearch}>
+              Clear
+            </button>
+          )}
+          <div className="toolbar-divider" aria-hidden="true" />
+          <SpaceSelect
+            value={space}
+            onChange={(v) => {
+              setSpace(v);
+              setOffset(0);
+            }}
+          />
+          <select
+            className="input w-auto"
+            value={kind}
+            onChange={(e) => {
+              setKind(e.target.value);
+              setOffset(0);
+            }}
+            aria-label="Memory kind"
+          >
+            <option value="">Entries + guides</option>
+            <option value="entry">Entries</option>
+            <option value="guide">Guides</option>
+          </select>
         </form>
+
         {searching && (
-          <p className="mb-4 text-xs text-faint">Hybrid ranking: full-text and vector similarity fused.</p>
+          <p className="mb-4 text-xs text-faint">
+            Showing hybrid matches for “{q}” — full-text and vector similarity fused.
+          </p>
         )}
+
         <ErrorNote error={error} />
+
         {!searching && showNew && (
           <NewMemory
             defaultSpace={space}
@@ -109,28 +140,35 @@ export default function MemoriesPage() {
               setShowNew(false);
               void load();
             }}
+            onCancel={() => setShowNew(false)}
           />
         )}
+
         <MemoryList rows={rows} empty={searching ? "No matches." : "Nothing here yet."} />
+
         {!searching && (
-          <div className="mt-6 flex items-center gap-2">
-            <button
-              className="btn"
-              type="button"
-              disabled={offset === 0}
-              onClick={() => setOffset(Math.max(0, offset - PAGE))}
-            >
-              <FontAwesomeIcon icon={faChevronLeft} /> Prev
-            </button>
-            <button
-              className="btn"
-              type="button"
-              disabled={rows.length < PAGE}
-              onClick={() => setOffset(offset + PAGE)}
-            >
-              Next <FontAwesomeIcon icon={faChevronRight} />
-            </button>
-            <span className="text-xs text-faint">from #{offset + 1}</span>
+          <div className="pager">
+            <span className="text-xs text-faint">
+              {rows.length === 0 ? "No rows" : `${rangeStart}–${rangeEnd}`}
+            </span>
+            <div className="pager-actions">
+              <button
+                className="btn"
+                type="button"
+                disabled={offset === 0}
+                onClick={() => setOffset(Math.max(0, offset - PAGE))}
+              >
+                <FontAwesomeIcon icon={faChevronLeft} /> Prev
+              </button>
+              <button
+                className="btn"
+                type="button"
+                disabled={rows.length < PAGE}
+                onClick={() => setOffset(offset + PAGE)}
+              >
+                Next <FontAwesomeIcon icon={faChevronRight} />
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -138,7 +176,15 @@ export default function MemoriesPage() {
   );
 }
 
-function NewMemory({ defaultSpace, onCreated }: { defaultSpace: string; onCreated: () => void }) {
+function NewMemory({
+  defaultSpace,
+  onCreated,
+  onCancel,
+}: {
+  defaultSpace: string;
+  onCreated: () => void;
+  onCancel: () => void;
+}) {
   const [kind, setKind] = useState<"entry" | "guide">("entry");
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
@@ -165,29 +211,65 @@ function NewMemory({ defaultSpace, onCreated }: { defaultSpace: string; onCreate
   }
 
   return (
-    <form className="panel mb-6 grid gap-3 p-4" onSubmit={submit}>
-      <ErrorNote error={error} />
-      <div className="flex flex-wrap gap-2">
-        <select className="input w-auto" value={kind} onChange={(e) => setKind(e.target.value as "entry" | "guide")}>
-          <option value="entry">Entry</option>
-          <option value="guide">Guide</option>
-        </select>
-        {kind === "entry" && (
-          <select className="input w-auto" value={type} onChange={(e) => setType(e.target.value)}>
-            {ENTRY_TYPES.map((t) => <option key={t}>{t}</option>)}
-          </select>
-        )}
-        <SpaceSelect value={space} onChange={setSpace} allowAll={false} />
+    <form className="panel composer mb-6" onSubmit={submit}>
+      <div className="composer-header">
+        <h3 className="composer-title">New memory</h3>
+        <button className="btn" type="button" onClick={onCancel}>
+          <FontAwesomeIcon icon={faXmark} /> Close
+        </button>
       </div>
-      <input className="input" placeholder="Title" value={title} onChange={(e) => setTitle(e.target.value)} required />
-      <textarea className="input min-h-28" placeholder="Body" value={body} onChange={(e) => setBody(e.target.value)} required />
-      <input className="input" placeholder="tags, comma, separated" value={tags} onChange={(e) => setTags(e.target.value)} />
-      {kind === "entry" && (
-        <label className="flex items-center gap-2 text-sm text-muted">
-          <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} /> Save even if a near-duplicate exists
+      <ErrorNote error={error} />
+      <div className="composer-grid">
+        <label className="field">
+          <span>Kind</span>
+          <select className="input" value={kind} onChange={(e) => setKind(e.target.value as "entry" | "guide")}>
+            <option value="entry">Entry</option>
+            <option value="guide">Guide</option>
+          </select>
         </label>
-      )}
-      <button className="btn" type="submit">Save</button>
+        {kind === "entry" && (
+          <label className="field">
+            <span>Type</span>
+            <select className="input" value={type} onChange={(e) => setType(e.target.value)}>
+              {ENTRY_TYPES.map((t) => (
+                <option key={t}>{t}</option>
+              ))}
+            </select>
+          </label>
+        )}
+        <label className="field">
+          <span>Space</span>
+          <SpaceSelect value={space} onChange={setSpace} allowAll={false} />
+        </label>
+        <label className="field field-span">
+          <span>Title</span>
+          <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} required />
+        </label>
+        <label className="field field-span">
+          <span>Body</span>
+          <textarea className="input min-h-28" value={body} onChange={(e) => setBody(e.target.value)} required />
+        </label>
+        <label className="field field-span">
+          <span>Tags</span>
+          <input
+            className="input"
+            placeholder="comma, separated"
+            value={tags}
+            onChange={(e) => setTags(e.target.value)}
+          />
+        </label>
+      </div>
+      <div className="composer-footer">
+        {kind === "entry" && (
+          <label className="flex items-center gap-2 text-sm text-muted">
+            <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} />
+            Save even if a near-duplicate exists
+          </label>
+        )}
+        <button className="btn btn-primary ml-auto" type="submit">
+          Save
+        </button>
+      </div>
     </form>
   );
 }

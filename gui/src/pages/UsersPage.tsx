@@ -1,12 +1,20 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { ErrorNote, PageHeader } from "../components/ui";
 
-type User = { id: string; email: string; display_name: string | null; provider: string | null; created_at?: string | null };
+type User = {
+  id: string;
+  email: string;
+  display_name: string | null;
+  providers?: string[];
+  created_at?: string | null;
+};
 
 export default function UsersPage() {
   const { me } = useAuth();
+  const navigate = useNavigate();
   const [users, setUsers] = useState<User[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -20,7 +28,7 @@ export default function UsersPage() {
       <div className="page-body">
       {!me?.is_admin && (
         <p className="mb-4 text-xs text-faint">
-          Directory of authenticated users (for team invites). Provider and join date are admin-only.
+          Directory of authenticated users (for team invites). Providers and join date are admin-only.
         </p>
       )}
       <ErrorNote error={error} />
@@ -32,7 +40,7 @@ export default function UsersPage() {
               <th>Name</th>
               {me?.is_admin && (
                 <>
-                  <th>Provider</th>
+                  <th>Providers</th>
                   <th>Joined</th>
                 </>
               )}
@@ -40,12 +48,18 @@ export default function UsersPage() {
           </thead>
           <tbody>
             {users.map((u) => (
-              <tr key={u.id}>
+              <tr
+                key={u.id}
+                className="cursor-pointer"
+                onClick={() => navigate(`/users/${u.id}`)}
+              >
                 <td className="text-ink">{u.email}</td>
                 <td className="text-muted">{u.display_name ?? "—"}</td>
                 {me?.is_admin && (
                   <>
-                    <td className="text-muted">{u.provider ?? "—"}</td>
+                    <td className="text-muted">
+                      {u.providers?.length ? u.providers.join(", ") : "—"}
+                    </td>
                     <td className="text-faint">
                       {u.created_at ? new Date(u.created_at).toLocaleDateString() : "—"}
                     </td>

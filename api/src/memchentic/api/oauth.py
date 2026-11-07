@@ -134,7 +134,7 @@ code{{color:#fff}}
 <p>After sign-in you will be sent to <code>{html.escape(host)}</code>.
 Only continue if you started this from that app.</p>
 {err}
-<label>Email or admin user</label>
+<label>Email (or admin alias)</label>
 <input name="email" type="text" required autocomplete="username" />
 <label>Password</label>
 <input name="password" type="password" required autocomplete="current-password" />

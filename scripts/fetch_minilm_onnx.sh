@@ -1,5 +1,6 @@
 #!/usr/bin/env sh
-# Download all-MiniLM-L6-v2 (ONNX + tokenizer) into models/ for the api embedder.
+# Download all-MiniLM-L6-v2 (ONNX + tokenizer) into models/ for the local.yaml
+# host bind mount. Production images fetch the same files during docker build.
 set -eu
 DEST="${1:-$(dirname "$0")/../models/all-MiniLM-L6-v2}"
 REPO="https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main"

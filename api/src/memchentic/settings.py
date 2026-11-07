@@ -39,7 +39,11 @@ class Settings(BaseSettings):
 
     @property
     def admin_contact_email(self) -> str:
-        """Email shown on the admin principal; falls back to the admin username."""
+        """Canonical email on the break-glass admin principal.
+
+        Prefer ``MEMCHENTIC_ADMIN_EMAIL`` (required in real deployments). Falls
+        back to ``MEMCHENTIC_ADMIN_USER`` only so local placeholders still boot.
+        """
         email = self.memchentic_admin_email.strip()
         return email or self.memchentic_admin_user
 

@@ -80,36 +80,85 @@ export function useSpaceName() {
   };
 }
 
+function formatWhen(value?: string | null): string {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 export function MemoryList({ rows, empty }: { rows: MemoryRow[]; empty: string }) {
   const spaceName = useSpaceName();
-  if (!rows.length) return <p className="text-sm text-faint">{empty}</p>;
+  const showScore = rows.some((m) => m.score !== undefined);
+
+  if (!rows.length) {
+    return (
+      <div className="panel empty-state">
+        <p className="text-sm text-faint">{empty}</p>
+      </div>
+    );
+  }
+
   return (
-    <ul className="list-stack">
-      {rows.map((m) => (
-        <li key={m.id}>
-          <Link to={`/entries/${m.id}`} className="list-row">
-            <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <span className="font-medium text-ink">{m.title}</span>
-              <span className="text-xs text-faint">
-                {m.kind === "guide" ? "guide" : m.type}
-                {" · "}
-                {spaceName(m.space_id ?? m.space)}
-                {m.score !== undefined && ` · ${m.score.toFixed(4)}`}
-              </span>
-            </div>
-            {m.snippet && <p className="mt-1 text-sm text-muted">{m.snippet}</p>}
-            {m.tags.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-1">
-                {m.tags.map((t) => (
-                  <span key={t} className="tag">
-                    {t}
+    <div className="panel overflow-x-auto">
+      <table className="data-table memory-table">
+        <thead>
+          <tr>
+            <th>Title</th>
+            <th>Type</th>
+            <th>Space</th>
+            <th>Updated</th>
+            {showScore ? <th>Score</th> : null}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((m) => {
+            const kindLabel = m.kind === "guide" ? "guide" : m.type ?? "entry";
+            const tags = m.tags.slice(0, 4);
+            const extra = m.tags.length - tags.length;
+            return (
+              <tr key={m.id}>
+                <td>
+                  <Link to={`/entries/${m.id}`} className="memory-title-link">
+                    {m.title}
+                  </Link>
+                  {m.snippet ? <p className="memory-snippet">{m.snippet}</p> : null}
+                  {tags.length > 0 ? (
+                    <div className="memory-tags">
+                      {tags.map((t) => (
+                        <span key={t} className="tag">
+                          {t}
+                        </span>
+                      ))}
+                      {extra > 0 ? <span className="text-xs text-faint">+{extra}</span> : null}
+                    </div>
+                  ) : null}
+                </td>
+                <td>
+                  <span className={`kind-chip kind-chip-${m.kind === "guide" ? "guide" : "entry"}`}>
+                    {kindLabel}
                   </span>
-                ))}
-              </div>
-            )}
-          </Link>
-        </li>
-      ))}
-    </ul>
+                </td>
+                <td className="text-muted">{spaceName(m.space_id ?? m.space) || "—"}</td>
+                <td className="text-faint whitespace-nowrap">
+                  {formatWhen(m.updated_at ?? m.created_at)}
+                </td>
+                {showScore ? (
+                  <td className="text-faint tabular-nums">
+                    {m.score !== undefined ? m.score.toFixed(3) : "—"}
+                  </td>
+                ) : null}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }

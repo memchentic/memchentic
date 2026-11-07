@@ -7,6 +7,7 @@ import MemoriesPage from "./pages/MemoriesPage";
 import SignInPage from "./pages/SignInPage";
 import TeamDetailPage from "./pages/TeamDetailPage";
 import TeamsPage from "./pages/TeamsPage";
+import UserDetailPage from "./pages/UserDetailPage";
 import UsersPage from "./pages/UsersPage";
 
 function SearchRedirect() {
@@ -45,6 +46,7 @@ export default function App() {
         <Route path="teams" element={<TeamsPage />} />
         <Route path="teams/:id" element={<TeamDetailPage />} />
         <Route path="users" element={<UsersPage />} />
+        <Route path="users/:id" element={<UserDetailPage />} />
         <Route path="api-keys" element={<ApiKeysPage />} />
       </Route>
     </Routes>

@@ -10,11 +10,12 @@ product: do not fork, wrap, or copy other memory servers' tool names.
 | `docker/` | Compose + Dockerfile (`docker-compose.yaml` prod base; `local.yaml` overlay) |
 | `api/` | Python API + MCP: `pyproject.toml`, `alembic/`, `src/memchentic/`, `tests/` |
 | `gui/` | React + Tailwind (greyscale dark) + Font Awesome |
-| `models/` | Local ONNX embedder files (gitignored) |
+| `models/` | Host ONNX files for local.yaml bind mount (gitignored); image bakes MiniLM at build |
 | `marketplace/` | In-repo agent plugin (`memchentic`); host catalogs at repo root |
 
-Inside containers the code root is `/opt/memchentic`. Compose services are
-`db`, `api`, and (with the local overlay) `gui`.
+Inside containers the code root is `/opt/memchentic`. Compose project name is
+`memchentic`; services are `postgres` and `application` (FastAPI + FastMCP +
+React SPA). `local.yaml` only adds bind mounts (and uvicorn `--reload`).
 
 ## Run and verify
 
@@ -25,16 +26,15 @@ cd docker
 cp .env.example .env          # once
 cp local.yaml.example local.yaml  # once; gitignored
 docker compose up -d --build
-docker compose exec api pytest -q
-docker compose exec api ruff check src tests
+docker compose exec application pytest -q
+docker compose exec application ruff check src tests
 ```
 
-Host ports come from `docker/.env` (`MEMCHENTIC_API_PORT`, default 18080;
-`MEMCHENTIC_GUI_PORT`, default 15173). Rebuild the api image only when
-`api/pyproject.toml` or system packages change; with `local.yaml`, source is
-bind-mounted.
+Host port comes from `docker/.env` (`MEMCHENTIC_API_PORT`, default 18080).
+Rebuild the application image when `api/pyproject.toml`, system packages, or
+`gui/` change; with `local.yaml`, API source and `gui/dist` are bind-mounted.
 
-Prod-shaped bring-up (no bind mounts, no GUI service):
+Prod-shaped bring-up (no bind mounts):
 
 ```bash
 cd docker && COMPOSE_FILE=docker-compose.yaml docker compose up -d --build

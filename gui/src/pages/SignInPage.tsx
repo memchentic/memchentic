@@ -42,8 +42,8 @@ export default function SignInPage() {
   const title = mode === "login" ? "Sign in" : "Create account";
   const subtitle =
     mode === "login"
-      ? "Use your email or admin user and password."
-      : "Create a local account for this memchentic instance.";
+      ? "Sign in with your email (or the admin email) and password."
+      : "Email is required — it is your account identity on this instance.";
 
   return (
     <main className="auth-shell">
@@ -61,15 +61,16 @@ export default function SignInPage() {
 
         <form className="auth-form" onSubmit={submit}>
           <label className="auth-field">
-            <span>Email or admin user</span>
+            <span>Email</span>
             <input
               className="input"
+              type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
               autoComplete="username"
               autoFocus
-              placeholder="you@example.com or admin"
+              placeholder="you@example.com"
             />
           </label>
           {mode === "register" && (

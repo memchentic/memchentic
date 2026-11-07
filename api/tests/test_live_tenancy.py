@@ -147,23 +147,105 @@ def test_personal_isolation_and_team_lifecycle(client: httpx.Client) -> None:
 
 
 def test_authenticated_user_directory_omits_admin_fields(client: httpx.Client) -> None:
-    """Non-admins can list users for team invites without provider/created_at."""
+    """Non-admins can list users for team invites without providers/created_at."""
     token_a, user_a, _ = _user(client)
-    token_b, user_b, email_b = _user(client)
+    _token_b, user_b, email_b = _user(client)
     rows = client.get("/api/users", headers={"Authorization": f"Bearer {token_a}"}).json()
     assert isinstance(rows, list)
     by_id = {r["id"]: r for r in rows}
     assert user_a in by_id and user_b in by_id
     assert by_id[user_b]["email"] == email_b
-    assert "provider" not in by_id[user_b]
+    assert "providers" not in by_id[user_b]
     assert "created_at" not in by_id[user_b]
     if ADMIN_KEY:
         admin_rows = client.get(
             "/api/users", headers={"Authorization": f"Bearer {ADMIN_KEY}"}
         ).json()
         sample = next(r for r in admin_rows if r["id"] == user_b)
-        assert "provider" in sample
+        assert sample["providers"] == ["internal"]
         assert "created_at" in sample
+
+
+def test_user_detail_teams_are_acl_scoped(client: httpx.Client) -> None:
+    """User detail lists only teams the viewer may see; personal is omitted."""
+    token_a, user_a, _ = _user(client)
+    token_b, user_b, email_b = _user(client)
+    token_c, _, _ = _user(client)
+    auth_a = {"Authorization": f"Bearer {token_a}"}
+    auth_b = {"Authorization": f"Bearer {token_b}"}
+    auth_c = {"Authorization": f"Bearer {token_c}"}
+
+    shared = client.post("/api/spaces", headers=auth_a, json={"name": f"shared-{uuid.uuid4().hex[:8]}"}).json()
+    private = client.post("/api/spaces", headers=auth_a, json={"name": f"private-{uuid.uuid4().hex[:8]}"}).json()
+    assert client.post(
+        f"/api/spaces/{shared['id']}/members", headers=auth_a, json={"user_id": user_b}
+    ).status_code == 200
+
+    detail_b = client.get(f"/api/users/{user_b}", headers=auth_a).json()
+    assert detail_b["id"] == user_b
+    assert detail_b["email"] == email_b
+    assert detail_b["display_name"]
+    assert "providers" not in detail_b
+    assert "created_at" not in detail_b
+    team_ids = {t["id"] for t in detail_b["teams"]}
+    assert shared["id"] in team_ids
+    assert private["id"] not in team_ids
+    assert all(t["kind"] == "team" for t in detail_b["teams"])
+
+    outsider = client.get(f"/api/users/{user_a}", headers=auth_c).json()
+    assert outsider["id"] == user_a
+    assert outsider["teams"] == []
+
+    as_b = client.get(f"/api/users/{user_a}", headers=auth_b).json()
+    assert {t["id"] for t in as_b["teams"]} == {shared["id"]}
+
+    missing = client.get(f"/api/users/{uuid.uuid4()}", headers=auth_a)
+    assert missing.status_code == 404
+
+    if ADMIN_KEY:
+        admin = client.get(
+            f"/api/users/{user_a}", headers={"Authorization": f"Bearer {ADMIN_KEY}"}
+        ).json()
+        assert admin["providers"] == ["internal"] and "created_at" in admin
+        admin_ids = {t["id"] for t in admin["teams"]}
+        assert shared["id"] in admin_ids and private["id"] in admin_ids
+
+
+def test_user_detail_acl_edges(client: httpx.Client) -> None:
+    """User detail requires auth, rejects bad ids, and hides archived teams."""
+    ghost = uuid.uuid4()
+    assert client.get(f"/api/users/{ghost}").status_code == 401
+
+    token_a, user_a, _ = _user(client)
+    token_b, user_b, _ = _user(client)
+    auth_a = {"Authorization": f"Bearer {token_a}"}
+    auth_b = {"Authorization": f"Bearer {token_b}"}
+
+    assert client.get("/api/users/not-a-uuid", headers=auth_a).status_code == 404
+    assert client.get(f"/api/users/{ghost}", headers=auth_a).status_code == 404
+
+    both = client.post(
+        "/api/spaces", headers=auth_a, json={"name": f"both-{uuid.uuid4().hex[:6]}"}
+    ).json()
+    solo = client.post(
+        "/api/spaces", headers=auth_a, json={"name": f"solo-{uuid.uuid4().hex[:6]}"}
+    ).json()
+    assert client.post(
+        f"/api/spaces/{both['id']}/members", headers=auth_a, json={"user_id": user_b}
+    ).status_code == 200
+
+    mutual = client.get(f"/api/users/{user_b}", headers=auth_a).json()
+    assert {t["id"] for t in mutual["teams"]} == {both["id"]}
+
+    self_b = client.get(f"/api/users/{user_b}", headers=auth_b).json()
+    assert {t["id"] for t in self_b["teams"]} == {both["id"]}
+
+    self_a = client.get(f"/api/users/{user_a}", headers=auth_a).json()
+    assert {both["id"], solo["id"]} <= {t["id"] for t in self_a["teams"]}
+
+    assert client.post(f"/api/spaces/{both['id']}/archive", headers=auth_a).status_code == 200
+    after_archive = client.get(f"/api/users/{user_b}", headers=auth_a).json()
+    assert both["id"] not in {t["id"] for t in after_archive["teams"]}
 
 
 def test_write_target_resolution(client: httpx.Client) -> None:
@@ -348,7 +430,7 @@ def test_authorize_accepts_admin_username(client: httpx.Client) -> None:
         },
     )
     assert page.status_code == 200
-    assert "Email or admin user" in page.text
+    assert "Email (or admin alias)" in page.text
     assert 'type="email"' not in page.text
 
     form = {

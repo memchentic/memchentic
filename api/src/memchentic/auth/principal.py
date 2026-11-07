@@ -9,7 +9,7 @@ from jose import JWTError, jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from memchentic.models.entities import ApiKey, User
+from memchentic.models.entities import ApiKey, User, UserIdentity
 from memchentic.settings import Settings, get_settings
 
 
@@ -82,10 +82,15 @@ async def resolve_bearer(
     try:
         user_id = UUID(sub)
     except ValueError:
-        # provider subject style — look up by provider+subject
+        # provider subject style — look up any durable binding
         provider = payload.get("provider") or settings.oauth_provider
         result = await session.execute(
-            select(User).where(User.provider == provider, User.provider_subject == sub)
+            select(User)
+            .join(UserIdentity, UserIdentity.user_id == User.id)
+            .where(
+                UserIdentity.provider == provider,
+                UserIdentity.provider_subject == sub,
+            )
         )
         user = result.scalar_one_or_none()
         if not user:
@@ -113,6 +118,9 @@ async def resolve_bearer(
 def check_admin_password(username: str, password: str, settings: Settings | None = None) -> bool:
     """Constant-time check of the env break-glass admin credentials.
 
+    Login identifiers (admin username and admin email) are compared
+    case-insensitively. The password remains case-sensitive.
+
     Args:
         username: Submitted admin username or ``MEMCHENTIC_ADMIN_EMAIL``.
         password: Submitted password.
@@ -123,11 +131,12 @@ def check_admin_password(username: str, password: str, settings: Settings | None
         password matches.
     """
     settings = settings or get_settings()
-    submitted = username.encode()
-    user_ok = hmac.compare_digest(submitted, settings.memchentic_admin_user.encode())
+    submitted = username.strip().casefold().encode()
+    admin_user = settings.memchentic_admin_user.strip().casefold().encode()
+    user_ok = hmac.compare_digest(submitted, admin_user)
     admin_email = settings.memchentic_admin_email.strip()
     # Keep a compare even when unset so timing stays closer across paths.
-    email_target = admin_email.encode() if admin_email else settings.memchentic_admin_user.encode()
+    email_target = admin_email.casefold().encode() if admin_email else admin_user
     email_ok = bool(admin_email) and hmac.compare_digest(submitted, email_target)
     pass_ok = hmac.compare_digest(password.encode(), settings.memchentic_admin_password.encode())
     return (user_ok or email_ok) and pass_ok

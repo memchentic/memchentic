@@ -52,7 +52,16 @@ export default function EntryPage() {
     }
   }
 
-  if (!m) return <ErrorNote error={error ?? "Loading…"} />;
+  if (!m && !error) {
+    return <p className="text-sm text-muted">Loading…</p>;
+  }
+  if (!m) {
+    return (
+      <div className="page-body">
+        <ErrorNote error={error} />
+      </div>
+    );
+  }
 
   return (
     <div>

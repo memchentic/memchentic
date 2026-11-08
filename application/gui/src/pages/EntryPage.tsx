@@ -118,7 +118,7 @@ export default function EntryPage() {
           {m.path_hint && ` · ${m.path_hint}`}
         </p>
         {editing ? (
-          <div className="panel grid gap-3 p-4">
+          <div key="revise" className="panel reveal-fade grid gap-3 p-4">
             <input className="input" value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} />
             {m.kind === "entry" && (
               <select className="input w-auto" value={draft.type} onChange={(e) => setDraft({ ...draft, type: e.target.value })}>
@@ -129,7 +129,7 @@ export default function EntryPage() {
             <input className="input" value={draft.tags} onChange={(e) => setDraft({ ...draft, tags: e.target.value })} />
           </div>
         ) : (
-          <div className="panel p-4">
+          <div key="view" className="panel reveal-fade p-4">
             <pre className="whitespace-pre-wrap font-sans text-sm text-ink">{m.body}</pre>
             {m.tags.length > 0 && (
               <div className="mt-4 flex flex-wrap gap-1">

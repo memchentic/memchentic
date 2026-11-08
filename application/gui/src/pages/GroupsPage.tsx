@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState, type FormEvent, type MouseEvent } fro
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
-import { ErrorNote, NewToggleButton, PageHeader } from "../components/ui";
+import { ComposerReveal, ErrorNote, NewToggleButton, PageHeader } from "../components/ui";
 
 type Space = { id: string; name: string; kind: string };
 type SpaceDetail = Space & {
@@ -64,7 +64,7 @@ export default function GroupsPage() {
       </PageHeader>
       <div className="page-body">
         <ErrorNote error={error} />
-        {showNew && (
+        <ComposerReveal open={showNew}>
           <NewGroup
             onCreated={() => {
               setShowNew(false);
@@ -72,7 +72,7 @@ export default function GroupsPage() {
             }}
             onCancel={() => setShowNew(false)}
           />
-        )}
+        </ComposerReveal>
         {me?.id && groups.length > 0 && (
           <label className="mb-6 flex max-w-sm flex-col gap-1 text-sm text-muted">
             Default shared group

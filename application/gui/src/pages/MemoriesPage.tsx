@@ -11,6 +11,7 @@ import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import {
+  ComposerReveal,
   ENTRY_TYPES,
   ErrorNote,
   MEMORY_TYPE_TOKENS,
@@ -202,7 +203,7 @@ export default function MemoriesPage() {
 
         <ErrorNote error={error} />
 
-        {!searching && showNew && (
+        <ComposerReveal open={!searching && showNew}>
           <NewMemory
             defaultSpace={defaultWriteSpace}
             onCreated={() => {
@@ -211,7 +212,7 @@ export default function MemoriesPage() {
             }}
             onCancel={() => setShowNew(false)}
           />
-        )}
+        </ComposerReveal>
 
         <MemoryList
           rows={rows}

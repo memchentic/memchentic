@@ -44,6 +44,11 @@
   --content-pad: 0.75rem;
   --content-pad-tight: 0.5rem;
   --border-width: 1px;
+  --duration-micro: 160ms;
+  --duration-enter: 180ms;
+  --duration-exit: 120ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: ease-in;
 }
 
 html,
@@ -156,8 +161,8 @@ body {
   font-weight: 500;
   text-decoration: none;
   transition:
-    background-color 160ms ease,
-    color 160ms ease;
+    background-color var(--duration-micro) ease,
+    color var(--duration-micro) ease;
 }
 
 .nav-link:hover {
@@ -195,7 +200,7 @@ body {
   color: var(--color-ink);
   font-size: 0.875rem;
   font-weight: 500;
-  transition: background-color 160ms ease;
+  transition: background-color var(--duration-micro) ease;
 }
 
 .nav-control:hover {
@@ -218,7 +223,7 @@ body {
   flex-shrink: 0;
   font-size: 0.7rem;
   opacity: 0.7;
-  transition: transform 160ms ease;
+  transition: transform var(--duration-micro) ease;
 }
 
 .user-menu-chevron-open {
@@ -239,6 +244,24 @@ body {
   border-radius: var(--radius-sm);
   background: var(--color-surface-2);
   box-shadow: 0 0.5rem 1.25rem color-mix(in oklab, black 35%, transparent);
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity var(--duration-enter) var(--ease-out),
+    transform var(--duration-enter) var(--ease-out);
+}
+
+.user-menu-panel-leave {
+  opacity: 0;
+  transform: translateY(-0.5rem);
+  transition:
+    opacity var(--duration-exit) var(--ease-in),
+    transform var(--duration-exit) var(--ease-in);
+  pointer-events: none;
+}
+
+.user-menu-panel:not(.user-menu-panel-leave) {
+  animation: menu-panel-in var(--duration-enter) var(--ease-out);
 }
 
 .user-menu-item {
@@ -257,7 +280,7 @@ body {
   text-align: left;
   text-decoration: none;
   cursor: pointer;
-  transition: background-color 160ms ease;
+  transition: background-color var(--duration-micro) ease;
 }
 
 .user-menu-item:hover {
@@ -333,9 +356,9 @@ body {
   font-size: 0.875rem;
   font-weight: 600;
   transition:
-    background-color 160ms ease,
-    border-color 160ms ease,
-    box-shadow 160ms ease;
+    background-color var(--duration-micro) ease,
+    border-color var(--duration-micro) ease,
+    box-shadow var(--duration-micro) ease;
 }
 
 .btn:hover {
@@ -363,6 +386,7 @@ body {
   font-size: 1rem;
   font-weight: 400;
   outline: none;
+  transition: border-color var(--duration-micro) ease;
 }
 
 .input:focus {
@@ -405,7 +429,7 @@ select.input optgroup {
   padding: 0.75rem 1rem;
   color: var(--color-ink);
   text-decoration: none;
-  transition: background-color 160ms ease;
+  transition: background-color var(--duration-micro) ease;
 }
 
 .list-row:hover {
@@ -434,7 +458,7 @@ select.input optgroup {
 
 .data-table tbody tr {
   border-bottom: var(--border-width) solid var(--color-border);
-  transition: background-color 160ms ease;
+  transition: background-color var(--duration-micro) ease;
 }
 
 .data-table tbody tr:last-child {
@@ -527,7 +551,7 @@ select.input optgroup {
   flex-shrink: 0;
   font-size: 0.7rem;
   opacity: 0.7;
-  transition: transform 160ms ease;
+  transition: transform var(--duration-micro) ease;
 }
 
 .filter-menu-chevron-open {
@@ -550,6 +574,24 @@ select.input optgroup {
   border-radius: var(--radius-sm);
   background: var(--color-surface-2);
   box-shadow: 0 0.5rem 1.25rem color-mix(in oklab, black 35%, transparent);
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity var(--duration-enter) var(--ease-out),
+    transform var(--duration-enter) var(--ease-out);
+}
+
+.filter-menu-panel-leave {
+  opacity: 0;
+  transform: translateY(-0.5rem);
+  transition:
+    opacity var(--duration-exit) var(--ease-in),
+    transform var(--duration-exit) var(--ease-in);
+  pointer-events: none;
+}
+
+.filter-menu-panel:not(.filter-menu-panel-leave) {
+  animation: menu-panel-in var(--duration-enter) var(--ease-out);
 }
 
 .filter-menu-item {
@@ -565,6 +607,7 @@ select.input optgroup {
   font-weight: 500;
   text-transform: none;
   cursor: pointer;
+  transition: background-color var(--duration-micro) ease;
 }
 
 .filter-menu-item:hover {
@@ -832,6 +875,7 @@ select.input optgroup {
   color: var(--color-ink);
   font-size: 0.875rem;
   font-weight: 500;
+  animation: fade-in var(--duration-enter) var(--ease-out);
 }
 
 /* —— auth (Archentic auth-login-* density) —— */
@@ -1007,7 +1051,7 @@ select.input optgroup {
   font-size: 0.875rem;
   text-align: left;
   cursor: pointer;
-  transition: background-color 160ms ease;
+  transition: background-color var(--duration-micro) ease;
 }
 
 .settings-rail-row:hover {
@@ -1065,7 +1109,9 @@ select.input optgroup {
   color: var(--color-ink);
   font-size: 0.875rem;
   cursor: pointer;
-  transition: background-color 160ms ease, border-color 160ms ease;
+  transition:
+    background-color var(--duration-micro) ease,
+    border-color var(--duration-micro) ease;
 }
 
 .settings-group-chip:hover {
@@ -1076,4 +1122,133 @@ select.input optgroup {
   border-color: var(--color-border-strong);
   background: var(--color-surface-3);
   font-weight: 500;
+}
+
+/* —— motion: overlays, composers, fades —— */
+@keyframes menu-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(-0.5rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes overlay-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.5rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.overlay-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgb(0 0 0 / 0.7);
+  opacity: 1;
+  transition: opacity var(--duration-enter) var(--ease-out);
+}
+
+.overlay-backdrop-leave {
+  opacity: 0;
+  transition: opacity var(--duration-exit) var(--ease-in);
+  pointer-events: none;
+}
+
+.overlay-backdrop:not(.overlay-backdrop-leave) {
+  animation: fade-in var(--duration-enter) var(--ease-out);
+}
+
+.overlay-panel {
+  display: flex;
+  max-height: 85vh;
+  width: 100%;
+  max-width: 32rem;
+  flex-direction: column;
+  border: var(--border-width) solid var(--color-border);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-raised);
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity var(--duration-enter) var(--ease-out),
+    transform var(--duration-enter) var(--ease-out);
+}
+
+.overlay-backdrop:not(.overlay-backdrop-leave) .overlay-panel {
+  animation: overlay-panel-in var(--duration-enter) var(--ease-out);
+}
+
+.overlay-backdrop-leave .overlay-panel {
+  opacity: 0;
+  transform: translateY(0.5rem);
+  transition:
+    opacity var(--duration-exit) var(--ease-in),
+    transform var(--duration-exit) var(--ease-in);
+}
+
+.composer-reveal {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--duration-enter) var(--ease-out);
+}
+
+.composer-reveal-open {
+  grid-template-rows: 1fr;
+}
+
+.composer-reveal:not(.composer-reveal-open) {
+  transition-duration: var(--duration-exit);
+  transition-timing-function: var(--ease-in);
+}
+
+.composer-reveal-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.reveal-fade {
+  animation: fade-in var(--duration-enter) var(--ease-out);
+}
+
+.settings-main-pane {
+  animation: fade-in var(--duration-enter) var(--ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-micro: 0ms;
+    --duration-enter: 0ms;
+    --duration-exit: 0ms;
+  }
+
+  .user-menu-panel:not(.user-menu-panel-leave),
+  .filter-menu-panel:not(.filter-menu-panel-leave),
+  .overlay-backdrop:not(.overlay-backdrop-leave),
+  .overlay-backdrop:not(.overlay-backdrop-leave) .overlay-panel,
+  .flash-error,
+  .reveal-fade,
+  .settings-main-pane {
+    animation: none;
+  }
 }

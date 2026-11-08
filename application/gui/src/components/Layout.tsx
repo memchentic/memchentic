@@ -11,6 +11,7 @@ import {
 import { useEffect, useId, useRef, useState } from "react";
 import { Link, NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "../auth";
+import { usePresence } from "./ui";
 
 const links = [
   { to: "/", label: "Memories", icon: faBook, end: true },
@@ -21,6 +22,7 @@ const links = [
 function UserMenu() {
   const { me, logout } = useAuth();
   const [open, setOpen] = useState(false);
+  const { mounted, leaving } = usePresence(open);
   const rootRef = useRef<HTMLDivElement>(null);
   const menuId = useId();
   const label = me?.display_name || me?.email || "Account";
@@ -59,9 +61,9 @@ function UserMenu() {
           className={`user-menu-chevron ${open ? "user-menu-chevron-open" : ""}`}
         />
       </button>
-      {open ? (
+      {mounted ? (
         <div
-          className="user-menu-panel"
+          className={`user-menu-panel${leaving ? " user-menu-panel-leave" : ""}`}
           id={menuId}
           role="menu"
           aria-label="Account"

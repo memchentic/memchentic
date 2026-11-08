@@ -1,10 +1,117 @@
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faChevronDown, faPlus, faTrash, faXmark } from "@fortawesome/free-solid-svg-icons";
-import { useEffect, useId, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { formatDocumentTitle } from "../documentTitle";
+
+/** Matches `--duration-exit` in index.css. */
+export const MOTION_EXIT_MS = 120;
+
+/**
+ * Keep a node mounted through its CSS exit transition.
+ * `leaving` is true while the leave class should be applied.
+ */
+export function usePresence(open: boolean, exitMs = MOTION_EXIT_MS) {
+  const [phase, setPhase] = useState<"out" | "in" | "leaving">(open ? "in" : "out");
+
+  useEffect(() => {
+    if (open) {
+      setPhase("in");
+      return;
+    }
+    setPhase((prev) => (prev === "out" ? "out" : "leaving"));
+  }, [open]);
+
+  useEffect(() => {
+    if (phase !== "leaving") return undefined;
+    const id = window.setTimeout(() => setPhase("out"), exitMs);
+    return () => window.clearTimeout(id);
+  }, [phase, exitMs]);
+
+  return { mounted: phase !== "out", leaving: phase === "leaving" };
+}
+
+/** Shared overlay dialog with enter/exit motion. */
+export function Modal({
+  open,
+  onClose,
+  labelledBy,
+  children,
+  closeDisabled = false,
+}: {
+  open: boolean;
+  onClose: () => void;
+  labelledBy?: string;
+  children: ReactNode;
+  closeDisabled?: boolean;
+}) {
+  const { mounted, leaving } = usePresence(open);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape" && !closeDisabled) onClose();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onClose, closeDisabled]);
+
+  if (!mounted) return null;
+
+  return (
+    <div
+      className={`overlay-backdrop${leaving ? " overlay-backdrop-leave" : ""}`}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={labelledBy}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !closeDisabled) onClose();
+      }}
+    >
+      <div className="overlay-panel">{children}</div>
+    </div>
+  );
+}
+
+/** Height-reveal shell for New composers so the table does not jump. */
+export function ComposerReveal({
+  open,
+  children,
+}: {
+  open: boolean;
+  children: ReactNode;
+}) {
+  const { mounted, leaving } = usePresence(open);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    if (open && mounted && !leaving) {
+      const id = requestAnimationFrame(() => {
+        requestAnimationFrame(() => setExpanded(true));
+      });
+      return () => cancelAnimationFrame(id);
+    }
+    setExpanded(false);
+    return undefined;
+  }, [open, mounted, leaving]);
+
+  if (!mounted) return null;
+
+  return (
+    <div className={`composer-reveal${expanded ? " composer-reveal-open" : ""}`}>
+      <div className="composer-reveal-inner">{children}</div>
+    </div>
+  );
+}
 
 export type MemoryRow = {
   id: string;
@@ -87,6 +194,7 @@ export function TypeFilterMenu({
   onChange: (next: MemoryTypeToken[]) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const { mounted, leaving } = usePresence(open);
   const rootRef = useRef<HTMLDivElement>(null);
   const menuId = useId();
   const allSelected = selected.length === 0 || selected.length === MEMORY_TYPE_TOKENS.length;
@@ -147,8 +255,13 @@ export function TypeFilterMenu({
           className={`filter-menu-chevron ${open ? "filter-menu-chevron-open" : ""}`}
         />
       </button>
-      {open ? (
-        <div className="filter-menu-panel" id={menuId} role="menu" aria-label="Memory types">
+      {mounted ? (
+        <div
+          className={`filter-menu-panel${leaving ? " filter-menu-panel-leave" : ""}`}
+          id={menuId}
+          role="menu"
+          aria-label="Memory types"
+        >
           {MEMORY_TYPE_TOKENS.map((token) => {
             const checked = selected.length === 0 || selected.includes(token);
             return (

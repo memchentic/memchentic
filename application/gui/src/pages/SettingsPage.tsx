@@ -14,7 +14,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
-import { ErrorNote, PageHeader } from "../components/ui";
+import { ErrorNote, Modal, PageHeader } from "../components/ui";
 
 type AuthGroup = {
   id: string;
@@ -98,8 +98,16 @@ export default function SettingsPage() {
           </ul>
         </aside>
         <section className="settings-main min-w-0 flex-1">
-          {category === "auth-groups" ? <AuthGroupsPanel /> : null}
-          {category === "registration" ? <RegistrationPanel /> : null}
+          {category === "auth-groups" ? (
+            <div key="auth-groups" className="settings-main-pane">
+              <AuthGroupsPanel />
+            </div>
+          ) : null}
+          {category === "registration" ? (
+            <div key="registration" className="settings-main-pane">
+              <RegistrationPanel />
+            </div>
+          ) : null}
         </section>
       </div>
     </div>
@@ -388,14 +396,13 @@ function AuthGroupsPanel() {
               </tbody>
             </table>
           </div>
-          {addOpen && !rosterBound ? (
-            <AddAuthMembersModal
-              slug={slug}
-              memberIds={new Set(members.map((m) => m.user_id))}
-              onClose={() => setAddOpen(false)}
-              onAdded={() => void reload()}
-            />
-          ) : null}
+          <AddAuthMembersModal
+            open={addOpen && !rosterBound}
+            slug={slug}
+            memberIds={new Set(members.map((m) => m.user_id))}
+            onClose={() => setAddOpen(false)}
+            onAdded={() => void reload()}
+          />
         </>
       )}
     </div>
@@ -403,11 +410,13 @@ function AuthGroupsPanel() {
 }
 
 function AddAuthMembersModal({
+  open,
   slug,
   memberIds,
   onClose,
   onAdded,
 }: {
+  open: boolean;
   slug: string;
   memberIds: Set<string>;
   onClose: () => void;
@@ -420,10 +429,11 @@ function AddAuthMembersModal({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!open) return;
     api<DirectoryUser[]>("/api/users")
       .then(setUsers)
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
-  }, []);
+  }, [open]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -471,101 +481,88 @@ function AddAuthMembersModal({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="add-auth-members-title"
-      onClick={(e) => {
-        if (e.target === e.currentTarget && !busy) onClose();
-      }}
+    <Modal
+      open={open}
+      onClose={onClose}
+      labelledBy="add-auth-members-title"
+      closeDisabled={busy}
     >
-      <div className="flex max-h-[85vh] w-full max-w-lg flex-col border border-border bg-surface shadow-md">
-        <div className="flex items-center justify-between border-b border-border px-4 py-3">
-          <h3 id="add-auth-members-title" className="font-medium text-ink">
-            Add members
-          </h3>
-          <button className="btn" type="button" onClick={onClose} disabled={busy} aria-label="Close">
-            <FontAwesomeIcon icon={faXmark} />
-          </button>
-        </div>
-        <div className="border-b border-border px-4 py-3">
-          <input
-            className="input"
-            type="search"
-            placeholder="Search users…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            autoFocus
-          />
-        </div>
-        {error ? (
-          <div className="px-4 pt-3">
-            <ErrorNote error={error} />
-          </div>
-        ) : null}
-        <ul className="min-h-0 flex-1 overflow-y-auto divide-y divide-border">
-          {!filtered.length ? (
-            <li className="px-4 py-6 text-center text-sm text-faint">No users to add.</li>
-          ) : null}
-          {filtered.map((u) => {
-            const picked = selected.has(u.id);
-            return (
-              <li key={u.id} className="flex items-center justify-between gap-3 px-4 py-3">
-                <div className="min-w-0">
-                  <div className="truncate text-sm text-ink">{u.display_name || u.email}</div>
-                  {u.display_name ? (
-                    <div className="truncate text-xs text-faint">{u.email}</div>
-                  ) : null}
-                </div>
-                <button
-                  className="btn shrink-0"
-                  type="button"
-                  aria-label={picked ? `Deselect ${u.email}` : `Add ${u.email}`}
-                  onClick={() => toggle(u.id)}
-                  disabled={busy}
-                >
-                  <FontAwesomeIcon icon={picked ? faCheck : faUserPlus} />
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-        <div className="flex justify-end gap-2 border-t border-border px-4 py-3">
-          <button
-            className="btn"
-            type="button"
-            onClick={onClose}
-            disabled={busy}
-            title="Cancel"
-            aria-label="Cancel"
-          >
-            <FontAwesomeIcon icon={faXmark} />
-          </button>
-          <button
-            className="btn btn-primary"
-            type="button"
-            onClick={() => void done()}
-            disabled={busy}
-            title={
-              busy
-                ? "Adding…"
-                : selected.size
-                  ? `Done (${selected.size})`
-                  : "Done"
-            }
-            aria-label={
-              busy
-                ? "Adding…"
-                : selected.size
-                  ? `Done (${selected.size})`
-                  : "Done"
-            }
-          >
-            <FontAwesomeIcon icon={faCheck} />
-          </button>
-        </div>
+      <div className="flex items-center justify-between border-b border-border px-4 py-3">
+        <h3 id="add-auth-members-title" className="font-medium text-ink">
+          Add members
+        </h3>
+        <button className="btn" type="button" onClick={onClose} disabled={busy} aria-label="Close">
+          <FontAwesomeIcon icon={faXmark} />
+        </button>
       </div>
-    </div>
+      <div className="border-b border-border px-4 py-3">
+        <input
+          className="input"
+          type="search"
+          placeholder="Search users…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          autoFocus
+        />
+      </div>
+      {error ? (
+        <div className="px-4 pt-3">
+          <ErrorNote error={error} />
+        </div>
+      ) : null}
+      <ul className="min-h-0 flex-1 overflow-y-auto divide-y divide-border">
+        {!filtered.length ? (
+          <li className="px-4 py-6 text-center text-sm text-faint">No users to add.</li>
+        ) : null}
+        {filtered.map((u) => {
+          const picked = selected.has(u.id);
+          return (
+            <li key={u.id} className="flex items-center justify-between gap-3 px-4 py-3">
+              <div className="min-w-0">
+                <div className="truncate text-sm text-ink">{u.display_name || u.email}</div>
+                {u.display_name ? (
+                  <div className="truncate text-xs text-faint">{u.email}</div>
+                ) : null}
+              </div>
+              <button
+                className="btn shrink-0"
+                type="button"
+                aria-label={picked ? `Deselect ${u.email}` : `Add ${u.email}`}
+                onClick={() => toggle(u.id)}
+                disabled={busy}
+              >
+                <FontAwesomeIcon icon={picked ? faCheck : faUserPlus} />
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      <div className="flex justify-end gap-2 border-t border-border px-4 py-3">
+        <button
+          className="btn"
+          type="button"
+          onClick={onClose}
+          disabled={busy}
+          title="Cancel"
+          aria-label="Cancel"
+        >
+          <FontAwesomeIcon icon={faXmark} />
+        </button>
+        <button
+          className="btn btn-primary"
+          type="button"
+          onClick={() => void done()}
+          disabled={busy}
+          title={
+            busy ? "Adding…" : selected.size ? `Done (${selected.size})` : "Done"
+          }
+          aria-label={
+            busy ? "Adding…" : selected.size ? `Done (${selected.size})` : "Done"
+          }
+        >
+          <FontAwesomeIcon icon={faCheck} />
+        </button>
+      </div>
+    </Modal>
   );
 }

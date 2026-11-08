@@ -118,8 +118,8 @@ export default function ApiKeysPage() {
         )}
         <ErrorNote error={error} />
 
-        {secret && (
-          <div className="panel mb-6 p-4">
+        {secret ? (
+          <div className="panel reveal-fade mb-6 p-4">
             <p className="mb-2 text-sm text-muted">
               Copy this key now. It is not shown again
               {secret.user_id !== me?.id ? " (issued for another user)" : ""}.
@@ -148,7 +148,7 @@ export default function ApiKeysPage() {
               </button>
             </div>
           </div>
-        )}
+        ) : null}
 
         {!isAdmin && (
           <section className="panel mb-6 p-4">

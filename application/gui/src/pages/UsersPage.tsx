@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState, type FormEvent, type MouseEvent } fro
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
-import { ErrorNote, NewToggleButton, PageHeader } from "../components/ui";
+import { ComposerReveal, ErrorNote, NewToggleButton, PageHeader } from "../components/ui";
 
 type User = {
   id: string;
@@ -71,7 +71,7 @@ export default function UsersPage() {
           </p>
         )}
         <ErrorNote error={error} />
-        {showNew && canCreate && (
+        <ComposerReveal open={showNew && canCreate}>
           <NewUser
             onCreated={() => {
               setShowNew(false);
@@ -79,7 +79,7 @@ export default function UsersPage() {
             }}
             onCancel={() => setShowNew(false)}
           />
-        )}
+        </ComposerReveal>
         <div className="panel overflow-x-auto">
           <table className="data-table">
             <thead>

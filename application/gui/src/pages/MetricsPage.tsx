@@ -46,16 +46,60 @@ type MemoryMetrics = {
   }[];
 };
 
-const GREY = {
+/** Axis/tooltip chrome stays greyscale; series use kind-chip hues. */
+const CHROME = {
   ink: "oklch(0.985 0 0)",
   muted: "oklch(0.708 0 0)",
-  mid: "oklch(0.55 0 0)",
-  strong: "oklch(0.439 0 0)",
-  fill: "oklch(0.269 0 0)",
   grid: "oklch(0.269 0 0)",
 };
 
-const KIND_COLORS = [GREY.muted, GREY.strong];
+/** Matches `.kind-chip-*` hues in index.css, bumped chroma for chart fills. */
+const TYPE_FILL: Record<string, string> = {
+  guide: "oklch(0.68 0.12 230)",
+  fact: "oklch(0.68 0.12 250)",
+  preference: "oklch(0.68 0.13 310)",
+  decision: "oklch(0.72 0.14 85)",
+  instruction: "oklch(0.68 0.13 165)",
+  feedback: "oklch(0.68 0.14 25)",
+  insight: "oklch(0.68 0.14 295)",
+  note: "oklch(0.66 0.04 260)",
+  entry: "oklch(0.7 0.08 250)",
+};
+
+const SERIES = {
+  entries: TYPE_FILL.entry,
+  guides: TYPE_FILL.guide,
+  warn: "oklch(0.72 0.14 55)",
+  spaces: "oklch(0.68 0.12 200)",
+};
+
+/** Distinct categorical hues for spaces / tags / creators. */
+const CATEGORY_FILLS = [
+  "oklch(0.68 0.12 230)",
+  "oklch(0.72 0.14 85)",
+  "oklch(0.68 0.13 165)",
+  "oklch(0.68 0.13 310)",
+  "oklch(0.68 0.14 25)",
+  "oklch(0.68 0.14 295)",
+  "oklch(0.68 0.12 250)",
+  "oklch(0.7 0.1 145)",
+  "oklch(0.7 0.1 40)",
+  "oklch(0.66 0.1 200)",
+];
+
+function typeFill(type: string): string {
+  return TYPE_FILL[type] ?? TYPE_FILL.note;
+}
+
+function kindFill(kind: string): string {
+  if (kind === "guide" || kind === "guides") return SERIES.guides;
+  if (kind === "entry" || kind === "entries") return SERIES.entries;
+  return typeFill(kind);
+}
+
+function categoryFill(index: number): string {
+  return CATEGORY_FILLS[index % CATEGORY_FILLS.length];
+}
 
 const RANGES: { value: MetricRange; label: string }[] = [
   { value: "7d", label: "7 days" },
@@ -92,7 +136,7 @@ function tooltipStyle(): CSSProperties {
     background: "oklch(0.205 0 0)",
     border: "1px solid oklch(0.269 0 0)",
     borderRadius: 0,
-    color: GREY.ink,
+    color: CHROME.ink,
     fontSize: 12,
   };
 }
@@ -180,18 +224,29 @@ export default function MetricsPage() {
               <div className="metrics-kpi panel">
                 <div className="metrics-kpi-label">Entries / guides</div>
                 <div className="metrics-kpi-value">
-                  {totals.entries}
+                  <span style={{ color: SERIES.entries }}>{totals.entries}</span>
                   <span className="metrics-kpi-split">/</span>
-                  {totals.guides}
+                  <span style={{ color: SERIES.guides }}>{totals.guides}</span>
+                </div>
+              </div>
+              <div
+                className={`metrics-kpi panel${totals.expiring_soon > 0 ? " metrics-kpi-warn" : ""}`}
+              >
+                <div className="metrics-kpi-label">Expiring in 14 days</div>
+                <div
+                  className="metrics-kpi-value"
+                  style={
+                    totals.expiring_soon > 0 ? { color: SERIES.warn } : undefined
+                  }
+                >
+                  {totals.expiring_soon}
                 </div>
               </div>
               <div className="metrics-kpi panel">
-                <div className="metrics-kpi-label">Expiring in 14 days</div>
-                <div className="metrics-kpi-value">{totals.expiring_soon}</div>
-              </div>
-              <div className="metrics-kpi panel">
                 <div className="metrics-kpi-label">Spaces with memories</div>
-                <div className="metrics-kpi-value">{totals.spaces}</div>
+                <div className="metrics-kpi-value" style={{ color: SERIES.spaces }}>
+                  {totals.spaces}
+                </div>
               </div>
             </div>
 
@@ -203,34 +258,36 @@ export default function MetricsPage() {
                 <div className="metrics-chart-body metrics-chart-body-wide">
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={created} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                      <CartesianGrid stroke={GREY.grid} strokeDasharray="3 3" />
+                      <CartesianGrid stroke={CHROME.grid} strokeDasharray="3 3" />
                       <XAxis
                         dataKey="label"
-                        tick={{ fill: GREY.muted, fontSize: 11 }}
+                        tick={{ fill: CHROME.muted, fontSize: 11 }}
                         interval="preserveStartEnd"
                         minTickGap={24}
                       />
                       <YAxis
                         allowDecimals={false}
-                        tick={{ fill: GREY.muted, fontSize: 11 }}
+                        tick={{ fill: CHROME.muted, fontSize: 11 }}
                         width={36}
                       />
                       <Tooltip contentStyle={tooltipStyle()} />
                       <Area
                         type="monotone"
                         dataKey="entries"
+                        name="entries"
                         stackId="1"
-                        stroke={GREY.muted}
-                        fill={GREY.muted}
+                        stroke={SERIES.entries}
+                        fill={SERIES.entries}
                         fillOpacity={0.45}
                         isAnimationActive={false}
                       />
                       <Area
                         type="monotone"
                         dataKey="guides"
+                        name="guides"
                         stackId="1"
-                        stroke={GREY.strong}
-                        fill={GREY.strong}
+                        stroke={SERIES.guides}
+                        fill={SERIES.guides}
                         fillOpacity={0.55}
                         isAnimationActive={false}
                       />
@@ -254,11 +311,8 @@ export default function MetricsPage() {
                         paddingAngle={2}
                         isAnimationActive={false}
                       >
-                        {byKind.map((row, idx) => (
-                          <Cell
-                            key={row.kind}
-                            fill={KIND_COLORS[idx % KIND_COLORS.length]}
-                          />
+                        {byKind.map((row) => (
+                          <Cell key={row.kind} fill={kindFill(row.kind)} />
                         ))}
                       </Pie>
                       <Tooltip contentStyle={tooltipStyle()} />
@@ -266,11 +320,11 @@ export default function MetricsPage() {
                   </ResponsiveContainer>
                 </div>
                 <ul className="metrics-legend">
-                  {byKind.map((row, idx) => (
+                  {byKind.map((row) => (
                     <li key={row.kind}>
                       <span
                         className="metrics-legend-swatch"
-                        style={{ background: KIND_COLORS[idx % KIND_COLORS.length] }}
+                        style={{ background: kindFill(row.kind) }}
                       />
                       {row.kind} ({row.count})
                     </li>
@@ -286,16 +340,20 @@ export default function MetricsPage() {
                       layout="vertical"
                       margin={{ top: 4, right: 12, left: 8, bottom: 4 }}
                     >
-                      <CartesianGrid stroke={GREY.grid} strokeDasharray="3 3" horizontal={false} />
-                      <XAxis type="number" allowDecimals={false} tick={{ fill: GREY.muted, fontSize: 11 }} />
+                      <CartesianGrid stroke={CHROME.grid} strokeDasharray="3 3" horizontal={false} />
+                      <XAxis type="number" allowDecimals={false} tick={{ fill: CHROME.muted, fontSize: 11 }} />
                       <YAxis
                         type="category"
                         dataKey="type"
                         width={88}
-                        tick={{ fill: GREY.muted, fontSize: 11 }}
+                        tick={{ fill: CHROME.muted, fontSize: 11 }}
                       />
                       <Tooltip contentStyle={tooltipStyle()} />
-                      <Bar dataKey="count" fill={GREY.muted} isAnimationActive={false} />
+                      <Bar dataKey="count" isAnimationActive={false}>
+                        {byType.map((row) => (
+                          <Cell key={row.type} fill={typeFill(row.type)} />
+                        ))}
+                      </Bar>
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -309,16 +367,20 @@ export default function MetricsPage() {
                       layout="vertical"
                       margin={{ top: 4, right: 12, left: 8, bottom: 4 }}
                     >
-                      <CartesianGrid stroke={GREY.grid} strokeDasharray="3 3" horizontal={false} />
-                      <XAxis type="number" allowDecimals={false} tick={{ fill: GREY.muted, fontSize: 11 }} />
+                      <CartesianGrid stroke={CHROME.grid} strokeDasharray="3 3" horizontal={false} />
+                      <XAxis type="number" allowDecimals={false} tick={{ fill: CHROME.muted, fontSize: 11 }} />
                       <YAxis
                         type="category"
                         dataKey="name"
                         width={96}
-                        tick={{ fill: GREY.muted, fontSize: 11 }}
+                        tick={{ fill: CHROME.muted, fontSize: 11 }}
                       />
                       <Tooltip contentStyle={tooltipStyle()} />
-                      <Bar dataKey="count" fill={GREY.strong} isAnimationActive={false} />
+                      <Bar dataKey="count" isAnimationActive={false}>
+                        {bySpace.map((row, idx) => (
+                          <Cell key={row.space_id ?? row.name} fill={categoryFill(idx)} />
+                        ))}
+                      </Bar>
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -332,16 +394,20 @@ export default function MetricsPage() {
                       layout="vertical"
                       margin={{ top: 4, right: 12, left: 8, bottom: 4 }}
                     >
-                      <CartesianGrid stroke={GREY.grid} strokeDasharray="3 3" horizontal={false} />
-                      <XAxis type="number" allowDecimals={false} tick={{ fill: GREY.muted, fontSize: 11 }} />
+                      <CartesianGrid stroke={CHROME.grid} strokeDasharray="3 3" horizontal={false} />
+                      <XAxis type="number" allowDecimals={false} tick={{ fill: CHROME.muted, fontSize: 11 }} />
                       <YAxis
                         type="category"
                         dataKey="tag"
                         width={96}
-                        tick={{ fill: GREY.muted, fontSize: 11 }}
+                        tick={{ fill: CHROME.muted, fontSize: 11 }}
                       />
                       <Tooltip contentStyle={tooltipStyle()} />
-                      <Bar dataKey="count" fill={GREY.mid} isAnimationActive={false} />
+                      <Bar dataKey="count" isAnimationActive={false}>
+                        {topTags.map((row, idx) => (
+                          <Cell key={row.tag} fill={categoryFill(idx)} />
+                        ))}
+                      </Bar>
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -355,16 +421,20 @@ export default function MetricsPage() {
                       layout="vertical"
                       margin={{ top: 4, right: 12, left: 8, bottom: 4 }}
                     >
-                      <CartesianGrid stroke={GREY.grid} strokeDasharray="3 3" horizontal={false} />
-                      <XAxis type="number" allowDecimals={false} tick={{ fill: GREY.muted, fontSize: 11 }} />
+                      <CartesianGrid stroke={CHROME.grid} strokeDasharray="3 3" horizontal={false} />
+                      <XAxis type="number" allowDecimals={false} tick={{ fill: CHROME.muted, fontSize: 11 }} />
                       <YAxis
                         type="category"
                         dataKey="label"
                         width={96}
-                        tick={{ fill: GREY.muted, fontSize: 11 }}
+                        tick={{ fill: CHROME.muted, fontSize: 11 }}
                       />
                       <Tooltip contentStyle={tooltipStyle()} />
-                      <Bar dataKey="count" fill={GREY.fill} isAnimationActive={false} />
+                      <Bar dataKey="count" isAnimationActive={false}>
+                        {topCreators.map((row, idx) => (
+                          <Cell key={row.user_id} fill={categoryFill(idx)} />
+                        ))}
+                      </Bar>
                     </BarChart>
                   </ResponsiveContainer>
                 </div>

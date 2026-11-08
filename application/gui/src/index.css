@@ -1236,6 +1236,10 @@ select.input optgroup {
   font-weight: 400;
 }
 
+.metrics-kpi-warn {
+  border-color: color-mix(in oklab, oklch(0.72 0.14 55) 45%, var(--color-border));
+}
+
 .metrics-chart-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

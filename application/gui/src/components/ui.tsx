@@ -175,16 +175,18 @@ export function SpaceScopeSelect({
   onChange: (v: SpaceScope) => void;
 }) {
   return (
-    <select
-      className="input w-auto"
-      value={value}
-      onChange={(e) => onChange(e.target.value as SpaceScope)}
-      aria-label="Space scope"
-    >
-      <option value="">All</option>
-      <option value="group">Groups</option>
-      <option value="personal">Personal</option>
-    </select>
+    <label className="field toolbar-field">
+      <span>Space</span>
+      <select
+        className="input w-auto"
+        value={value}
+        onChange={(e) => onChange(e.target.value as SpaceScope)}
+      >
+        <option value="">All</option>
+        <option value="group">Groups</option>
+        <option value="personal">Personal</option>
+      </select>
+    </label>
   );
 }
 
@@ -199,6 +201,7 @@ export function TypeFilterMenu({
   const { mounted, leaving } = usePresence(open);
   const rootRef = useRef<HTMLDivElement>(null);
   const menuId = useId();
+  const labelId = useId();
   const allSelected = isUnrestrictedTypes(selected);
   const singleType = !allSelected && selected.length === 1 ? selected[0] : null;
   const label = allSelected
@@ -237,49 +240,52 @@ export function TypeFilterMenu({
   }
 
   return (
-    <div className="filter-menu" ref={rootRef}>
-      <button
-        aria-controls={menuId}
-        aria-expanded={open}
-        aria-haspopup="menu"
-        className="input w-auto filter-menu-trigger"
-        onClick={() => setOpen((v) => !v)}
-        type="button"
-        aria-label="Memory types"
-      >
-        <span
-          className={`filter-menu-label truncate${singleType ? ` type-tint kind-chip-${singleType}` : ""}`}
+    <div className="field toolbar-field">
+      <span id={labelId}>Type</span>
+      <div className="filter-menu" ref={rootRef}>
+        <button
+          aria-controls={menuId}
+          aria-expanded={open}
+          aria-haspopup="menu"
+          aria-labelledby={labelId}
+          className="input w-auto filter-menu-trigger"
+          onClick={() => setOpen((v) => !v)}
+          type="button"
         >
-          {label}
-        </span>
-        <FontAwesomeIcon
-          icon={faChevronDown}
-          className={`filter-menu-chevron ${open ? "filter-menu-chevron-open" : ""}`}
-        />
-      </button>
-      {mounted ? (
-        <div
-          className={`filter-menu-panel${leaving ? " filter-menu-panel-leave" : ""}`}
-          id={menuId}
-          role="menu"
-          aria-label="Memory types"
-        >
-          {MEMORY_TYPE_TOKENS.map((token) => {
-            const checked = selected.length === 0 || selected.includes(token);
-            return (
-              <label
-                key={token}
-                className="filter-menu-item"
-                role="menuitemcheckbox"
-                aria-checked={checked}
-              >
-                <input type="checkbox" checked={checked} onChange={() => toggle(token)} />
-                <span className={`type-tint kind-chip-${token}`}>{token}</span>
-              </label>
-            );
-          })}
-        </div>
-      ) : null}
+          <span
+            className={`filter-menu-label truncate${singleType ? ` type-tint kind-chip-${singleType}` : ""}`}
+          >
+            {label}
+          </span>
+          <FontAwesomeIcon
+            icon={faChevronDown}
+            className={`filter-menu-chevron ${open ? "filter-menu-chevron-open" : ""}`}
+          />
+        </button>
+        {mounted ? (
+          <div
+            className={`filter-menu-panel${leaving ? " filter-menu-panel-leave" : ""}`}
+            id={menuId}
+            role="menu"
+            aria-labelledby={labelId}
+          >
+            {MEMORY_TYPE_TOKENS.map((token) => {
+              const checked = selected.length === 0 || selected.includes(token);
+              return (
+                <label
+                  key={token}
+                  className="filter-menu-item"
+                  role="menuitemcheckbox"
+                  aria-checked={checked}
+                >
+                  <input type="checkbox" checked={checked} onChange={() => toggle(token)} />
+                  <span className={`type-tint kind-chip-${token}`}>{token}</span>
+                </label>
+              );
+            })}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }

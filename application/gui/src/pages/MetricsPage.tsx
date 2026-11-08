@@ -194,18 +194,20 @@ export default function MetricsPage() {
           corpus.
         </p>
         <form className="toolbar mb-6" onSubmit={(e) => e.preventDefault()}>
-          <select
-            className="input w-auto"
-            value={range}
-            onChange={(e) => setRange(e.target.value as MetricRange)}
-            aria-label="Time range"
-          >
-            {RANGES.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
+          <label className="field toolbar-field">
+            <span>Range</span>
+            <select
+              className="input w-auto"
+              value={range}
+              onChange={(e) => setRange(e.target.value as MetricRange)}
+            >
+              {RANGES.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </label>
           <div className="toolbar-divider" aria-hidden="true" />
           <SpaceScopeSelect value={spaceScope} onChange={setSpaceScope} />
         </form>

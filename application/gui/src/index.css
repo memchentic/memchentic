@@ -457,12 +457,17 @@ select.input optgroup {
 .toolbar {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-end;
   gap: 0.5rem;
   margin-bottom: 1rem;
   padding: 0.65rem 0.75rem;
   border: var(--border-width) solid var(--color-border);
   background: transparent;
+}
+
+.toolbar-field {
+  flex: 0 0 auto;
+  min-width: 9.5rem;
 }
 
 .toolbar-search {

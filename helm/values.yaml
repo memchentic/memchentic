@@ -63,6 +63,9 @@ config:
   postgresHostname: ""
   nearDupThreshold: "0.92"
   rrfK: "60"
+  searchDefaultLimit: "20"
+  browseDefaultLimit: "50"
+  resultMaxLimit: "100"
   corsOrigins: http://localhost:8080
   logLevel: INFO
   sessionRememberDays: "30"

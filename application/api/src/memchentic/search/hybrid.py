@@ -53,12 +53,12 @@ async def hybrid_search(
     tag_mode: str = "and",
     path_hint: str | None = None,
     repo_hint: str | None = None,
-    limit: int = 20,
+    limit: int | None = None,
 ) -> list[Digest]:
     settings = get_settings()
     embedder = get_embedder()
     qvec = embedder.embed(query)
-    limit = max(1, min(limit, 100))
+    limit = settings.resolve_search_limit(limit)
     fetch_n = max(limit * 3, 30)
 
     base_filters = []

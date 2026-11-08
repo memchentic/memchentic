@@ -476,7 +476,7 @@ async def browse_memories(
     space_id: str | None = None,
     kind: str | None = None,
     type: str | None = None,
-    limit: int = 50,
+    limit: int | None = None,
     offset: int = 0,
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
@@ -499,7 +499,7 @@ async def search_memories(
     space_id: str | None = None,
     type: str | None = None,
     kind: str = "entry",
-    limit: int = 20,
+    limit: int | None = None,
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> list[dict]:

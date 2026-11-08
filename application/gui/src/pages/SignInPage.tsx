@@ -4,6 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Navigate } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
+import { formatDocumentTitle } from "../documentTitle";
 
 type Provider = { oauth_provider: string; base_url: string; mcp_url: string };
 
@@ -21,6 +22,10 @@ export default function SignInPage() {
   useEffect(() => {
     api<Provider>("/api/provider").then(setProvider).catch(() => setProvider(null));
   }, []);
+
+  useEffect(() => {
+    document.title = formatDocumentTitle(mode === "login" ? "Sign in" : "Create account");
+  }, [mode]);
 
   if (me) return <Navigate to="/" replace />;
 

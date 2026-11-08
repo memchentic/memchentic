@@ -1,8 +1,9 @@
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faPlus, faXmark } from "@fortawesome/free-solid-svg-icons";
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth";
+import { formatDocumentTitle } from "../documentTitle";
 
 export type MemoryRow = {
   id: string;
@@ -34,6 +35,10 @@ export const ENTRY_TYPES = [
 ];
 
 export function PageHeader({ title, children }: { title: string; children?: ReactNode }) {
+  useEffect(() => {
+    document.title = formatDocumentTitle(title);
+  }, [title]);
+
   return (
     <div className="page-header">
       <h2 className="page-header-title">{title}</h2>
@@ -183,7 +188,7 @@ export function MemoryList({ rows, empty }: { rows: MemoryRow[]; empty: string }
                   ) : null}
                 </td>
                 <td>
-                  <span className={`kind-chip kind-chip-${m.kind === "guide" ? "guide" : "entry"}`}>
+                  <span className={`kind-chip kind-chip-${kindLabel}`}>
                     {kindLabel}
                   </span>
                 </td>

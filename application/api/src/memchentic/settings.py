@@ -2,7 +2,7 @@ from functools import lru_cache
 from typing import Literal
 from urllib.parse import quote_plus
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 OAuthProvider = Literal[
@@ -68,6 +68,21 @@ class Settings(BaseSettings):
     near_dup_threshold: float = Field(default=0.92, alias="NEAR_DUP_THRESHOLD")
     rrf_k: int = Field(default=60, alias="RRF_K")
 
+    # Default result counts when callers omit ``limit`` (MCP/REST/services).
+    search_default_limit: int = Field(default=20, ge=1, alias="SEARCH_DEFAULT_LIMIT")
+    browse_default_limit: int = Field(default=50, ge=1, alias="BROWSE_DEFAULT_LIMIT")
+    result_max_limit: int = Field(default=100, ge=1, alias="RESULT_MAX_LIMIT")
+
+    def resolve_search_limit(self, limit: int | None) -> int:
+        """Clamp a search/find limit, substituting the env default when omitted."""
+        raw = self.search_default_limit if limit is None else limit
+        return max(1, min(int(raw), self.result_max_limit))
+
+    def resolve_browse_limit(self, limit: int | None) -> int:
+        """Clamp a browse/list limit, substituting the env default when omitted."""
+        raw = self.browse_default_limit if limit is None else limit
+        return max(1, min(int(raw), self.result_max_limit))
+
     cors_origins: str = Field(
         default="http://localhost:5173,http://127.0.0.1:5173", alias="CORS_ORIGINS"
     )
@@ -76,6 +91,14 @@ class Settings(BaseSettings):
     session_remember_days: int = Field(default=30, ge=1, alias="SESSION_REMEMBER_DAYS")
     session_browser_hours: int = Field(default=12, ge=1, alias="SESSION_BROWSER_HOURS")
     session_cookie_secure: bool | None = Field(default=None, alias="SESSION_COOKIE_SECURE")
+
+    @field_validator("session_cookie_secure", mode="before")
+    @classmethod
+    def _empty_optional_bool(cls, value: object) -> object:
+        """Treat blank env values as unset (Compose often ships ``KEY=``)."""
+        if value is None or value == "":
+            return None
+        return value
 
     @property
     def cookie_secure(self) -> bool:

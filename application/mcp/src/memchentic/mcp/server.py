@@ -140,7 +140,7 @@ async def find(
     space_id: str | None = None,
     path_hint: str | None = None,
     repo_hint: str | None = None,
-    limit: int = 20,
+    limit: int | None = None,
 ) -> list[dict[str, Any]]:
     """Hybrid search → digests."""
     principal = require_principal()
@@ -221,7 +221,7 @@ async def browse(
     space_id: str | None = None,
     kind: str | None = None,
     type: str | None = None,
-    limit: int = 50,
+    limit: int | None = None,
     offset: int = 0,
 ) -> list[dict[str, Any]]:
     """Paginated listing without a query."""
@@ -244,7 +244,7 @@ async def since(
     since: str | None = None,
     until: str | None = None,
     space_id: str | None = None,
-    limit: int = 50,
+    limit: int | None = None,
 ) -> list[dict[str, Any]]:
     """Time-window recall → digests."""
     principal = require_principal()
@@ -265,7 +265,7 @@ async def by_tag(
     tags: list[str],
     mode: str = "and",
     space_id: str | None = None,
-    limit: int = 50,
+    limit: int | None = None,
 ) -> list[dict[str, Any]]:
     """Tag AND/OR → digests."""
     principal = require_principal()
@@ -323,7 +323,7 @@ async def guide_write(
 
 @mcp.tool
 async def guide_find(
-    query: str, space_id: str | None = None, limit: int = 20
+    query: str, space_id: str | None = None, limit: int | None = None
 ) -> list[dict[str, Any]]:
     """Search guides by query; rank by confidence × recency."""
     principal = require_principal()
@@ -340,7 +340,7 @@ async def guide_find(
 
 @mcp.tool
 async def about_path(
-    path: str, repo_hint: str | None = None, limit: int = 20
+    path: str, repo_hint: str | None = None, limit: int | None = None
 ) -> list[dict[str, Any]]:
     """Digests tied to a file/dir path (or repo hint)."""
     principal = require_principal()
@@ -361,7 +361,7 @@ async def trace(id: str) -> dict[str, Any]:
 
 @mcp.tool
 async def overlap_report(
-    space_id: str | None = None, limit: int = 20
+    space_id: str | None = None, limit: int | None = None
 ) -> dict[str, Any]:
     """Read-only: near-duplicate pairs, conflicts, soon-to-expire."""
     principal = require_principal()

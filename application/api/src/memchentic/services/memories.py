@@ -245,12 +245,13 @@ async def browse(
     space_id: uuid.UUID | None = None,
     kind: str | None = None,
     entry_type: str | None = None,
-    limit: int = 50,
+    limit: int | None = None,
     offset: int = 0,
 ) -> list[Memory]:
     space_ids = await _accessible_space_ids(session, principal, space_id)
     if not space_ids:
         return []
+    limit = get_settings().resolve_browse_limit(limit)
     stmt = select(Memory).where(Memory.space_id.in_(space_ids))
     if kind:
         stmt = stmt.where(Memory.kind == MemoryKind(kind))
@@ -267,11 +268,12 @@ async def since(
     since_dt: datetime | None = None,
     until_dt: datetime | None = None,
     space_id: uuid.UUID | None = None,
-    limit: int = 50,
+    limit: int | None = None,
 ) -> list[Digest]:
     space_ids = await _accessible_space_ids(session, principal, space_id)
     if not space_ids:
         return []
+    limit = get_settings().resolve_browse_limit(limit)
     stmt = select(Memory).where(Memory.space_id.in_(space_ids))
     if since_dt:
         stmt = stmt.where(Memory.updated_at >= since_dt)
@@ -301,11 +303,12 @@ async def by_tag(
     tags: list[str],
     mode: str = "and",
     space_id: uuid.UUID | None = None,
-    limit: int = 50,
+    limit: int | None = None,
 ) -> list[Digest]:
     space_ids = await _accessible_space_ids(session, principal, space_id)
     if not space_ids or not tags:
         return []
+    limit = get_settings().resolve_browse_limit(limit)
     stmt = select(Memory).where(Memory.space_id.in_(space_ids))
     if mode == "or":
         stmt = stmt.where(Memory.tags.overlap(tags))
@@ -355,7 +358,7 @@ async def find(
     tags: list[str] | None = None,
     path_hint: str | None = None,
     repo_hint: str | None = None,
-    limit: int = 20,
+    limit: int | None = None,
 ) -> list[Digest]:
     space_ids = await _accessible_space_ids(session, principal, space_id)
     return await hybrid_search(
@@ -425,7 +428,7 @@ async def guide_find(
     *,
     query: str,
     space_id: uuid.UUID | None = None,
-    limit: int = 20,
+    limit: int | None = None,
 ) -> list[Digest]:
     digests = await hybrid_search(
         session,
@@ -457,11 +460,12 @@ async def about_path(
     *,
     path: str,
     repo_hint: str | None = None,
-    limit: int = 20,
+    limit: int | None = None,
 ) -> list[Digest]:
     space_ids = await _accessible_space_ids(session, principal, None)
     if not space_ids:
         return []
+    limit = get_settings().resolve_search_limit(limit)
     stmt = select(Memory).where(
         Memory.space_id.in_(space_ids),
         or_(Memory.path_hint.ilike(f"%{path}%"), Memory.body.ilike(f"%{path}%")),
@@ -507,9 +511,10 @@ async def overlap_report(
     principal: Principal,
     *,
     space_id: uuid.UUID | None = None,
-    limit: int = 20,
+    limit: int | None = None,
 ) -> dict[str, Any]:
     settings = get_settings()
+    limit = settings.resolve_search_limit(limit)
     space_ids = await _accessible_space_ids(session, principal, space_id)
     if not space_ids:
         return {"near_duplicates": [], "expiring": [], "conflicts": []}

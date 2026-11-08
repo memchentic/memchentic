@@ -595,7 +595,56 @@ select.input optgroup {
   white-space: nowrap;
 }
 
+/* Soft hue accents on greyscale chrome — distinct per type, low chroma. */
 .kind-chip-guide {
+  border-color: oklch(0.55 0.08 230);
+  background: oklch(0.22 0.03 230);
+  color: oklch(0.86 0.06 230);
+}
+
+.kind-chip-fact {
+  border-color: oklch(0.55 0.08 250);
+  background: oklch(0.22 0.03 250);
+  color: oklch(0.86 0.06 250);
+}
+
+.kind-chip-preference {
+  border-color: oklch(0.55 0.09 310);
+  background: oklch(0.22 0.035 310);
+  color: oklch(0.86 0.07 310);
+}
+
+.kind-chip-decision {
+  border-color: oklch(0.58 0.1 85);
+  background: oklch(0.23 0.04 85);
+  color: oklch(0.88 0.08 85);
+}
+
+.kind-chip-instruction {
+  border-color: oklch(0.55 0.09 165);
+  background: oklch(0.22 0.035 165);
+  color: oklch(0.86 0.07 165);
+}
+
+.kind-chip-feedback {
+  border-color: oklch(0.55 0.1 25);
+  background: oklch(0.22 0.04 25);
+  color: oklch(0.86 0.08 25);
+}
+
+.kind-chip-insight {
+  border-color: oklch(0.55 0.1 295);
+  background: oklch(0.22 0.04 295);
+  color: oklch(0.86 0.08 295);
+}
+
+.kind-chip-note {
+  border-color: oklch(0.5 0.02 260);
+  background: oklch(0.22 0.01 260);
+  color: oklch(0.82 0.02 260);
+}
+
+.kind-chip-entry {
   border-color: var(--color-border-strong);
   color: var(--color-ink);
 }

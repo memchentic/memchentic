@@ -16,6 +16,9 @@ data:
   ADMIN_DISPLAY_NAME: {{ .Values.config.adminDisplayName | quote }}
   NEAR_DUP_THRESHOLD: {{ .Values.config.nearDupThreshold | quote }}
   RRF_K: {{ .Values.config.rrfK | quote }}
+  SEARCH_DEFAULT_LIMIT: {{ .Values.config.searchDefaultLimit | quote }}
+  BROWSE_DEFAULT_LIMIT: {{ .Values.config.browseDefaultLimit | quote }}
+  RESULT_MAX_LIMIT: {{ .Values.config.resultMaxLimit | quote }}
   CORS_ORIGINS: {{ .Values.config.corsOrigins | quote }}
   LOG_LEVEL: {{ .Values.config.logLevel | quote }}
   SESSION_REMEMBER_DAYS: {{ .Values.config.sessionRememberDays | quote }}

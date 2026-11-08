@@ -10,6 +10,10 @@
 
 services:
   application:
+    # Local rebuilds only — prod base pulls APPLICATION_IMAGE from GHCR.
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
     command:
       [
         "uvicorn",

@@ -20,9 +20,7 @@ services:
       retries: 10
 
   application:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
+    image: ${APPLICATION_IMAGE:-ghcr.io/memchentic/memchentic:0.0.1}
     ports:
       - "${GUI_PORT:-18080}:8080"
       - "${API_PORT:-18081}:8080"

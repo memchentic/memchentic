@@ -17,8 +17,8 @@ Plugin id: `memchentic`.
 ## Ownership
 
 This plugin teaches agents how to use the **memchentic** MCP (spaces, entries,
-guides, hybrid find). Product contracts live in repo-root `docs/`. Portable
-posture / coding / planning craft lives in
+guides, hybrid find). User docs live under `docs/sphinx/`. Portable posture /
+coding / planning craft lives in
 [`nodadyoushutup/marketplace`](https://github.com/nodadyoushutup/marketplace)
 — install those plugins; do not fork them under `memchentic-*`.
 

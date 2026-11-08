@@ -5,8 +5,8 @@ MCP: when to recall, when to capture, and which tools fit which jobs. It ships
 inside this repository so hosts can import
 `https://github.com/nodadyoushutup/memchentic` directly.
 
-Product contracts still live in repo `docs/` (agent/product truth). The plugin
-does not replace the server.
+The plugin teaches harness craft for the MCP; it does not replace the server.
+User-facing docs are this Sphinx site.
 
 ## Concepts
 

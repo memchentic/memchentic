@@ -61,8 +61,8 @@ Open the UI on port `18080` (default), sign in, and create an API key. Point
 your MCP client at `http://<host>:18080/mcp`.
 
 Import this GitHub repo as a marketplace and install **memchentic**, then keep
-the MCP connected so recall and capture run on their own. Details live under
-`marketplace/`. Product truth and decisions live in `docs/`.
+the MCP connected so recall and capture run on their own. Plugin details live
+under `marketplace/`; user docs under `docs/sphinx/`.
 
 ## License
 

@@ -1,7 +1,7 @@
 # memchentic — agent guide
 
-Product truth lives in `docs/` (read `docs/DECISIONS.md` first). Original
-product: do not fork, wrap, or copy other memory servers' tool names.
+User-facing docs live under `docs/sphinx/`. Original product: do not fork,
+wrap, or copy other memory servers' tool names.
 
 ## Layout
 
@@ -13,7 +13,7 @@ product: do not fork, wrap, or copy other memory servers' tool names.
 | `application/mcp/` | FastMCP tools/context (`src/memchentic/mcp/`); image + local overlay merge into API `src/` |
 | `application/gui/` | React + Tailwind (greyscale dark) + Font Awesome |
 | `marketplace/` | In-repo agent plugin (`memchentic`); host catalogs at repo root |
-| `docs/` | Product truth (`DECISIONS.md`, …). User-facing Sphinx site under `docs/sphinx/` |
+| `docs/sphinx/` | User-facing Sphinx (MyST) site; optional Compose overlay `docker/docs.yaml` |
 
 Inside containers the code root is `/opt/memchentic` (API tree; MCP overlaid at
 `src/memchentic/mcp`). Compose project name is `memchentic`; services are
@@ -55,7 +55,7 @@ cd docker && docker compose up -d --build docs
 # default DOCS_PORT=18099 — nginx serves built HTML
 ```
 
-Product truth stays in `docs/*.md`. Author user pages under `docs/sphinx/source/`.
+Author user pages under `docs/sphinx/source/`.
 
 ## Rules
 

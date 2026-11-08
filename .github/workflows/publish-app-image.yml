@@ -217,7 +217,11 @@ jobs:
       VERSION: ${{ needs.plan.outputs.version }}
 
     steps:
+      # GitHub-hosted images already have enough free space; prune/rm here burns
+      # ~1–2m on amd64 (larger tool caches + docker prune) while arm64 races ahead.
+      # Self-hosted build nodes accumulate layers — clean only there.
       - name: Free disk space
+        if: github.event.inputs.runner == 'self-hosted'
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
             /opt/hostedtoolcache/CodeQL || true
@@ -260,6 +264,7 @@ jobs:
 
     steps:
       - name: Free disk space
+        if: github.event.inputs.runner == 'self-hosted'
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
             /opt/hostedtoolcache/CodeQL || true

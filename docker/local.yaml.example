@@ -14,6 +14,10 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
+      args:
+        INSTALL_DEV: "1"
+    # Bind mounts need root (or matching host uid); image defaults to uid 10001.
+    user: "0:0"
     command:
       [
         "uvicorn",

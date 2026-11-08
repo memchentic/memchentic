@@ -202,7 +202,7 @@ function NewGroup({
       </div>
       <div className="composer-footer">
         <button
-          className="btn btn-primary ml-auto"
+          className="btn ml-auto"
           type="submit"
           title="Save"
           aria-label="Save"

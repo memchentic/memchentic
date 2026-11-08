@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from memchentic.auth.providers import PRESETS, resolve_issuer
+from memchentic.auth.providers import resolve_issuer
 from memchentic.settings import Settings
 
 # Providers that can list directory groups via the configured OAuth client.
@@ -36,6 +36,27 @@ class IdPGroupListResult:
 def provider_supports_groups(provider: str) -> bool:
     """True when this OAuth provider has a groups directory adapter."""
     return provider in _SUPPORTS_LIST
+
+
+def _same_host_https(base_url: str, next_url: str | None) -> str | None:
+    """Return ``next_url`` only when it is https on the same host as ``base_url``.
+
+    Args:
+        base_url: The directory URL already called (scheme+host trusted).
+        next_url: Pagination link from the provider response.
+
+    Returns:
+        The next URL, or ``None`` when missing or off-host / non-https.
+    """
+    if not next_url or not isinstance(next_url, str):
+        return None
+    base = urlparse(base_url)
+    nxt = urlparse(next_url)
+    if nxt.scheme != "https":
+        return None
+    if (nxt.hostname or "").casefold() != (base.hostname or "").casefold():
+        return None
+    return next_url
 
 
 def groups_from_claims(claims: dict[str, Any]) -> set[str]:
@@ -210,7 +231,7 @@ async def _list_okta(settings: Settings) -> list[IdPGroupOption]:
                 if 'rel="next"' in part:
                     next_url = part[part.find("<") + 1 : part.find(">")]
                     break
-            url = next_url
+            url = _same_host_https(url, next_url)
     return groups
 
 
@@ -237,7 +258,7 @@ async def _list_entra(settings: Settings) -> list[IdPGroupOption]:
                 name = str(row.get("displayName") or gid).strip()
                 if gid:
                     groups.append(IdPGroupOption(id=gid, name=name or gid))
-            url = payload.get("@odata.nextLink")
+            url = _same_host_https(url, payload.get("@odata.nextLink"))
     return groups
 
 
@@ -283,7 +304,7 @@ async def _list_authentik(settings: Settings) -> list[IdPGroupOption]:
                 if gid:
                     groups.append(IdPGroupOption(id=gid, name=name or gid))
             next_link = payload.get("next") if isinstance(payload, dict) else None
-            url = next_link if isinstance(next_link, str) else None
+            url = _same_host_https(url, next_link if isinstance(next_link, str) else None)
     return groups
 
 
@@ -357,10 +378,3 @@ async def _list_auth0(settings: Settings) -> list[IdPGroupOption]:
             if gid:
                 groups.append(IdPGroupOption(id=gid, name=name or gid))
     return groups
-
-
-def provider_display_name(settings: Settings) -> str:
-    preset = PRESETS.get(settings.oauth_provider)
-    if preset and preset.label:
-        return preset.label
-    return settings.oauth_provider

@@ -27,3 +27,7 @@ data:
   SESSION_COOKIE_SECURE: {{ .Values.config.sessionCookieSecure | quote }}
   {{- end }}
   REGISTER_ENABLED: {{ .Values.config.registerEnabled | quote }}
+  ENABLE_API_DOCS: {{ .Values.config.enableApiDocs | default "false" | quote }}
+  POSTGRES_SSLMODE: {{ .Values.config.postgresSslmode | quote }}
+  POSTGRES_SSLROOTCERT: {{ .Values.config.postgresSslrootcert | quote }}
+  POSTGRES_APP_USER: {{ .Values.config.postgresAppUser | default "memchentic_app" | quote }}

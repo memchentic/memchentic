@@ -231,10 +231,10 @@ class AuthCode(Base):
     __tablename__ = "auth_codes"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    code: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    code_hash: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     client_id: Mapped[str] = mapped_column(String(128), nullable=False)
-    user_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=True
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     redirect_uri: Mapped[str] = mapped_column(String(1024), nullable=False)
     scope: Mapped[str] = mapped_column(String(512), nullable=False, default="openid profile email")
@@ -250,9 +250,10 @@ class AuthRefreshToken(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     token_hash: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    family_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
     client_id: Mapped[str] = mapped_column(String(128), nullable=False)
-    user_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=True
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     scope: Mapped[str] = mapped_column(String(512), nullable=False, default="openid profile email")
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

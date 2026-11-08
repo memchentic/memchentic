@@ -1,5 +1,5 @@
 /** Fallback when site name is missing. */
-export const DEFAULT_APP_NAME = "Memchentic";
+const DEFAULT_APP_NAME = "Memchentic";
 
 /**
  * Build the browser tab title from an optional page title and the app name.

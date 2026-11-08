@@ -1,12 +1,14 @@
 # Default values for memchentic.
 # Override with -f / --set. Homelab site overrides live outside this repo.
+# Secrets: use existing or externalSecret — inline values are empty placeholders only.
 
 replicaCount: 1
 
 image:
   repository: ghcr.io/memchentic/memchentic
-  tag: "latest"
-  pullPolicy: Always
+  # Empty → Chart.appVersion (pinned). Do not use latest in production.
+  tag: ""
+  pullPolicy: IfNotPresent
 
 imagePullSecrets: []
 
@@ -21,8 +23,22 @@ serviceAccount:
 podAnnotations: {}
 podLabels: {}
 
-podSecurityContext: {}
-securityContext: {}
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 10001
+  capabilities:
+    drop:
+      - ALL
 
 service:
   type: ClusterIP
@@ -33,7 +49,7 @@ ingress:
   className: nginx
   annotations: {}
   hosts:
-    - host: memchentic.local
+    - host: memchentic.example.com
       paths:
         - path: /
           pathType: Prefix
@@ -47,7 +63,8 @@ affinity: {}
 
 # Non-secret application settings (ConfigMap → env).
 config:
-  baseUrl: http://localhost:8080
+  # Must be the public https origin in real deployments.
+  baseUrl: ""
   oauthProvider: internal
   oauthClientId: ""
   oauthIssuer: ""
@@ -57,35 +74,45 @@ config:
   adminEmail: admin@example.com
   adminDisplayName: Admin
   postgresUser: memchentic
+  postgresAppUser: memchentic_app
   postgresDb: memchentic
   postgresPort: 5432
   # Used when postgres.enabled=false (external database hostname).
   postgresHostname: ""
+  # disable | prefer | require | verify-ca | verify-full. Use verify-full for any
+  # database reached over a network you do not own (e.g. CNPG, managed Postgres).
+  postgresSslmode: prefer
+  # CA bundle path inside the pod; empty = system CAs.
+  postgresSslrootcert: ""
   nearDupThreshold: "0.92"
   rrfK: "60"
   searchDefaultLimit: "20"
   browseDefaultLimit: "50"
   resultMaxLimit: "100"
-  corsOrigins: http://localhost:8080
+  corsOrigins: ""
   logLevel: INFO
   sessionRememberDays: "30"
   sessionBrowserHours: "12"
-  # Leave empty to derive Secure from baseUrl scheme.
-  sessionCookieSecure: ""
+  # Default Secure cookies for non-loopback hosts.
+  sessionCookieSecure: "true"
   # Public self-registration when OAUTH_PROVIDER=internal (System Settings can toggle live).
   registerEnabled: "true"
+  enableApiDocs: "false"
 
 # Secret modes (exactly one):
-#   inline          — chart renders a Secret from secrets.inline (dev default)
-#   existing        — use secrets.existingSecret (pre-synced by any tool)
+#   existing        — use secrets.existingSecret (pre-synced by any tool) [preferred]
 #   externalSecret  — chart renders ExternalSecret (Vault / AWS SM / 1Password via ESO)
+#   inline          — chart renders a Secret from secrets.inline (dev only; no defaults)
 secrets:
-  mode: inline
+  mode: existing
   existingSecret: ""
   inline:
-    ADMIN_PASSWORD: "change-me-please-16chars"
-    ADMIN_API_KEY: "change-me-admin-api-key-16"
-    POSTGRES_PASSWORD: "memchentic-change-me"
+    ADMIN_PASSWORD: ""
+    ADMIN_API_KEY: ""
+    POSTGRES_PASSWORD: ""
+    POSTGRES_APP_PASSWORD: ""
+    # 32+ chars; encrypts signing keys stored in Postgres. Losing it invalidates them.
+    ENCRYPTION_KEY: ""
     OAUTH_CLIENT_SECRET: ""
   externalSecret:
     refreshInterval: 1h
@@ -103,6 +130,12 @@ secrets:
       POSTGRES_PASSWORD:
         key: ""
         property: POSTGRES_PASSWORD
+      POSTGRES_APP_PASSWORD:
+        key: ""
+        property: POSTGRES_APP_PASSWORD
+      ENCRYPTION_KEY:
+        key: ""
+        property: ENCRYPTION_KEY
       OAUTH_CLIENT_SECRET:
         key: ""
         property: OAUTH_CLIENT_SECRET

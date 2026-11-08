@@ -25,14 +25,10 @@
   --color-ink: oklch(0.985 0 0);
   --color-muted: oklch(0.708 0 0);
   --color-faint: oklch(0.55 0 0);
-  --color-accent: oklch(0.985 0 0);
   --radius-sm: 0.375rem;
   --radius-md: 0.5rem;
   --radius-lg: 0.625rem;
   --font-sans:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
-  --font-display:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
   --shadow-raised: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
@@ -370,11 +366,6 @@ body {
   opacity: 0.52;
 }
 
-.btn-primary {
-  /* Same raised charcoal as Archentic fw-button — weight carries hierarchy. */
-  font-weight: 600;
-}
-
 .input {
   width: 100%;
   min-height: var(--control-height);
@@ -407,33 +398,11 @@ select.input optgroup {
 }
 
 /* —— surfaces / lists / tables —— */
-.card-panel,
 .panel {
   border: var(--border-width) solid var(--color-border);
   border-radius: 0;
   background: transparent;
   color: var(--color-ink);
-}
-
-.list-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  padding: 0.25rem 0;
-}
-
-.list-row {
-  display: block;
-  border-radius: var(--radius-md);
-  background: transparent;
-  padding: 0.75rem 1rem;
-  color: var(--color-ink);
-  text-decoration: none;
-  transition: background-color var(--duration-micro) ease;
-}
-
-.list-row:hover {
-  background: var(--color-surface-3);
 }
 
 .data-table {
@@ -1233,6 +1202,97 @@ select.input optgroup {
 
 .settings-main-pane {
   animation: fade-in var(--duration-enter) var(--ease-out);
+}
+
+/* —— metrics —— */
+.metrics-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: var(--content-pad);
+  margin-bottom: var(--content-pad);
+}
+
+.metrics-kpi {
+  padding: var(--content-pad);
+}
+
+.metrics-kpi-label {
+  color: var(--color-muted);
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.metrics-kpi-value {
+  margin-top: 0.35rem;
+  font-size: 1.75rem;
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+.metrics-kpi-split {
+  margin: 0 0.35rem;
+  color: var(--color-faint);
+  font-weight: 400;
+}
+
+.metrics-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--content-pad);
+}
+
+.metrics-chart {
+  padding: var(--content-pad);
+  min-height: 16rem;
+}
+
+.metrics-chart-title {
+  margin: 0 0 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.metrics-chart-body {
+  width: 100%;
+  height: 14rem;
+}
+
+.metrics-chart-body-wide {
+  height: 16rem;
+}
+
+.metrics-chart-grid > .metrics-chart:first-child {
+  grid-column: 1 / -1;
+}
+
+.metrics-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--color-muted);
+  font-size: 0.75rem;
+}
+
+.metrics-legend-swatch {
+  display: inline-block;
+  width: 0.65rem;
+  height: 0.65rem;
+  margin-right: 0.4rem;
+  vertical-align: middle;
+}
+
+@media (max-width: 720px) {
+  .metrics-chart-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .metrics-chart-grid > .metrics-chart:first-child {
+    grid-column: auto;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

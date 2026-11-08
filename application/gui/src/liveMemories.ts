@@ -1,6 +1,6 @@
 import { getToken, refreshAccessToken } from "./api";
 import {
-  MEMORY_TYPE_TOKENS,
+  isUnrestrictedTypes,
   type MemoryRow,
   type MemoryTypeToken,
   type SpaceScope,
@@ -23,7 +23,7 @@ export type MemoryLiveEvent = {
   updated_at?: string | null;
 };
 
-export type MembershipLite = { id: string; kind: string };
+type MembershipLite = { id: string; kind: string };
 
 const SAFETY_POLL_MS = 30_000;
 
@@ -67,9 +67,10 @@ function matchesFilters(
     if (!groupIds.has(event.space_id)) return false;
   }
 
-  const unrestricted =
-    opts.types.length === 0 || opts.types.length === MEMORY_TYPE_TOKENS.length;
-  if (!unrestricted && !opts.types.includes(eventTypeToken(event) as MemoryTypeToken)) {
+  if (
+    !isUnrestrictedTypes(opts.types) &&
+    !opts.types.includes(eventTypeToken(event) as MemoryTypeToken)
+  ) {
     return false;
   }
   return true;

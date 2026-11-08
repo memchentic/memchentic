@@ -2,17 +2,19 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import uuid
 from collections.abc import AsyncIterator
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from memchentic.auth.principal import Principal, check_admin_password, resolve_bearer
+from memchentic.auth.rate_limit import check_rate_limit
 from memchentic.auth.sessions import (
     SESSION_COOKIE,
     SESSION_COOKIE_PATH,
@@ -25,9 +27,11 @@ from memchentic.auth.tokens import ACCESS_TOKEN_SECONDS, issue_access_token
 from memchentic.auth.users import (
     authenticate_internal,
     delete_user,
+    directory_user_visible,
     get_user,
     get_user_by_email,
-    list_users,
+    list_directory_users,
+    lookup_user_by_email,
     providers_for,
     register_internal_user,
     user_delete_eligibility,
@@ -40,6 +44,7 @@ from memchentic.services import api_keys as api_key_service
 from memchentic.services import auth_groups as auth_group_service
 from memchentic.services import instance_settings as instance_settings_service
 from memchentic.services import memories as memory_service
+from memchentic.services import metrics as metrics_service
 from memchentic.services import spaces as space_service
 from memchentic.services.spaces import SpaceResolveError, Visibility
 from memchentic.settings import get_settings
@@ -159,13 +164,32 @@ async def health() -> dict[str, str]:
     return {"status": "ok", "service": "memchentic"}
 
 
-async def _readable_space_ids(principal: Principal) -> set[str]:
-    """Load space ids the principal may read using a short-lived session."""
+_SSE_REAUTH_SECONDS = 10.0
+
+
+async def _reauth_memory_events(
+    token: str | None,
+) -> tuple[Principal, set[str]] | None:
+    """Re-resolve bearer auth and readable space ids on a fresh DB session.
+
+    Args:
+        token: Original Authorization bearer token (JWT or API key).
+
+    Returns:
+        ``(principal, allowed_space_ids)`` when the token is still valid,
+        otherwise ``None`` (caller should end the SSE stream).
+    """
     factory = get_session_factory()
     async with factory() as session:
+        principal = await resolve_bearer(session, token)
+        if principal is None:
+            return None
         await set_rls_context(session, user_id=principal.user_id, is_admin=principal.is_admin)
-        ids = await memory_service.accessible_space_ids(session, principal, None)
-        return {str(sid) for sid in ids}
+        allowed = {
+            str(sid)
+            for sid in await memory_service.accessible_space_ids(session, principal, None)
+        }
+        return principal, allowed
 
 
 @api_router.get("/events/memories")
@@ -173,40 +197,44 @@ async def memory_events(request: Request) -> StreamingResponse:
     """SSE stream of memory mutations the caller is allowed to see.
 
     Auth is resolved before the stream starts so the request does not hold a
-    pooled DB session open for the lifetime of the SSE connection. Events are
-    ACL-filtered by space membership. Clients should reconnect on drop; the
-    GUI also keeps a 30s safety poll.
+    pooled DB session open for the lifetime of the SSE connection. The stream
+    re-calls ``resolve_bearer`` and refreshes readable space ids at least every
+    10s (and on idle keepalive). Invalid tokens end the stream. Clients should
+    reconnect on drop; the GUI also keeps a 30s safety poll.
     """
     auth = request.headers.get("Authorization") or ""
     token = auth[7:].strip() if auth.lower().startswith("bearer ") else None
-    factory = get_session_factory()
-    async with factory() as session:
-        principal = await resolve_bearer(session, token)
-        if principal is None:
-            raise HTTPException(status_code=401, detail="Unauthorized")
-        await set_rls_context(session, user_id=principal.user_id, is_admin=principal.is_admin)
-        allowed = {
-            str(sid)
-            for sid in await memory_service.accessible_space_ids(session, principal, None)
-        }
+    initial = await _reauth_memory_events(token)
+    if initial is None:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    principal, allowed = initial
 
     async def gen() -> AsyncIterator[bytes]:
-        nonlocal allowed
+        nonlocal principal, allowed
+        last_reauth = time.monotonic()
         yield b": connected\n\n"
         async with subscribe_memory_events() as queue:
             while True:
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=25.0)
                 except TimeoutError:
-                    # Re-resolve membership so revoked spaces stop receiving events.
-                    allowed = await _readable_space_ids(principal)
+                    refreshed = await _reauth_memory_events(token)
+                    if refreshed is None:
+                        return
+                    principal, allowed = refreshed
+                    last_reauth = time.monotonic()
                     yield b": keepalive\n\n"
                     continue
+                now = time.monotonic()
+                if now - last_reauth >= _SSE_REAUTH_SECONDS:
+                    refreshed = await _reauth_memory_events(token)
+                    if refreshed is None:
+                        return
+                    principal, allowed = refreshed
+                    last_reauth = now
                 space_id = str(event.get("space_id") or "")
                 if space_id not in allowed:
-                    allowed = await _readable_space_ids(principal)
-                    if space_id not in allowed:
-                        continue
+                    continue
                 data = json.dumps(event, separators=(",", ":"))
                 yield f"event: memory\ndata: {data}\n\n".encode()
 
@@ -223,11 +251,14 @@ async def memory_events(request: Request) -> StreamingResponse:
 
 @api_router.post("/auth/register")
 async def register(
+    request: Request,
     body: RegisterIn,
     session: AsyncSession = Depends(db_session),
     principal: Principal | None = Depends(get_optional_principal),
 ) -> dict:
     settings = get_settings()
+    ip = request.client.host if request.client else "unknown"
+    check_rate_limit(f"register:{ip}", limit=10, window_seconds=60)
     if settings.oauth_provider != "internal":
         raise HTTPException(400, "Registration only in internal mode")
     if not await instance_settings_service.get_register_enabled(session) and (
@@ -239,7 +270,7 @@ async def register(
             session, email=body.email, password=body.password, display_name=body.display_name
         )
     except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        raise HTTPException(400, "Unable to register") from exc
     return {"id": str(user.id), "email": user.email, "display_name": user.display_name}
 
 
@@ -292,9 +323,16 @@ async def _session_tokens(
 
 @api_router.post("/auth/login")
 async def login(
-    body: LoginIn, response: Response, session: AsyncSession = Depends(db_session)
+    request: Request,
+    body: LoginIn,
+    response: Response,
+    session: AsyncSession = Depends(db_session),
 ) -> dict:
     settings = get_settings()
+    ip = request.client.host if request.client else "unknown"
+    check_rate_limit(
+        f"login:{ip}:{body.email.casefold()}", limit=20, window_seconds=60
+    )
     # Prefer a real DB user when email+password match; break-glass is fallback.
     user = await authenticate_internal(session, email=body.email, password=body.password)
     if user:
@@ -452,8 +490,11 @@ async def users(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> list[dict]:
-    """Authenticated directory for group invites; admins get extra metadata."""
-    rows = await list_users(session)
+    """Authenticated directory for group invites; admins get extra metadata.
+
+    Non-admins only see users who share at least one group space with them.
+    """
+    rows = await list_directory_users(session, principal)
     out: list[dict] = []
     for u in rows:
         row: dict = {
@@ -473,6 +514,26 @@ async def users(
     return out
 
 
+@api_router.get("/users/lookup")
+async def users_lookup(
+    email: str = Query(..., min_length=1),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    """Exact email lookup for admins and group roster managers.
+
+    Misses and unauthorized callers both receive 404 to avoid enumeration.
+    """
+    user = await lookup_user_by_email(session, principal, email)
+    if user is None:
+        raise HTTPException(404, "Not found")
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "display_name": user.display_name,
+    }
+
+
 @api_router.get("/users/{user_id}")
 async def show_user(
     user_id: str,
@@ -484,6 +545,8 @@ async def show_user(
         uid = uuid.UUID(user_id)
     except ValueError as exc:
         raise HTTPException(404, "Not found") from exc
+    if not await directory_user_visible(session, principal, uid):
+        raise HTTPException(404, "Not found")
     user = await get_user(session, uid)
     if not user:
         raise HTTPException(404, "Not found")
@@ -649,6 +712,27 @@ def _parse_types(raw: str | None) -> list[str] | None:
     return [part.strip() for part in raw.split(",") if part.strip()]
 
 
+@api_router.get("/metrics/memories")
+async def memory_metrics(
+    range: str | None = None,
+    space_id: str | None = None,
+    space_scope: str | None = None,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    """ACL-scoped corpus aggregates for the Metrics page."""
+    try:
+        return await metrics_service.memory_metrics(
+            session,
+            principal,
+            range_key=range,
+            space_id=_uid(space_id),
+            space_scope=space_scope,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
 @api_router.get("/memories")
 async def browse_memories(
     space_id: str | None = None,
@@ -690,9 +774,6 @@ async def search_memories(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> list[dict]:
-    type_tokens = _parse_types(types)
-    # Preserve prior default: entry-only search when no types filter is given.
-    legacy_kind = kind if kind is not None else ("entry" if type_tokens is None else None)
     try:
         digests = await memory_service.search(
             session,
@@ -700,9 +781,9 @@ async def search_memories(
             query=q,
             space_id=_uid(space_id),
             space_scope=space_scope,
-            kind=legacy_kind,
+            kind=kind,
             entry_type=type,
-            types=type_tokens,
+            types=_parse_types(types),
             limit=limit,
         )
     except ValueError as exc:

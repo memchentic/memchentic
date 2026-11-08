@@ -1,88 +1,69 @@
 # MCP Tools
 
-Memchentic exposes **18** native MCP tools. REST routes share the same
-`memchentic.services` layer — no divergent logic. Short verbs, one job per
-tool, progressive disclosure (search → digests, `open` → full body).
+When an agent is connected to Memchentic, it can use a small set of tools to
+save and find memories. You do not need these names day to day if you browse
+the web UI — they describe what the agent is allowed to do.
 
-Mount path: `/mcp` on the application listener (default host `MCP_PORT`
-18082).
-
-## Mental model
+## Where memory lives
 
 ```text
-you (me)
-  ├── personal        private entries/guides
-  └── groups[]        shared spaces you belong to
-        └── entries / guides
+you
+  ├── personal     private to you
+  └── groups[]     shared spaces you belong to
 ```
 
-## Identity
+If nothing else is specified, new memories go to **personal**.
 
-| Tool | Job |
+## Who you are
+
+| Tool | What it does |
 | --- | --- |
-| `me` | Subject, provider, personal space id, memberships |
+| `me` | Shows who is connected, your personal space, and group memberships |
 
 ## Spaces
 
-| Tool | Job |
+| Tool | What it does |
 | --- | --- |
-| `space_list` | Personal + groups I belong to |
-| `space_create` | Create a **group**; caller becomes creator |
-| `space_show` | Detail + members for a space I can see |
-
-Default write target when space is omitted: **personal**.
+| `space_list` | Lists your personal space and groups |
+| `space_create` | Creates a shared group (you become the creator) |
+| `space_show` | Shows detail and members for a space you can see |
 
 ## Entries
 
-| Tool | Job |
+| Tool | What it does |
 | --- | --- |
-| `remember` | Create an entry (type, title, body, tags, optional space, optional expiry). Refuses near-duplicates unless forced |
-| `find` | Hybrid search → digests. Filters: type, tags, space, path/repo hint |
-| `open` | Full entry by id (or stable title within a space) |
-| `revise` | Patch title/body/type/tags/expiry |
-| `forget` | Delete an entry I can write |
-| `browse` | Paginated listing without a query |
-| `since` | Time-window recall → digests |
-| `by_tag` | Tag AND/OR → digests |
-| `relocate` | Move an entry to another space I can write |
+| `remember` | Saves a typed entry |
+| `find` | Searches entries and returns short summaries |
+| `open` | Loads the full text of a memory |
+| `revise` | Updates an existing memory |
+| `forget` | Deletes a memory you can write |
+| `browse` | Lists memories without a search query |
+| `since` | Finds memories updated in a time window |
+| `by_tag` | Finds memories by tags |
+| `relocate` | Moves a memory to another space you can write |
 
-Entry types: `fact`, `preference`, `decision`, `instruction`, `feedback`,
-`insight`, `note`. Default type for `remember` is `note`.
+Entry types are covered in {doc}`memory-types`.
 
 ## Guides
 
-| Tool | Job |
+| Tool | What it does |
 | --- | --- |
-| `guide_write` | Upsert a guide; duplicate content strengthens confidence |
-| `guide_find` | Search guides; rank by confidence × recency |
+| `guide_write` | Saves or reinforces standing advice |
+| `guide_find` | Searches guides (stronger advice ranks higher) |
 
-## Coding context
+## Extra helpers
 
-| Tool | Job |
+| Tool | What it does |
 | --- | --- |
-| `about_path` | Digests tied to a file/dir path (or repo hint) |
-| `trace` | Provenance for an entry or guide |
+| `about_path` | Finds memories related to a file or project path |
+| `trace` | Shows where a memory came from, when available |
+| `overlap_report` | Flags near-duplicates and similar housekeeping — nothing is deleted automatically |
 
-## Housekeeping
+## Signing in for tools
 
-| Tool | Job |
-| --- | --- |
-| `overlap_report` | Read-only: near-duplicates, conflicts, soon-to-expire. No auto-delete |
+Agents authenticate as a real user — usually by signing in through the
+harness (Authorize), or with a personal API key from the GUI. The admin API
+key is break-glass only; prefer your own account for everyday use.
 
-## Suggested agent loop
-
-1. Start meaningful work → `guide_find` + `find` (and `about_path` if in a tree).
-2. Durable fact/decision → `remember`.
-3. Reusable rule → `guide_write`.
-4. Need full text → `open`.
-5. Periodic hygiene → `overlap_report`, then human/agent merges via `revise` /
-   `forget`.
-
-## Auth notes for tools
-
-Principals come from Bearer JWT (preferred; MCP Authorize / GUI sign-in),
-per-user API key, or `ADMIN_API_KEY`. ACL never trusts client-supplied user
-ids. The admin API key is the real `ADMIN_EMAIL` user (personal space +
-`created_by`). Prefer OAuth/Authorize for agent sessions.
-
-See also {doc}`memory-types`.
+How to connect a harness: {doc}`connect-mcp`. What entries and guides mean:
+{doc}`memory-types`.

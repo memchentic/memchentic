@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from memchentic.auth.principal import Principal, hash_api_key
+from memchentic.db.session import commit_with_rls
 from memchentic.models.entities import ApiKey
 
 
@@ -63,7 +64,9 @@ async def create_api_key(
         key_hash=hash_api_key(raw),
     )
     session.add(key)
-    await session.commit()
+    await commit_with_rls(
+        session, user_id=principal.user_id, is_admin=principal.is_admin
+    )
     await session.refresh(key)
     return key, raw
 
@@ -146,7 +149,9 @@ async def cycle_api_key(
         key_hash=hash_api_key(raw),
     )
     session.add(key)
-    await session.commit()
+    await commit_with_rls(
+        session, user_id=principal.user_id, is_admin=principal.is_admin
+    )
     await session.refresh(key)
     return key, raw
 
@@ -171,4 +176,6 @@ async def revoke_api_key(
     if not principal.is_admin and key.user_id != principal.user_id:
         raise PermissionError("Cannot revoke other users' keys")
     key.revoked_at = datetime.now(UTC)
-    await session.commit()
+    await commit_with_rls(
+        session, user_id=principal.user_id, is_admin=principal.is_admin
+    )

@@ -2,19 +2,23 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import secrets
 import time
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import httpx
-from jose import jwt
+import jwt
+from jwt.algorithms import ECAlgorithm, RSAAlgorithm
 
 from memchentic.settings import Settings
 
 _DISCOVERY_TTL_SECONDS = 300
+_JWKS_TTL_SECONDS = 300
 _discovery_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_jwks_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
 
 @dataclass
@@ -113,33 +117,95 @@ def resolve_jwks_uri(settings: Settings) -> str:
     return f"{issuer}/.well-known/jwks.json"
 
 
-async def fetch_jwks_and_decode(token: str, settings: Settings) -> dict:
-    jwks_uri = resolve_jwks_uri(settings)
+def _same_origin(issuer: str, url: str) -> bool:
+    """Return True when ``url`` shares scheme+host+port with ``issuer``."""
+    a = urlparse(issuer)
+    b = urlparse(url)
+    if not a.scheme or not a.netloc or not b.scheme or not b.netloc:
+        return False
+
+    def _origin(parsed: Any) -> tuple[str, str, int | None]:
+        host = (parsed.hostname or "").lower()
+        port = parsed.port
+        if port is None:
+            if parsed.scheme == "https":
+                port = 443
+            elif parsed.scheme == "http":
+                port = 80
+        return (parsed.scheme.lower(), host, port)
+
+    return _origin(a) == _origin(b)
+
+
+def _pin_discovery_origins(issuer: str, data: dict[str, Any]) -> None:
+    """Reject discovery endpoints that leave the issuer origin."""
+    for key in ("authorization_endpoint", "token_endpoint", "userinfo_endpoint", "jwks_uri"):
+        raw = data.get(key)
+        if not raw:
+            continue
+        if not _same_origin(issuer, str(raw)):
+            raise ValueError(f"OIDC discovery {key} origin mismatch with issuer")
+
+
+async def _fetch_jwks(jwks_uri: str) -> dict[str, Any]:
+    now = time.monotonic()
+    cached = _jwks_cache.get(jwks_uri)
+    if cached and cached[0] > now:
+        return cached[1]
     async with httpx.AsyncClient(timeout=15.0) as client:
         resp = await client.get(jwks_uri)
         resp.raise_for_status()
-        jwks = resp.json()
+        data = resp.json()
+    _jwks_cache[jwks_uri] = (now + _JWKS_TTL_SECONDS, data)
+    return data
 
+
+async def fetch_jwks_and_decode(token: str, settings: Settings) -> dict:
+    """Verify an IdP JWT against JWKS with pinned algorithms and required claims.
+
+    Args:
+        token: Compact JWT from the IdP.
+        settings: App settings (audience, issuer, JWKS URI).
+
+    Returns:
+        Decoded and verified claims.
+
+    Raises:
+        ValueError: When audience/issuer/kid/key type is invalid.
+        jwt.exceptions.InvalidTokenError: When signature or claims fail.
+    """
+    audience = settings.effective_audience
+    if not audience:
+        raise ValueError("Audience is required for external JWT verification")
+    issuer = resolve_issuer(settings)
+    if not issuer:
+        raise ValueError("Issuer is required for external JWT verification")
+
+    jwks = await _fetch_jwks(resolve_jwks_uri(settings))
     header = jwt.get_unverified_header(token)
     kid = header.get("kid")
-    key = None
-    for k in jwks.get("keys", []):
-        if not kid or k.get("kid") == kid:
-            key = k
-            break
+    if not kid:
+        raise ValueError("JWT header missing kid")
+
+    key = next((k for k in jwks.get("keys", []) if k.get("kid") == kid), None)
     if key is None:
         raise ValueError("No matching JWKS key")
 
+    kty = key.get("kty")
+    if kty == "RSA":
+        crypto_key = RSAAlgorithm.from_jwk(json.dumps(key))
+    elif kty == "EC":
+        crypto_key = ECAlgorithm.from_jwk(json.dumps(key))
+    else:
+        raise ValueError(f"Unsupported JWKS kty: {kty}")
+
     return jwt.decode(
         token,
-        key,
-        algorithms=[header.get("alg", "RS256")],
-        audience=settings.effective_audience,
-        issuer=resolve_issuer(settings) or None,
-        options={
-            "verify_aud": bool(settings.effective_audience),
-            "verify_iss": bool(resolve_issuer(settings)),
-        },
+        crypto_key,
+        algorithms=["RS256", "ES256"],
+        audience=audience,
+        issuer=issuer,
+        options={"require": ["exp", "aud", "iss", "sub"]},
     )
 
 
@@ -206,6 +272,7 @@ async def _oidc_discovery(settings: Settings) -> dict[str, Any]:
         resp = await client.get(url)
         resp.raise_for_status()
         data = resp.json()
+    _pin_discovery_origins(issuer, data)
     _discovery_cache[issuer] = (now + _DISCOVERY_TTL_SECONDS, data)
     return data
 
@@ -250,6 +317,7 @@ async def build_authorize_url(
     *,
     state: str,
     code_challenge: str,
+    nonce: str | None = None,
 ) -> str:
     """Build the IdP authorization URL for browser Sign-in.
 
@@ -257,6 +325,7 @@ async def build_authorize_url(
         settings: App settings with client id and scopes.
         state: Opaque CSRF state.
         code_challenge: S256 PKCE challenge.
+        nonce: Optional OIDC nonce (included for non-GitHub providers).
 
     Returns:
         Absolute authorize URL.
@@ -274,6 +343,8 @@ async def build_authorize_url(
     }
     if settings.oauth_provider != "github":
         params["access_type"] = "online"
+        if nonce:
+            params["nonce"] = nonce
     return f"{endpoints['authorization_endpoint']}?{urlencode(params)}"
 
 
@@ -282,6 +353,7 @@ async def exchange_code_for_profile(
     *,
     code: str,
     code_verifier: str,
+    nonce: str | None = None,
 ) -> OAuthProfile:
     """Exchange an authorization code for a normalized user profile.
 
@@ -289,6 +361,7 @@ async def exchange_code_for_profile(
         settings: App settings.
         code: Authorization code from the IdP callback.
         code_verifier: PKCE verifier from the start cookie.
+        nonce: Optional OIDC nonce that must match the verified id_token.
 
     Returns:
         Normalized profile with verified email when available.
@@ -299,7 +372,9 @@ async def exchange_code_for_profile(
     """
     if settings.oauth_provider == "github":
         return await _github_exchange(settings, code=code, code_verifier=code_verifier)
-    return await _oidc_exchange(settings, code=code, code_verifier=code_verifier)
+    return await _oidc_exchange(
+        settings, code=code, code_verifier=code_verifier, nonce=nonce
+    )
 
 
 async def _token_post(
@@ -333,7 +408,11 @@ async def _token_post(
 
 
 async def _oidc_exchange(
-    settings: Settings, *, code: str, code_verifier: str
+    settings: Settings,
+    *,
+    code: str,
+    code_verifier: str,
+    nonce: str | None = None,
 ) -> OAuthProfile:
     endpoints = await resolve_oidc_endpoints(settings)
     token_payload = await _token_post(
@@ -346,7 +425,9 @@ async def _oidc_exchange(
     claims: dict[str, Any] = {}
     id_token = token_payload.get("id_token")
     if isinstance(id_token, str) and id_token:
-        claims = jwt.get_unverified_claims(id_token)
+        claims = await fetch_jwks_and_decode(id_token, settings)
+        if nonce is not None and claims.get("nonce") != nonce:
+            raise ValueError("OIDC nonce mismatch")
     access_token = token_payload.get("access_token")
     userinfo_url = endpoints.get("userinfo_endpoint") or ""
     if userinfo_url and isinstance(access_token, str) and access_token:
@@ -454,3 +535,8 @@ def _profile_from_claims(claims: dict[str, Any]) -> OAuthProfile:
 def clear_discovery_cache() -> None:
     """Clear the in-process OIDC discovery cache (tests)."""
     _discovery_cache.clear()
+
+
+def clear_jwks_cache() -> None:
+    """Clear the in-process JWKS cache (tests)."""
+    _jwks_cache.clear()

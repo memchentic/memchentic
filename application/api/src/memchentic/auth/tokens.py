@@ -6,9 +6,10 @@ import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import jwt
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from jose import JWTError, jwt
+from jwt.exceptions import InvalidTokenError
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +18,46 @@ from memchentic.settings import Settings, get_settings
 
 ACCESS_TOKEN_SECONDS = 3600
 _SIGNING_KEY_LOCK = 0x6D656D6B  # pg advisory lock id; serializes key creation across replicas
+
+
+def encrypt_private_key(private_key: rsa.RSAPrivateKey, settings: Settings) -> str:
+    """Serialize a signing key as PKCS#8 PEM encrypted under ``ENCRYPTION_KEY``.
+
+    Args:
+        private_key: RSA signing key.
+        settings: App settings carrying ``ENCRYPTION_KEY``.
+
+    Returns:
+        Encrypted PEM text safe to store in Postgres.
+    """
+    return private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.BestAvailableEncryption(
+            settings.encryption_key.encode()
+        ),
+    ).decode()
+
+
+def decrypt_private_key(private_pem: str, settings: Settings) -> rsa.RSAPrivateKey:
+    """Load a stored signing key encrypted by :func:`encrypt_private_key`.
+
+    Args:
+        private_pem: Encrypted PKCS#8 PEM from ``internal_signing_keys``.
+        settings: App settings carrying ``ENCRYPTION_KEY``.
+
+    Returns:
+        The RSA signing key.
+
+    Raises:
+        ValueError: When ``ENCRYPTION_KEY`` does not match the stored key.
+    """
+    key = serialization.load_pem_private_key(
+        private_pem.encode(), password=settings.encryption_key.encode()
+    )
+    if not isinstance(key, rsa.RSAPrivateKey):
+        raise TypeError("Stored signing key is not RSA")
+    return key
 
 
 async def _active_signing_key(session: AsyncSession) -> InternalSigningKey | None:
@@ -52,11 +93,7 @@ async def ensure_signing_key(session: AsyncSession) -> InternalSigningKey:
         return key
 
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    private_pem = private_key.private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=serialization.NoEncryption(),
-    ).decode()
+    private_pem = encrypt_private_key(private_key, get_settings())
     public_pem = (
         private_key.public_key()
         .public_bytes(
@@ -126,7 +163,8 @@ async def issue_access_token(
     }
     if extra:
         payload.update(extra)
-    return jwt.encode(payload, key.private_pem, algorithm="RS256", headers={"kid": key.kid})
+    private_key = decrypt_private_key(key.private_pem, settings)
+    return jwt.encode(payload, private_key, algorithm="RS256", headers={"kid": key.kid})
 
 
 async def _verify_session_token(
@@ -143,7 +181,7 @@ async def _verify_session_token(
         Decoded claims.
 
     Raises:
-        JWTError: When the key is unknown or the token is invalid.
+        InvalidTokenError: When the key is unknown or the token is invalid.
     """
     kid = jwt.get_unverified_header(token).get("kid")
     result = await session.execute(
@@ -153,13 +191,14 @@ async def _verify_session_token(
     )
     key = result.scalar_one_or_none()
     if key is None:
-        raise JWTError("Unknown signing key")
+        raise InvalidTokenError("Unknown signing key")
     return jwt.decode(
         token,
         key.public_pem,
         algorithms=["RS256"],
         audience=settings.effective_audience,
         issuer=settings.session_issuer,
+        options={"require": ["exp", "sub"]},
     )
 
 
@@ -183,7 +222,7 @@ async def verify_access_token(
         Decoded claims.
 
     Raises:
-        JWTError: When neither session nor IdP verification succeeds.
+        InvalidTokenError: When neither session nor IdP verification succeeds.
     """
     settings = settings or get_settings()
 

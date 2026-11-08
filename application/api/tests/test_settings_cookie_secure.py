@@ -19,6 +19,15 @@ def test_blank_session_cookie_secure_is_none(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setenv("BASE_URL", "http://example.test:8080")
     settings = Settings()
     assert settings.session_cookie_secure is None
+    # Non-loopback hosts default Secure on (even over http BASE_URL).
+    assert settings.cookie_secure is True
+
+
+def test_loopback_http_defaults_cookie_insecure(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SESSION_COOKIE_SECURE", raising=False)
+    monkeypatch.setenv("BASE_URL", "http://127.0.0.1:8080")
+    settings = Settings()
+    assert settings.session_cookie_secure is None
     assert settings.cookie_secure is False
 
 

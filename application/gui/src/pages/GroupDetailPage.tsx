@@ -125,9 +125,13 @@ export default function GroupDetailPage() {
             type="button"
             title="Leave"
             aria-label="Leave"
-            onClick={() =>
-              confirm(`Leave ${group.name}?`) && void remove(me.id).then(() => navigate("/groups"))
-            }
+            onClick={() => {
+              const uid = me.id;
+              if (!uid) return;
+              if (confirm(`Leave ${group.name}?`)) {
+                void remove(uid).then(() => navigate("/groups"));
+              }
+            }}
           >
             <FontAwesomeIcon icon={faRightFromBracket} />
           </button>
@@ -223,6 +227,7 @@ function AddMembersModal({
   onAdded: () => void;
 }) {
   const [users, setUsers] = useState<DirectoryUser[]>([]);
+  const [lookupHit, setLookupHit] = useState<DirectoryUser | null>(null);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
@@ -230,14 +235,46 @@ function AddMembersModal({
 
   useEffect(() => {
     if (!open) return;
+    setLookupHit(null);
+    setQuery("");
+    setSelected(new Set());
     api<DirectoryUser[]>("/api/users")
       .then(setUsers)
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
   }, [open]);
 
+  useEffect(() => {
+    if (!open) return;
+    const q = query.trim();
+    const looksLikeEmail = q.includes("@") && !q.includes(" ");
+    if (!looksLikeEmail) {
+      setLookupHit(null);
+      return;
+    }
+    const already = users.some((u) => u.email.toLowerCase() === q.toLowerCase());
+    if (already) {
+      setLookupHit(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void api<DirectoryUser>(`/api/users/lookup?email=${encodeURIComponent(q)}`)
+        .then((hit) => {
+          if (!cancelled) setLookupHit(hit);
+        })
+        .catch(() => {
+          if (!cancelled) setLookupHit(null);
+        });
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [open, query, users]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return users
+    const rows = users
       .filter((u) => !memberIds.has(u.id))
       .filter((u) => {
         if (!q) return true;
@@ -246,7 +283,15 @@ function AddMembersModal({
           (u.display_name ?? "").toLowerCase().includes(q)
         );
       });
-  }, [users, memberIds, query]);
+    if (
+      lookupHit &&
+      !memberIds.has(lookupHit.id) &&
+      !rows.some((u) => u.id === lookupHit.id)
+    ) {
+      return [...rows, lookupHit];
+    }
+    return rows;
+  }, [users, memberIds, query, lookupHit]);
 
   function toggle(userId: string) {
     setSelected((prev) => {
@@ -343,7 +388,7 @@ function AddMembersModal({
           <FontAwesomeIcon icon={faXmark} />
         </button>
         <button
-          className="btn btn-primary"
+          className="btn"
           type="button"
           onClick={() => void done()}
           disabled={busy}

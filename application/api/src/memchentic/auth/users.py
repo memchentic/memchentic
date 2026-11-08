@@ -6,14 +6,21 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import aliased, selectinload
 
 from memchentic.auth.passwords import hash_password, verify_password
-from memchentic.models.entities import User, UserIdentity
+from memchentic.db.session import set_rls_context
+from memchentic.models.entities import Space, SpaceKind, SpaceMember, User, UserIdentity
 from memchentic.services.spaces import ensure_personal_space
 
 if TYPE_CHECKING:
+    from memchentic.auth.principal import Principal
     from memchentic.settings import Settings
+
+# Fixed bcrypt hash so missing-user auth still pays verify cost (timing pad).
+_MISSING_USER_DUMMY_HASH = (
+    "$2b$12$ZXqUKsbftiNtBvL4M9MFUeYf3mnv8n4FqIquSwBfi0224L2Mg55/m"
+)
 
 
 def normalize_email(email: str) -> str:
@@ -186,6 +193,8 @@ async def register_internal_user(
     )
     session.add(user)
     await session.flush()
+    # App-role RLS: space insert/membership checks need this principal set.
+    await set_rls_context(session, user_id=user.id, is_admin=False)
     await _ensure_identity(session, user, provider="internal", subject=email_n)
     await ensure_personal_space(session, user)
     from memchentic.services.auth_groups import add_to_users_group
@@ -212,9 +221,11 @@ async def authenticate_internal(
     try:
         email_n = normalize_email(email)
     except ValueError:
+        verify_password(password, _MISSING_USER_DUMMY_HASH)
         return None
     user = await get_user_by_email(session, email_n)
     if not user or not user.password_hash:
+        verify_password(password, _MISSING_USER_DUMMY_HASH)
         return None
     if not verify_password(password, user.password_hash):
         return None
@@ -308,6 +319,7 @@ async def upsert_oauth_user(
     )
     session.add(user)
     await session.flush()
+    await set_rls_context(session, user_id=user.id, is_admin=False)
     await _ensure_identity(session, user, provider=provider, subject=subject_n)
     await ensure_personal_space(session, user)
     from memchentic.services.auth_groups import add_to_users_group
@@ -379,6 +391,113 @@ async def list_users(session: AsyncSession) -> list[User]:
         .order_by(User.created_at.desc())
     )
     return list(result.scalars())
+
+
+async def directory_user_visible(
+    session: AsyncSession, principal: Principal, user_id: uuid.UUID
+) -> bool:
+    """True when the caller may see this user's directory detail.
+
+    Admins and self always pass. Other callers need a shared unarchived group.
+    """
+    if principal.is_admin:
+        return True
+    if not principal.user_id:
+        return False
+    if principal.user_id == user_id:
+        return True
+    caller_m = aliased(SpaceMember)
+    other_m = aliased(SpaceMember)
+    hit = await session.execute(
+        select(Space.id)
+        .join(other_m, other_m.space_id == Space.id)
+        .join(caller_m, caller_m.space_id == Space.id)
+        .where(
+            other_m.user_id == user_id,
+            caller_m.user_id == principal.user_id,
+            Space.kind == SpaceKind.group,
+            Space.archived_at.is_(None),
+        )
+        .limit(1)
+    )
+    return hit.scalar_one_or_none() is not None
+
+
+async def list_directory_users(
+    session: AsyncSession, principal: Principal
+) -> list[User]:
+    """List users visible in the authenticated directory.
+
+    Admins see everyone. Other callers only see users who share at least one
+    unarchived group space (not personal) with them.
+
+    Args:
+        session: Database session.
+        principal: Authenticated caller.
+
+    Returns:
+        Users ordered by created_at descending, with identities loaded.
+    """
+    if principal.is_admin:
+        return await list_users(session)
+    if not principal.user_id:
+        return []
+    caller_m = aliased(SpaceMember)
+    other_m = aliased(SpaceMember)
+    result = await session.execute(
+        select(User)
+        .options(selectinload(User.identities))
+        .join(other_m, other_m.user_id == User.id)
+        .join(Space, Space.id == other_m.space_id)
+        .join(caller_m, caller_m.space_id == Space.id)
+        .where(
+            caller_m.user_id == principal.user_id,
+            Space.kind == SpaceKind.group,
+            Space.archived_at.is_(None),
+        )
+        .order_by(User.created_at.desc())
+    )
+    return list(result.scalars().unique())
+
+
+async def lookup_user_by_email(
+    session: AsyncSession, principal: Principal, email: str
+) -> User | None:
+    """Exact email lookup for roster managers (and admins).
+
+    Returns None for a miss and for callers who are not admins and do not
+    manage any group — callers should map both to the same 404.
+
+    Args:
+        session: Database session.
+        principal: Authenticated caller.
+        email: Address to match (casefolded via ``get_user_by_email``).
+
+    Returns:
+        The matching user, or None when not found / not authorized.
+    """
+    try:
+        user = await get_user_by_email(session, email)
+    except ValueError:
+        return None
+    if not user:
+        return None
+    if principal.is_admin:
+        return user
+    if not principal.user_id:
+        return None
+    managed = await session.execute(
+        select(Space.id)
+        .where(
+            Space.kind == SpaceKind.group,
+            Space.archived_at.is_(None),
+            Space.created_by_user_id == principal.user_id,
+        )
+        .limit(1)
+    )
+    if managed.scalar_one_or_none() is None:
+        return None
+    return user
 
 
 async def user_delete_eligibility(

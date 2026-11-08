@@ -24,6 +24,7 @@ from memchentic.auth.users import upsert_oauth_user
 from memchentic.settings import Settings, get_settings
 
 OAUTH_STATE_COOKIE = "memchentic_oauth"
+OAUTH_NONCE_COOKIE = "memchentic_oauth_nonce"
 OAUTH_STATE_MAX_AGE = 600
 
 
@@ -56,9 +57,31 @@ def _set_oauth_state_cookie(
     )
 
 
+def _set_oauth_nonce_cookie(response: Response, *, nonce: str, settings: Settings) -> None:
+    response.set_cookie(
+        OAUTH_NONCE_COOKIE,
+        nonce,
+        max_age=OAUTH_STATE_MAX_AGE,
+        path=SESSION_COOKIE_PATH,
+        secure=settings.cookie_secure,
+        httponly=True,
+        samesite="lax",
+    )
+
+
 def _clear_oauth_state_cookie(response: Response, settings: Settings) -> None:
     response.delete_cookie(
         OAUTH_STATE_COOKIE,
+        path=SESSION_COOKIE_PATH,
+        secure=settings.cookie_secure,
+        httponly=True,
+        samesite="lax",
+    )
+
+
+def _clear_oauth_nonce_cookie(response: Response, settings: Settings) -> None:
+    response.delete_cookie(
+        OAUTH_NONCE_COOKIE,
         path=SESSION_COOKIE_PATH,
         secure=settings.cookie_secure,
         httponly=True,
@@ -109,9 +132,10 @@ async def start_oauth_login(
         raise HTTPException(400, "Web OAuth is not configured")
     state = secrets.token_urlsafe(24)
     verifier, challenge = pkce_pair()
+    nonce = secrets.token_urlsafe(24) if settings.oauth_provider != "github" else None
     try:
         url = await build_authorize_url(
-            settings, state=state, code_challenge=challenge
+            settings, state=state, code_challenge=challenge, nonce=nonce
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -119,6 +143,8 @@ async def start_oauth_login(
     _set_oauth_state_cookie(
         response, state=state, verifier=verifier, remember=remember, settings=settings
     )
+    if nonce:
+        _set_oauth_nonce_cookie(response, nonce=nonce, settings=settings)
     return response
 
 
@@ -152,6 +178,7 @@ async def finish_oauth_login(
 
         resp = RedirectResponse(f"{base}/sign-in?{urlencode({'error': message})}", status_code=302)
         _clear_oauth_state_cookie(resp, settings)
+        _clear_oauth_nonce_cookie(resp, settings)
         return resp
 
     if error:
@@ -169,9 +196,13 @@ async def finish_oauth_login(
         return fail("Invalid OAuth state")
     remember = bool(stored.get("remember"))
 
+    nonce = request.cookies.get(OAUTH_NONCE_COOKIE)
+    if settings.oauth_provider != "github" and not nonce:
+        return fail("Missing OAuth nonce")
+
     try:
         profile = await exchange_code_for_profile(
-            settings, code=code, code_verifier=verifier
+            settings, code=code, code_verifier=verifier, nonce=nonce
         )
         user = await upsert_oauth_user(
             session,
@@ -199,4 +230,5 @@ async def finish_oauth_login(
     response = RedirectResponse(f"{base}/", status_code=302)
     _set_session_cookie(response, raw, remember, settings)
     _clear_oauth_state_cookie(response, settings)
+    _clear_oauth_nonce_cookie(response, settings)
     return response

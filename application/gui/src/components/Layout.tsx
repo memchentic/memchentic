@@ -1,6 +1,7 @@
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faBook,
+  faChartLine,
   faChevronDown,
   faGear,
   faKey,
@@ -15,6 +16,7 @@ import { usePresence } from "./ui";
 
 const links = [
   { to: "/", label: "Memories", icon: faBook, end: true },
+  { to: "/metrics", label: "Metrics", icon: faChartLine },
   { to: "/groups", label: "Groups", icon: faUserGroup },
   { to: "/users", label: "Users", icon: faUsers },
 ];

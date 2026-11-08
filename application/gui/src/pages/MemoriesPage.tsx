@@ -21,6 +21,7 @@ import {
   SpaceScopeSelect,
   SpaceSelect,
   TypeFilterMenu,
+  isUnrestrictedTypes,
   type MemoryRow,
   type MemoryTypeToken,
   type SpaceScope,
@@ -30,9 +31,7 @@ import { applyMemoryEvent, startMemoryLive } from "../liveMemories";
 const PAGE = 25;
 
 function typesQuery(selected: MemoryTypeToken[]): string | null {
-  if (selected.length === 0 || selected.length === MEMORY_TYPE_TOKENS.length) {
-    return null;
-  }
+  if (isUnrestrictedTypes(selected)) return null;
   return selected.join(",");
 }
 
@@ -330,7 +329,7 @@ function NewMemory({
         )}
         <label className="field">
           <span>Space</span>
-          <SpaceSelect value={space} onChange={setSpace} allowAll={false} />
+          <SpaceSelect value={space} onChange={setSpace} />
         </label>
         <label className="field field-span">
           <span>Title</span>
@@ -368,7 +367,7 @@ function NewMemory({
           </label>
         )}
         <button
-          className="btn btn-primary ml-auto"
+          className="btn ml-auto"
           type="submit"
           title="Save"
           aria-label="Save"

@@ -14,7 +14,7 @@ import { useAuth } from "../auth";
 import { formatDocumentTitle } from "../documentTitle";
 
 /** Matches `--duration-exit` in index.css. */
-export const MOTION_EXIT_MS = 120;
+const MOTION_EXIT_MS = 120;
 
 /**
  * Keep a node mounted through its CSS exit transition.
@@ -116,7 +116,6 @@ export function ComposerReveal({
 export type MemoryRow = {
   id: string;
   space_id?: string;
-  space?: string;
   kind: string;
   type: string | null;
   title: string;
@@ -130,15 +129,13 @@ export type MemoryRow = {
   created_by_display_name?: string | null;
   updated_at?: string | null;
   created_at?: string | null;
-  expires_at?: string | null;
   path_hint?: string | null;
-  repo_hint?: string | null;
 };
 
 /** Prefer display name, then email, then a short id. */
 export function formatMemoryOwner(
   row: MemoryRow,
-  me?: { id?: string; email?: string | null; display_name?: string | null } | null,
+  me?: { id?: string | null; email?: string | null; display_name?: string | null } | null,
 ): string {
   const named = row.created_by_display_name?.trim();
   if (named) return named;
@@ -164,6 +161,11 @@ export const MEMORY_TYPE_TOKENS = [...ENTRY_TYPES, "guide"] as const;
 
 export type MemoryTypeToken = (typeof MEMORY_TYPE_TOKENS)[number];
 export type SpaceScope = "" | "personal" | "group";
+
+/** Empty or every token means the type filter is unrestricted. */
+export function isUnrestrictedTypes(selected: readonly MemoryTypeToken[]): boolean {
+  return selected.length === 0 || selected.length === MEMORY_TYPE_TOKENS.length;
+}
 
 export function SpaceScopeSelect({
   value,
@@ -197,7 +199,7 @@ export function TypeFilterMenu({
   const { mounted, leaving } = usePresence(open);
   const rootRef = useRef<HTMLDivElement>(null);
   const menuId = useId();
-  const allSelected = selected.length === 0 || selected.length === MEMORY_TYPE_TOKENS.length;
+  const allSelected = isUnrestrictedTypes(selected);
   const singleType = !allSelected && selected.length === 1 ? selected[0] : null;
   const label = allSelected
     ? "All"
@@ -207,7 +209,7 @@ export function TypeFilterMenu({
 
   useEffect(() => {
     if (!open) return;
-    function onPointerDown(event: MouseEvent) {
+    function onPointerDown(event: globalThis.MouseEvent) {
       if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
         setOpen(false);
       }
@@ -328,16 +330,13 @@ export function ErrorNote({ error }: { error: string | null }) {
 export function SpaceSelect({
   value,
   onChange,
-  allowAll = true,
 }: {
   value: string;
   onChange: (v: string) => void;
-  allowAll?: boolean;
 }) {
   const { me } = useAuth();
   return (
     <select className="input w-auto" value={value} onChange={(e) => onChange(e.target.value)}>
-      {allowAll && <option value="">All</option>}
       {me?.memberships.map((s) => (
         <option key={s.id} value={s.id}>
           {s.kind === "personal" ? "Personal" : s.name}
@@ -483,7 +482,7 @@ export function MemoryList({
                     <span className="text-faint">—</span>
                   )}
                 </td>
-                <td className="text-muted">{spaceName(m.space_id ?? m.space) || "—"}</td>
+                <td className="text-muted">{spaceName(m.space_id) || "—"}</td>
                 <td className="text-muted whitespace-nowrap">{formatMemoryOwner(m, me)}</td>
                 <td className="text-faint whitespace-nowrap">
                   {formatWhen(m.updated_at ?? m.created_at)}

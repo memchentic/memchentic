@@ -9,10 +9,9 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode, urlparse
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Query
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from pydantic import BaseModel, EmailStr
-from sqlalchemy import select
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from memchentic.auth.principal import check_admin_password
@@ -20,6 +19,7 @@ from memchentic.auth.providers import (
     authorization_server_metadata,
     protected_resource_metadata,
 )
+from memchentic.auth.rate_limit import check_rate_limit
 from memchentic.auth.tokens import (
     ensure_signing_key,
     hash_token,
@@ -34,16 +34,56 @@ from memchentic.settings import get_settings
 
 router = APIRouter(tags=["oauth"])
 
-
-class RegisterBody(BaseModel):
-    email: EmailStr
-    password: str
-    display_name: str | None = None
+_OAUTH_CSRF_COOKIE = "memchentic_oauth_csrf"
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
-class LoginBody(BaseModel):
-    email: EmailStr
-    password: str
+def validate_redirect_uri(uri: str) -> str:
+    """Validate a redirect URI for dynamic client registration.
+
+    Allows ``https://`` URLs without userinfo or fragment, and loopback
+    ``http://`` only for hosts in {127.0.0.1, localhost, [::1], ::1}.
+
+    Args:
+        uri: Candidate redirect URI string.
+
+    Returns:
+        The same URI when valid.
+
+    Raises:
+        HTTPException: 400 when the URI is empty, relative, or uses a
+            disallowed scheme/host/userinfo/fragment.
+    """
+    if not uri or not isinstance(uri, str) or not uri.strip():
+        raise HTTPException(400, "Invalid redirect_uri: empty")
+    parsed = urlparse(uri)
+    scheme = (parsed.scheme or "").lower()
+    if not scheme:
+        raise HTTPException(400, "Invalid redirect_uri: relative URIs are not allowed")
+    if scheme in {"javascript", "data", "file"}:
+        raise HTTPException(400, f"Invalid redirect_uri: scheme {scheme!r} is not allowed")
+    if parsed.fragment:
+        raise HTTPException(400, "Invalid redirect_uri: fragment is not allowed")
+    if parsed.username is not None or parsed.password is not None:
+        raise HTTPException(400, "Invalid redirect_uri: userinfo is not allowed")
+    if scheme == "https":
+        if not parsed.hostname:
+            raise HTTPException(400, "Invalid redirect_uri: https host required")
+        return uri
+    if scheme == "http":
+        host = (parsed.hostname or "").lower()
+        if host not in _LOOPBACK_HOSTS:
+            raise HTTPException(
+                400,
+                "Invalid redirect_uri: http is only allowed for loopback "
+                "(127.0.0.1, localhost, ::1)",
+            )
+        return uri
+    raise HTTPException(400, f"Invalid redirect_uri: scheme {scheme!r} is not allowed")
+
+
+def _client_ip(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
 
 
 @router.get("/.well-known/oauth-protected-resource")
@@ -72,11 +112,14 @@ async def dynamic_client_register(
     redirect_uris = body.get("redirect_uris") or []
     if isinstance(redirect_uris, str):
         redirect_uris = [redirect_uris]
+    if not redirect_uris:
+        raise HTTPException(400, "redirect_uris required")
+    validated = [validate_redirect_uri(u) for u in redirect_uris]
     client = OAuthClient(
         id=uuid.uuid4(),
         client_id=client_id,
         client_secret_hash=None,
-        redirect_uris=list(redirect_uris),
+        redirect_uris=list(validated),
         is_public=True,
         name=body.get("client_name") or "MCP Client",
     )
@@ -86,7 +129,7 @@ async def dynamic_client_register(
         "client_id": client_id,
         "client_id_issued_at": int(datetime.now(UTC).timestamp()),
         "token_endpoint_auth_method": "none",
-        "redirect_uris": redirect_uris,
+        "redirect_uris": validated,
         "grant_types": ["authorization_code", "refresh_token"],
         "response_types": ["code"],
     }
@@ -143,6 +186,41 @@ Only continue if you started this from that app.</p>
 </form></body></html>"""
 
 
+def _authorize_html(
+    client: OAuthClient,
+    fields: dict[str, str],
+    *,
+    request: Request | None = None,
+    error: str | None = None,
+    status_code: int = 200,
+) -> HTMLResponse:
+    """Build an authorize HTML response with a fresh CSRF cookie + hidden field."""
+    settings = get_settings()
+    csrf = secrets.token_urlsafe(24)
+    page_fields = {**fields, "csrf_token": csrf}
+    response = HTMLResponse(
+        _authorize_page(client, page_fields, error),
+        status_code=status_code,
+        headers=_FRAME_DENY,
+    )
+    # Prefer the request scheme so http://testserver round-trips; otherwise
+    # follow cookie_secure (https BASE_URL / explicit SESSION_COOKIE_SECURE).
+    secure = (
+        request.url.scheme == "https"
+        if request is not None
+        else settings.cookie_secure
+    )
+    response.set_cookie(
+        _OAUTH_CSRF_COOKIE,
+        csrf,
+        httponly=True,
+        samesite="strict",
+        path="/oauth",
+        secure=secure,
+    )
+    return response
+
+
 async def _require_registered_client(
     session: AsyncSession,
     client_id: str,
@@ -176,8 +254,14 @@ async def _require_registered_client(
     return client
 
 
+def _require_internal_provider() -> None:
+    if get_settings().oauth_provider != "internal":
+        raise HTTPException(400, "Internal authorize only when OAUTH_PROVIDER=internal")
+
+
 @router.get("/oauth/authorize")
 async def authorize_get(
+    request: Request,
     response_type: str = Query("code"),
     client_id: str = Query(...),
     redirect_uri: str = Query(...),
@@ -188,9 +272,7 @@ async def authorize_get(
     session: AsyncSession = Depends(db_session),
 ) -> HTMLResponse:
     """Show the internal sign-in page for a validated authorization request."""
-    settings = get_settings()
-    if settings.oauth_provider != "internal":
-        raise HTTPException(400, "Internal authorize only when OAUTH_PROVIDER=internal")
+    _require_internal_provider()
     if response_type != "code":
         raise HTTPException(400, "Only response_type=code supported")
     client = await _require_registered_client(
@@ -204,11 +286,12 @@ async def authorize_get(
         "code_challenge": code_challenge or "",
         "code_challenge_method": code_challenge_method or "",
     }
-    return HTMLResponse(_authorize_page(client, fields), headers=_FRAME_DENY)
+    return _authorize_html(client, fields, request=request)
 
 
 @router.post("/oauth/authorize", response_model=None)
 async def authorize_post(
+    request: Request,
     email: str = Form(...),
     password: str = Form(...),
     client_id: str = Form(...),
@@ -217,9 +300,20 @@ async def authorize_post(
     state: str = Form(""),
     code_challenge: str = Form(""),
     code_challenge_method: str = Form(""),
+    csrf_token: str = Form(""),
     session: AsyncSession = Depends(db_session),
 ) -> RedirectResponse | HTMLResponse:
     """Authenticate the user and redirect back to the client with a one-time code."""
+    _require_internal_provider()
+    check_rate_limit(f"authorize:{_client_ip(request)}", limit=20, window_seconds=60)
+    cookie_csrf = request.cookies.get(_OAUTH_CSRF_COOKIE, "")
+    if (
+        not csrf_token
+        or not cookie_csrf
+        or not secrets.compare_digest(csrf_token, cookie_csrf)
+    ):
+        raise HTTPException(400, "Invalid CSRF token")
+
     settings = get_settings()
     client = await _require_registered_client(
         session, client_id, redirect_uri, code_challenge, code_challenge_method
@@ -243,13 +337,14 @@ async def authorize_post(
             "code_challenge": code_challenge,
             "code_challenge_method": code_challenge_method,
         }
-        page = _authorize_page(client, fields, "Invalid credentials")
-        return HTMLResponse(page, status_code=401, headers=_FRAME_DENY)
+        return _authorize_html(
+            client, fields, request=request, error="Invalid credentials", status_code=401
+        )
 
     code = new_opaque_token()
     auth_code = AuthCode(
         id=uuid.uuid4(),
-        code=code,
+        code_hash=hash_token(code),
         client_id=client_id,
         user_id=user_id,
         redirect_uri=redirect_uri,
@@ -276,8 +371,20 @@ def _verify_pkce(code_verifier: str, challenge: str, method: str) -> bool:
     return calc == challenge
 
 
+async def _revoke_refresh_family(session: AsyncSession, family_id: uuid.UUID) -> None:
+    await session.execute(
+        update(AuthRefreshToken)
+        .where(
+            AuthRefreshToken.family_id == family_id,
+            AuthRefreshToken.revoked_at.is_(None),
+        )
+        .values(revoked_at=datetime.now(UTC))
+    )
+
+
 @router.post("/oauth/token")
 async def token_endpoint(
+    request: Request,
     grant_type: str = Form(...),
     code: str | None = Form(None),
     redirect_uri: str | None = Form(None),
@@ -286,17 +393,31 @@ async def token_endpoint(
     refresh_token: str | None = Form(None),
     session: AsyncSession = Depends(db_session),
 ) -> JSONResponse:
+    check_rate_limit(f"token:{_client_ip(request)}", limit=20, window_seconds=60)
     settings = get_settings()
     if grant_type == "authorization_code":
         if not code or not client_id:
             raise HTTPException(400, "code and client_id required")
-        result = await session.execute(select(AuthCode).where(AuthCode.code == code))
-        auth_code = result.scalar_one_or_none()
-        if not auth_code or auth_code.consumed_at or auth_code.expires_at < datetime.now(UTC):
+        result = await session.execute(
+            text(
+                """
+                UPDATE auth_codes
+                SET consumed_at = now()
+                WHERE code_hash = :h
+                  AND consumed_at IS NULL
+                  AND expires_at > now()
+                RETURNING id, client_id, user_id, redirect_uri, scope,
+                          code_challenge, code_challenge_method
+                """
+            ),
+            {"h": hash_token(code)},
+        )
+        row = result.mappings().first()
+        if not row:
             raise HTTPException(400, "Invalid code")
-        if auth_code.client_id != client_id:
+        if row["client_id"] != client_id:
             raise HTTPException(400, "client_id mismatch")
-        if auth_code.redirect_uri != redirect_uri:
+        if row["redirect_uri"] != redirect_uri:
             raise HTTPException(400, "redirect_uri mismatch")
         client_row = await session.execute(
             select(OAuthClient).where(OAuthClient.client_id == client_id)
@@ -304,24 +425,18 @@ async def token_endpoint(
         client = client_row.scalar_one_or_none()
         if not client:
             raise HTTPException(400, "Unknown client_id")
-        if (client.is_public or auth_code.code_challenge) and not (
-            auth_code.code_challenge
+        if (client.is_public or row["code_challenge"]) and not (
+            row["code_challenge"]
             and code_verifier
             and _verify_pkce(
-                code_verifier, auth_code.code_challenge, auth_code.code_challenge_method or ""
+                code_verifier, row["code_challenge"], row["code_challenge_method"] or ""
             )
         ):
             raise HTTPException(400, "PKCE verification failed")
-        auth_code.consumed_at = datetime.now(UTC)
-        if auth_code.user_id is None:
-            from memchentic.auth.users import ensure_admin_user
-
-            admin = await ensure_admin_user(session, settings)
-            subject, email_claim, provider = str(admin.id), admin.email, "admin"
-            token_user_id = admin.id
-        else:
-            subject, email_claim, provider = str(auth_code.user_id), None, "internal"
-            token_user_id = auth_code.user_id
+        if row["user_id"] is None:
+            raise HTTPException(400, "Invalid code")
+        subject, email_claim, provider = str(row["user_id"]), None, "internal"
+        token_user_id = row["user_id"]
         access = await issue_access_token(
             session,
             subject=subject,
@@ -330,13 +445,15 @@ async def token_endpoint(
             settings=settings,
         )
         refresh = new_opaque_token()
+        family_id = uuid.uuid4()
         session.add(
             AuthRefreshToken(
                 id=uuid.uuid4(),
                 token_hash=hash_token(refresh),
+                family_id=family_id,
                 client_id=client_id,
                 user_id=token_user_id,
-                scope=auth_code.scope,
+                scope=row["scope"],
                 expires_at=datetime.now(UTC) + timedelta(days=30),
             )
         )
@@ -347,42 +464,77 @@ async def token_endpoint(
                 "token_type": "Bearer",
                 "expires_in": 3600,
                 "refresh_token": refresh,
-                "scope": auth_code.scope,
+                "scope": row["scope"],
             }
         )
 
     if grant_type == "refresh_token":
         if not refresh_token or not client_id:
             raise HTTPException(400, "refresh_token and client_id required")
-        result = await session.execute(
-            select(AuthRefreshToken).where(
-                AuthRefreshToken.token_hash == hash_token(refresh_token),
-                AuthRefreshToken.revoked_at.is_(None),
+        token_h = hash_token(refresh_token)
+        # Peek first for reuse detection (already-revoked presented again).
+        existing = (
+            await session.execute(
+                select(AuthRefreshToken).where(AuthRefreshToken.token_hash == token_h)
+            )
+        ).scalar_one_or_none()
+        if (
+            existing is not None
+            and existing.revoked_at is not None
+            and existing.client_id == client_id
+        ):
+            await _revoke_refresh_family(session, existing.family_id)
+            await session.commit()
+            raise HTTPException(400, "Invalid refresh token")
+
+        # Atomic consume: only one concurrent refresh wins the row.
+        consumed = (
+            await session.execute(
+                text(
+                    """
+                    UPDATE auth_refresh_tokens
+                    SET revoked_at = now()
+                    WHERE token_hash = :h
+                      AND revoked_at IS NULL
+                      AND expires_at > now()
+                      AND client_id = :cid
+                    RETURNING id, family_id, user_id, scope
+                    """
+                ),
+                {"h": token_h, "cid": client_id},
+            )
+        ).mappings().first()
+        if not consumed or consumed["user_id"] is None:
+            await session.rollback()
+            raise HTTPException(400, "Invalid refresh token")
+
+        new_refresh = new_opaque_token()
+        session.add(
+            AuthRefreshToken(
+                id=uuid.uuid4(),
+                token_hash=hash_token(new_refresh),
+                family_id=consumed["family_id"],
+                client_id=client_id,
+                user_id=consumed["user_id"],
+                scope=consumed["scope"],
+                expires_at=datetime.now(UTC) + timedelta(days=30),
             )
         )
-        row = result.scalar_one_or_none()
-        if not row or row.expires_at < datetime.now(UTC) or row.client_id != client_id:
-            raise HTTPException(400, "Invalid refresh token")
-        if row.user_id is None:
-            from memchentic.auth.users import ensure_admin_user
-
-            admin = await ensure_admin_user(session, settings)
-            subject, email_claim, provider = str(admin.id), admin.email, "admin"
-        else:
-            subject, email_claim, provider = str(row.user_id), None, "internal"
         access = await issue_access_token(
             session,
-            subject=subject,
-            email=email_claim,
-            provider=provider,
+            subject=str(consumed["user_id"]),
+            email=None,
+            provider="internal",
             settings=settings,
         )
+        await session.commit()
         return JSONResponse(
             {
                 "access_token": access,
                 "token_type": "Bearer",
                 "expires_in": 3600,
-                "scope": row.scope,
+                "refresh_token": new_refresh,
+                "scope": consumed["scope"],
             }
         )
 

@@ -17,7 +17,7 @@ target_metadata = Base.metadata
 
 
 def get_url() -> str:
-    return get_settings().database_url
+    return get_settings().migration_database_url
 
 
 def run_migrations_offline() -> None:
@@ -45,6 +45,7 @@ async def run_async_migrations() -> None:
         configuration,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        connect_args={"ssl": get_settings().postgres_ssl},
     )
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)

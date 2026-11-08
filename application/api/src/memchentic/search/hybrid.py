@@ -12,6 +12,18 @@ from memchentic.models.entities import EntryType, Memory, MemoryKind
 from memchentic.settings import get_settings
 
 
+def escape_ilike(value: str) -> str:
+    """Escape ``\\``, ``%``, and ``_`` for SQL ``ILIKE … ESCAPE '\\'`` patterns.
+
+    Args:
+        value: Raw user fragment embedded between wildcards.
+
+    Returns:
+        Escaped string safe to wrap as ``%{value}%``.
+    """
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def memory_type_clause(tokens: Sequence[str] | None) -> ColumnElement[bool] | None:
     """Build an OR filter for entry types and/or guides.
 
@@ -53,7 +65,7 @@ class Digest:
     snippet: str
     type: str | None
     tags: list[str]
-    space: str
+    space_id: str
     kind: str
     created_by: str | None = None
 
@@ -82,8 +94,6 @@ async def hybrid_search(
     *,
     query: str,
     space_ids: list[uuid.UUID] | None = None,
-    kind: MemoryKind | None = None,
-    entry_type: str | None = None,
     type_tokens: Sequence[str] | None = None,
     tags: list[str] | None = None,
     tag_mode: str = "and",
@@ -106,15 +116,14 @@ async def hybrid_search(
         clause = memory_type_clause(type_tokens)
         if clause is not None:
             base_filters.append(clause)
-    else:
-        if kind is not None:
-            base_filters.append(Memory.kind == kind)
-        if entry_type:
-            base_filters.append(Memory.entry_type == entry_type)
     if path_hint:
-        base_filters.append(Memory.path_hint.ilike(f"%{path_hint}%"))
+        base_filters.append(
+            Memory.path_hint.ilike(f"%{escape_ilike(path_hint)}%", escape="\\")
+        )
     if repo_hint:
-        base_filters.append(Memory.repo_hint.ilike(f"%{repo_hint}%"))
+        base_filters.append(
+            Memory.repo_hint.ilike(f"%{escape_ilike(repo_hint)}%", escape="\\")
+        )
     if tags:
         if tag_mode == "or":
             base_filters.append(Memory.tags.overlap(tags))
@@ -139,11 +148,16 @@ async def hybrid_search(
         fts_ids = [row[0] for row in (await session.execute(fts_stmt)).all()]
         # Fallback ILIKE if FTS empty
         if not fts_ids:
-            like = f"%{query.strip()}%"
+            like = f"%{escape_ilike(query.strip())}%"
             like_stmt = (
                 select(Memory.id)
                 .where(*base_filters)
-                .where(or_(Memory.title.ilike(like), Memory.body.ilike(like)))
+                .where(
+                    or_(
+                        Memory.title.ilike(like, escape="\\"),
+                        Memory.body.ilike(like, escape="\\"),
+                    )
+                )
                 .order_by(Memory.updated_at.desc())
                 .limit(fetch_n)
             )
@@ -172,7 +186,7 @@ async def hybrid_search(
                 snippet=_snippet(m.body),
                 type=m.entry_type.value if m.entry_type else None,
                 tags=list(m.tags or []),
-                space=str(m.space_id),
+                space_id=str(m.space_id),
                 kind=m.kind.value,
                 created_by=str(m.created_by_user_id) if m.created_by_user_id else None,
             )

@@ -1,4 +1,3 @@
-from collections.abc import AsyncGenerator
 from typing import Any
 from uuid import UUID
 
@@ -16,14 +15,29 @@ _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
-def get_engine() -> AsyncEngine:
+def get_engine(*, migration: bool = False) -> AsyncEngine:
+    """Return the shared async engine.
+
+    Args:
+        migration: When True, connect as the owner role (extensions / Alembic).
+            Runtime callers leave this False so RLS applies via ``memchentic_app``.
+    """
     global _engine
+    if migration:
+        settings = get_settings()
+        return create_async_engine(
+            settings.migration_database_url,
+            echo=False,
+            pool_pre_ping=True,
+            connect_args={"ssl": settings.postgres_ssl},
+        )
     if _engine is None:
         settings = get_settings()
         _engine = create_async_engine(
             settings.database_url,
             echo=False,
             pool_pre_ping=True,
+            connect_args={"ssl": settings.postgres_ssl},
         )
         event.listen(_engine.sync_engine, "checkin", _reset_rls_on_checkin)
     return _engine
@@ -71,18 +85,17 @@ def reset_engine() -> None:
         engine.sync_engine.dispose()
 
 
-async def get_session() -> AsyncGenerator[AsyncSession, None]:
-    factory = get_session_factory()
-    async with factory() as session:
-        yield session
-
-
 async def set_rls_context(
     session: AsyncSession,
     *,
     user_id: UUID | None,
     is_admin: bool,
 ) -> None:
+    """Bind the tenant GUCs for RLS helpers on this session's connection.
+
+    Uses session-level ``set_config`` (third arg false). Pool check-in clears
+    the GUCs so the next checkout never inherits a prior principal.
+    """
     await session.execute(
         text(
             "SELECT set_config('app.user_id', :uid, false), "
@@ -92,9 +105,27 @@ async def set_rls_context(
     )
 
 
+async def commit_with_rls(
+    session: AsyncSession,
+    *,
+    user_id: UUID | None,
+    is_admin: bool,
+) -> None:
+    """Commit then re-bind RLS GUCs (commit/check-in clears session-level GUCs)."""
+    await session.commit()
+    await set_rls_context(session, user_id=user_id, is_admin=is_admin)
+
+
 async def init_db() -> None:
-    """Ensure extensions exist; schema comes from Alembic."""
-    engine = get_engine()
-    async with engine.begin() as conn:
-        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "pgcrypto"'))
+    """Ensure extensions exist; schema comes from Alembic.
+
+    Uses the owner DSN because ``CREATE EXTENSION`` requires a superuser / owner
+    and must run before the runtime app role connects.
+    """
+    engine = get_engine(migration=True)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "pgcrypto"'))
+    finally:
+        await engine.dispose()

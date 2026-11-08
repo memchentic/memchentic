@@ -13,12 +13,17 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     VIRTUAL_ENV=/opt/venv \
     PATH="/opt/venv/bin:$PATH"
 
+ARG INSTALL_DEV=0
+
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 memchentic \
+    && useradd --uid 10001 --gid 10001 --home-dir /opt/memchentic --shell /usr/sbin/nologin memchentic
 
 WORKDIR /opt/memchentic
 
 COPY application/api/pyproject.toml ./
+COPY application/api/uv.lock* ./
 COPY application/api/src ./src
 COPY application/mcp/src/memchentic/mcp ./src/memchentic/mcp
 COPY application/api/alembic.ini ./
@@ -28,7 +33,11 @@ COPY --from=gui-build /gui/dist ./gui/dist
 
 RUN python -m venv /opt/venv \
     && pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -e ".[dev]"
+    && if [ "$INSTALL_DEV" = "1" ]; then \
+         pip install --no-cache-dir -e ".[dev]"; \
+       else \
+         pip install --no-cache-dir -e .; \
+       fi
 
 # Bake hardcoded MiniLM ONNX under the API tree (~87MB). No runtime model switch.
 ARG MINILM_REPO=https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main
@@ -36,7 +45,10 @@ RUN mkdir -p /opt/memchentic/models/all-MiniLM-L6-v2 \
     && curl -fsSL "$MINILM_REPO/onnx/model.onnx" \
         -o /opt/memchentic/models/all-MiniLM-L6-v2/model.onnx \
     && curl -fsSL "$MINILM_REPO/tokenizer.json" \
-        -o /opt/memchentic/models/all-MiniLM-L6-v2/tokenizer.json
+        -o /opt/memchentic/models/all-MiniLM-L6-v2/tokenizer.json \
+    && chown -R memchentic:memchentic /opt/memchentic /opt/venv
+
+USER 10001:10001
 
 EXPOSE 8080
 

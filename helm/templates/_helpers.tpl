@@ -66,13 +66,25 @@ app.kubernetes.io/component: postgres
 Validate secrets.mode and required fields.
 */}}
 {{- define "memchentic.validateSecrets" -}}
-{{- $mode := .Values.secrets.mode | default "inline" }}
+{{- $mode := .Values.secrets.mode | default "existing" }}
 {{- if not (or (eq $mode "inline") (eq $mode "existing") (eq $mode "externalSecret")) }}
 {{- fail (printf "secrets.mode must be inline, existing, or externalSecret (got %q)" $mode) }}
+{{- end }}
+{{- if not .Values.config.baseUrl }}
+{{- fail "config.baseUrl is required (public https origin)" }}
 {{- end }}
 {{- if eq $mode "existing" }}
 {{- if not .Values.secrets.existingSecret }}
 {{- fail "secrets.mode=existing requires secrets.existingSecret" }}
+{{- end }}
+{{- end }}
+{{- if eq $mode "inline" }}
+{{- $required := list "ADMIN_PASSWORD" "ADMIN_API_KEY" "POSTGRES_PASSWORD" "POSTGRES_APP_PASSWORD" "ENCRYPTION_KEY" }}
+{{- range $required }}
+{{- $val := index $.Values.secrets.inline . | default "" }}
+{{- if or (not $val) (contains "change-me" ($val | lower)) (lt (len $val) 16) }}
+{{- fail (printf "secrets.mode=inline requires a strong secrets.inline.%s (16+ chars, no change-me)" .) }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- if eq $mode "externalSecret" }}

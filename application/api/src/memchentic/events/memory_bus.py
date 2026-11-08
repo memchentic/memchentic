@@ -157,7 +157,7 @@ async def start_memory_listener() -> None:
     async with _lock:
         if _listener_conn is not None:
             return
-        conn = await asyncpg.connect(_dsn_from_settings())
+        conn = await asyncpg.connect(_dsn_from_settings(), ssl=get_settings().postgres_ssl)
         await conn.add_listener(MEMORY_CHANNEL, _on_notify)
         _listener_conn = conn
         logger.info("Listening on Postgres channel %s", MEMORY_CHANNEL)

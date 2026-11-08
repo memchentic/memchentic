@@ -131,6 +131,7 @@ def test_search_types_include_guides(client: TestClient) -> None:
     kinds = {row["kind"] for row in both}
     assert "entry" in kinds
     assert "guide" in kinds
+    assert all(row.get("space_id") and "space" not in row for row in both)
 
     guides = client.get(
         f"/api/memories/search?q={marker}&types=guide",
@@ -138,3 +139,4 @@ def test_search_types_include_guides(client: TestClient) -> None:
     ).json()
     assert guides
     assert all(row["kind"] == "guide" for row in guides)
+    assert all(row.get("space_id") and "space" not in row for row in guides)

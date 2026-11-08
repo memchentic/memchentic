@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import os
+import re
 import secrets
 import uuid
 from typing import Any
@@ -16,6 +17,13 @@ from fastapi.testclient import TestClient
 ADMIN_KEY = os.environ.get("ADMIN_API_KEY", "")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@example.com").strip()
+_CSRF_RE = re.compile(r'name="csrf_token" value="([^"]+)"')
+
+
+def _oauth_csrf(html: str) -> str:
+    match = _CSRF_RE.search(html)
+    assert match, "csrf_token missing from authorize page"
+    return match.group(1)
 
 
 def _user(client: TestClient) -> tuple[str, str, str]:
@@ -116,10 +124,22 @@ def test_personal_isolation_and_group_lifecycle(client: TestClient) -> None:
 
 
 def test_authenticated_user_directory_omits_admin_fields(client: TestClient) -> None:
-    """Non-admins can list users for group invites without providers/created_at."""
+    """Non-admins see shared-group peers without providers/created_at."""
     token_a, user_a, _ = _user(client)
     _token_b, user_b, email_b = _user(client)
-    rows = client.get("/api/users", headers={"Authorization": f"Bearer {token_a}"}).json()
+    auth_a = {"Authorization": f"Bearer {token_a}"}
+    group = client.post(
+        "/api/spaces", headers=auth_a, json={"name": f"dir-{uuid.uuid4().hex[:8]}"}
+    ).json()
+    assert (
+        client.post(
+            f"/api/spaces/{group['id']}/members",
+            headers=auth_a,
+            json={"user_id": user_b},
+        ).status_code
+        == 200
+    )
+    rows = client.get("/api/users", headers=auth_a).json()
     assert isinstance(rows, list)
     by_id = {r["id"]: r for r in rows}
     assert user_a in by_id and user_b in by_id
@@ -161,9 +181,8 @@ def test_user_detail_groups_are_acl_scoped(client: TestClient) -> None:
     assert private["id"] not in group_ids
     assert all(t["kind"] == "group" for t in detail_b["groups"])
 
-    outsider = client.get(f"/api/users/{user_a}", headers=auth_c).json()
-    assert outsider["id"] == user_a
-    assert outsider["groups"] == []
+    outsider = client.get(f"/api/users/{user_a}", headers=auth_c)
+    assert outsider.status_code == 404
 
     as_b = client.get(f"/api/users/{user_a}", headers=auth_b).json()
     assert {t["id"] for t in as_b["groups"]} == {shared["id"]}
@@ -212,11 +231,11 @@ def test_user_detail_acl_edges(client: TestClient) -> None:
     self_a = client.get(f"/api/users/{user_a}", headers=auth_a).json()
     assert {both["id"], solo["id"]} <= {t["id"] for t in self_a["groups"]}
 
-    # Non-owner cannot delete; owner can.
+    # Non-owner cannot delete; owner can. After the shared group is gone,
+    # neither peer remains visible in the other's directory detail.
     assert client.delete(f"/api/spaces/{both['id']}", headers=auth_b).status_code == 403
     assert client.delete(f"/api/spaces/{both['id']}", headers=auth_a).status_code == 200
-    after_delete = client.get(f"/api/users/{user_b}", headers=auth_a).json()
-    assert both["id"] not in {t["id"] for t in after_delete["groups"]}
+    assert client.get(f"/api/users/{user_b}", headers=auth_a).status_code == 404
 
 
 def test_write_target_resolution(client: TestClient) -> None:
@@ -377,7 +396,7 @@ def test_authorize_requires_registered_redirect_and_pkce(client: TestClient) -> 
 
     form = {"email": email, "password": password, "client_id": client_id,
             "redirect_uri": redirect, "code_challenge": challenge,
-            "code_challenge_method": "S256"}
+            "code_challenge_method": "S256", "csrf_token": _oauth_csrf(page.text)}
     redirected = client.post("/oauth/authorize", data=form, follow_redirects=False)
     assert redirected.status_code == 302
     code = parse_qs(urlparse(redirected.headers["location"]).query)["code"][0]
@@ -429,6 +448,7 @@ def test_authorize_accepts_admin_email(client: TestClient) -> None:
         "redirect_uri": redirect,
         "code_challenge": challenge,
         "code_challenge_method": "S256",
+        "csrf_token": _oauth_csrf(page.text),
     }
     redirected = client.post("/oauth/authorize", data=form, follow_redirects=False)
     assert redirected.status_code == 302

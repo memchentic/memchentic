@@ -10,7 +10,11 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from memchentic.auth.principal import resolve_bearer
-from memchentic.auth.providers import OAuthProfile, clear_discovery_cache
+from memchentic.auth.providers import (
+    OAuthProfile,
+    clear_discovery_cache,
+    clear_jwks_cache,
+)
 from memchentic.auth.tokens import issue_access_token, verify_access_token
 from memchentic.settings import get_settings
 
@@ -25,9 +29,11 @@ def external_oauth(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BASE_URL", "http://memchentic.test")
     get_settings.cache_clear()
     clear_discovery_cache()
+    clear_jwks_cache()
     yield
     get_settings.cache_clear()
     clear_discovery_cache()
+    clear_jwks_cache()
 
 
 @pytest.mark.asyncio
@@ -103,7 +109,10 @@ def test_oauth_start_redirects_to_idp(
     assert "client_id=test-client-id" in loc
     assert "code_challenge=" in loc
     assert "state=" in loc
-    assert "memchentic_oauth" in res.headers.get("set-cookie", "").lower()
+    assert "nonce=" in loc
+    set_cookie = res.headers.get("set-cookie", "").lower()
+    assert "memchentic_oauth" in set_cookie
+    assert "memchentic_oauth_nonce" in set_cookie
 
 
 def test_oauth_callback_sets_session(
@@ -127,7 +136,9 @@ def test_oauth_callback_sets_session(
         start = client.get("/api/auth/oauth/start", follow_redirects=False)
     assert start.status_code == 302
     state_cookie = start.cookies.get("memchentic_oauth")
+    nonce_cookie = start.cookies.get("memchentic_oauth_nonce")
     assert state_cookie
+    assert nonce_cookie
     state = state_cookie.split(".", 1)[0]
 
     with patch(
@@ -136,7 +147,10 @@ def test_oauth_callback_sets_session(
     ):
         cb = client.get(
             f"/api/auth/oauth/callback?code=abc&state={state}",
-            cookies={"memchentic_oauth": state_cookie},
+            cookies={
+                "memchentic_oauth": state_cookie,
+                "memchentic_oauth_nonce": nonce_cookie,
+            },
             follow_redirects=False,
         )
     assert cb.status_code == 302
@@ -177,6 +191,7 @@ def test_oauth_callback_rejects_unverified_email(
     ):
         start = client.get("/api/auth/oauth/start", follow_redirects=False)
     state_cookie = start.cookies["memchentic_oauth"]
+    nonce_cookie = start.cookies["memchentic_oauth_nonce"]
     state = state_cookie.split(".", 1)[0]
     with patch(
         "memchentic.auth.oauth_browser.exchange_code_for_profile",
@@ -184,7 +199,10 @@ def test_oauth_callback_rejects_unverified_email(
     ):
         cb = client.get(
             f"/api/auth/oauth/callback?code=abc&state={state}",
-            cookies={"memchentic_oauth": state_cookie},
+            cookies={
+                "memchentic_oauth": state_cookie,
+                "memchentic_oauth_nonce": nonce_cookie,
+            },
             follow_redirects=False,
         )
     assert cb.status_code == 302
@@ -214,7 +232,7 @@ async def test_resolve_bearer_upserts_external_subject(
         "provider": "google",
     }
 
-    # Structurally valid JWT so get_unverified_claims accepts it before verify.
+    # Compact JWT shape; verify_access_token is mocked below.
     bearer = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.sig"
 
     with patch(

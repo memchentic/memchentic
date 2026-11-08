@@ -41,16 +41,40 @@ shapes on purpose:
 - **Guides** — reusable advice the agent should keep getting better at
   following, not a one-off scrap of text
 
-Search is hybrid: plain language and meaning, not keyword bingo alone. Agents
-get a short digest first, then open the full memory when they need it — so
-context stays useful instead of drowning the chat.
+Agents get a short digest first, then open the full memory when they need it —
+so context stays useful instead of drowning the chat. Details live on
+{doc}`memory-types`.
+
+## Hybrid retrieval on a real database
+
+Memchentic is not a prompt paste-bin or a vector-only store. Memory lives in
+**Postgres**: ordinary relational rows (spaces, types, tags, ownership) plus
+**full-text search** and **pgvector** embeddings in the same database.
+
+When an agent calls `find` / `guide_find` over MCP, the server runs the same
+hybrid path the API uses:
+
+1. **Relational filters** — ACL, space, type, tags, path/repo hints as hard
+   SQL constraints
+2. **Lexical match** — Postgres FTS (with a safe fallback) for the words that
+   matter
+3. **Vector similarity** — cosine distance over embeddings for meaning when
+   phrasing differs
+4. **Fusion** — reciprocal rank fusion merges both ranked lists before digests
+   are returned
+
+That mix is why recall stays **scoped and current** (the row you filtered is
+the row you get) while still catching **paraphrase and intent**. Performance
+comes from indexed SQL and vectors in one place — not a second system to keep
+in sync.
 
 ## An MCP server, not a side script
 
 Memchentic *is* the MCP server. The same application that serves the UI also
 exposes the tool surface your harness already knows how to call. Point Cursor,
 Claude Code, Copilot, Codex, or another MCP client at it; authenticate; and
-the agent can save and recall without a separate glue layer.
+the agent can save and recall without a separate glue layer. Those recall tools
+hit the hybrid Postgres path above — not a bolted-on side index.
 
 You are not bolting memory onto the model with prompts alone. You are giving
 the agent a real place to put knowledge, with isolation and a clear contract.
@@ -66,18 +90,21 @@ The tool set is deliberately small and obvious:
 - **Path-aware recall** — “what do we know about this part of the codebase?”
 - **Housekeeping** — spot overlaps and stale items without silent auto-delete
 
-Enough for a reliable agent loop. Not a zoo of megatools.
+A small set on purpose — enough to remember and find things, not a sprawling
+tool catalog.
 
 ## Why people adopt it
 
 - **Continuity** across sessions and tools, without pasting the same brief
   every time
+- **Hybrid retrieval** — relational filters, full-text, and vectors fused for
+  accurate, up-to-date recall
 - **Multi-user by design** — personal isolation, optional shared groups
 - **Operator-owned** — run it where you already run containers; your data stays
   yours
 - **Agent-native** — MCP-first, with a polished UI when humans need it
-- **Original surface** — its own verbs and model, not a thin wrap of someone
-  else's memory product
+- **Its own product** — built for this job, not a thin wrap of someone else's
+  memory server
 
 Ready to try it? Check {doc}`requirements`, then {doc}`docker` or
 {doc}`helm`, then {doc}`connect-mcp` and {doc}`install-marketplace`. Deeper

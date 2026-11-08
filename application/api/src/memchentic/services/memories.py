@@ -9,11 +9,18 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from memchentic.auth.principal import Principal
+from memchentic.db.session import commit_with_rls
 from memchentic.embeddings import get_embedder
 from memchentic.events import memory_event_from_row, publish_memory_event
 from memchentic.models.entities import EntryType, Memory, MemoryKind, SpaceKind, User
-from memchentic.search.hybrid import Digest, hybrid_search, memory_type_clause
-from memchentic.services.spaces import Visibility, list_spaces, resolve_write_space, show_space
+from memchentic.search.hybrid import Digest, escape_ilike, hybrid_search, memory_type_clause
+from memchentic.services.spaces import (
+    Visibility,
+    can_manage_group,
+    list_spaces,
+    resolve_write_space,
+    show_space,
+)
 from memchentic.settings import get_settings
 
 
@@ -50,7 +57,7 @@ def digest_to_dict(d: Digest) -> dict[str, Any]:
         "snippet": d.snippet,
         "type": d.type,
         "tags": d.tags,
-        "space": d.space,
+        "space_id": d.space_id,
         "kind": d.kind,
         "created_by": d.created_by,
     }
@@ -119,18 +126,6 @@ async def accessible_space_ids(
         kind = SpaceKind(space_scope)
         spaces = [s for s in spaces if s.kind == kind]
     return [s.id for s in spaces]
-
-
-async def _accessible_space_ids(
-    session: AsyncSession,
-    principal: Principal,
-    space_id: uuid.UUID | None,
-    *,
-    space_scope: str | None = None,
-) -> list[uuid.UUID]:
-    return await accessible_space_ids(
-        session, principal, space_id, space_scope=space_scope
-    )
 
 
 def resolve_type_tokens(
@@ -252,7 +247,9 @@ async def remember(
     await session.flush()
     await session.refresh(memory)
     await publish_memory_event(session, memory_event_from_row("created", memory))
-    await session.commit()
+    await commit_with_rls(
+        session, user_id=principal.user_id, is_admin=principal.is_admin
+    )
     await session.refresh(memory)
     return memory
 
@@ -274,11 +271,42 @@ async def open_memory(
         return memory if space else None
 
     if title:
-        space_ids = await _accessible_space_ids(session, principal, space_id)
+        space_ids = await accessible_space_ids(session, principal, space_id)
         stmt = select(Memory).where(Memory.title == title, Memory.space_id.in_(space_ids))
         result = await session.execute(stmt.limit(1))
         return result.scalar_one_or_none()
     return None
+
+
+async def require_memory_manage(
+    session: AsyncSession, principal: Principal, memory: Memory
+) -> None:
+    """Raise unless the principal may forget/relocate ``memory``.
+
+    Allowed when the caller is an admin, the memory creator, or a manager of
+    the memory's group (``can_manage_group``). Member-level revise/guide_write
+    stay on ``open_memory`` only.
+
+    Args:
+        session: Database session.
+        principal: Authenticated caller.
+        memory: Already-loaded memory the caller can at least open.
+
+    Raises:
+        PermissionError: When the caller may not manage the memory.
+    """
+    if principal.is_admin:
+        return
+    if (
+        principal.user_id
+        and memory.created_by_user_id
+        and memory.created_by_user_id == principal.user_id
+    ):
+        return
+    space = await show_space(session, principal, memory.space_id)
+    if space is not None and can_manage_group(space, principal):
+        return
+    raise PermissionError("Not allowed to manage this memory")
 
 
 async def revise(
@@ -323,7 +351,9 @@ async def revise(
         )
     memory.updated_at = datetime.now(UTC)
     await publish_memory_event(session, memory_event_from_row("updated", memory))
-    await session.commit()
+    await commit_with_rls(
+        session, user_id=principal.user_id, is_admin=principal.is_admin
+    )
     await session.refresh(memory)
     return memory
 
@@ -334,10 +364,13 @@ async def forget(
     memory = await open_memory(session, principal, memory_id=memory_id)
     if not memory:
         raise PermissionError("Memory not found")
+    await require_memory_manage(session, principal, memory)
     event = memory_event_from_row("deleted", memory)
     await session.delete(memory)
     await publish_memory_event(session, event)
-    await session.commit()
+    await commit_with_rls(
+        session, user_id=principal.user_id, is_admin=principal.is_admin
+    )
 
 
 async def browse(
@@ -352,7 +385,7 @@ async def browse(
     limit: int | None = None,
     offset: int = 0,
 ) -> list[Memory]:
-    space_ids = await _accessible_space_ids(
+    space_ids = await accessible_space_ids(
         session, principal, space_id, space_scope=space_scope
     )
     if not space_ids:
@@ -376,7 +409,7 @@ async def since(
     space_id: uuid.UUID | None = None,
     limit: int | None = None,
 ) -> list[Digest]:
-    space_ids = await _accessible_space_ids(session, principal, space_id)
+    space_ids = await accessible_space_ids(session, principal, space_id)
     if not space_ids:
         return []
     limit = get_settings().resolve_browse_limit(limit)
@@ -395,7 +428,7 @@ async def since(
             snippet=(m.body or "")[:180],
             type=m.entry_type.value if m.entry_type else None,
             tags=list(m.tags or []),
-            space=str(m.space_id),
+            space_id=str(m.space_id),
             kind=m.kind.value,
             created_by=_creator_id(m),
         )
@@ -412,7 +445,7 @@ async def by_tag(
     space_id: uuid.UUID | None = None,
     limit: int | None = None,
 ) -> list[Digest]:
-    space_ids = await _accessible_space_ids(session, principal, space_id)
+    space_ids = await accessible_space_ids(session, principal, space_id)
     if not space_ids or not tags:
         return []
     limit = get_settings().resolve_browse_limit(limit)
@@ -431,7 +464,7 @@ async def by_tag(
             snippet=(m.body or "")[:180],
             type=m.entry_type.value if m.entry_type else None,
             tags=list(m.tags or []),
-            space=str(m.space_id),
+            space_id=str(m.space_id),
             kind=m.kind.value,
             created_by=_creator_id(m),
         )
@@ -448,13 +481,16 @@ async def relocate(
     memory = await open_memory(session, principal, memory_id=memory_id)
     if not memory:
         raise PermissionError("Memory not found")
+    await require_memory_manage(session, principal, memory)
     target = await resolve_write_space(session, principal, target_space_id)
     left = memory_event_from_row("deleted", memory)
     memory.space_id = target.id
     memory.updated_at = datetime.now(UTC)
     await publish_memory_event(session, left)
     await publish_memory_event(session, memory_event_from_row("created", memory))
-    await session.commit()
+    await commit_with_rls(
+        session, user_id=principal.user_id, is_admin=principal.is_admin
+    )
     await session.refresh(memory)
     return memory
 
@@ -473,7 +509,7 @@ async def find(
     repo_hint: str | None = None,
     limit: int | None = None,
 ) -> list[Digest]:
-    space_ids = await _accessible_space_ids(
+    space_ids = await accessible_space_ids(
         session, principal, space_id, space_scope=space_scope
     )
     tokens = resolve_type_tokens(
@@ -504,7 +540,7 @@ async def search(
     limit: int | None = None,
 ) -> list[Digest]:
     """Hybrid search across entries and/or guides for the GUI/REST surface."""
-    space_ids = await _accessible_space_ids(
+    space_ids = await accessible_space_ids(
         session, principal, space_id, space_scope=space_scope
     )
     tokens = resolve_type_tokens(types=types, kind=kind, entry_type=entry_type)
@@ -568,7 +604,9 @@ async def guide_write(
         dup.embedding = await get_embedder().aembed_memory_text(dup.title, dup.body)
         dup.updated_at = datetime.now(UTC)
         await publish_memory_event(session, memory_event_from_row("updated", dup))
-        await session.commit()
+        await commit_with_rls(
+            session, user_id=principal.user_id, is_admin=principal.is_admin
+        )
         await session.refresh(dup)
         return dup
 
@@ -589,7 +627,9 @@ async def guide_write(
     await session.flush()
     await session.refresh(memory)
     await publish_memory_event(session, memory_event_from_row("created", memory))
-    await session.commit()
+    await commit_with_rls(
+        session, user_id=principal.user_id, is_admin=principal.is_admin
+    )
     await session.refresh(memory)
     return memory
 
@@ -606,10 +646,10 @@ async def guide_find(
     digests = await hybrid_search(
         session,
         query=query,
-        space_ids=await _accessible_space_ids(
+        space_ids=await accessible_space_ids(
             session, principal, space_id, space_scope=space_scope
         ),
-        kind=MemoryKind.guide,
+        type_tokens=["guide"],
         limit=limit,
     )
     return await _boost_guide_scores(session, digests)
@@ -623,16 +663,22 @@ async def about_path(
     repo_hint: str | None = None,
     limit: int | None = None,
 ) -> list[Digest]:
-    space_ids = await _accessible_space_ids(session, principal, None)
+    space_ids = await accessible_space_ids(session, principal, None)
     if not space_ids:
         return []
     limit = get_settings().resolve_search_limit(limit)
+    path_pat = f"%{escape_ilike(path)}%"
     stmt = select(Memory).where(
         Memory.space_id.in_(space_ids),
-        or_(Memory.path_hint.ilike(f"%{path}%"), Memory.body.ilike(f"%{path}%")),
+        or_(
+            Memory.path_hint.ilike(path_pat, escape="\\"),
+            Memory.body.ilike(path_pat, escape="\\"),
+        ),
     )
     if repo_hint:
-        stmt = stmt.where(Memory.repo_hint.ilike(f"%{repo_hint}%"))
+        stmt = stmt.where(
+            Memory.repo_hint.ilike(f"%{escape_ilike(repo_hint)}%", escape="\\")
+        )
     stmt = stmt.order_by(Memory.updated_at.desc()).limit(limit)
     rows = list((await session.execute(stmt)).scalars())
     return [
@@ -643,7 +689,7 @@ async def about_path(
             snippet=(m.body or "")[:180],
             type=m.entry_type.value if m.entry_type else None,
             tags=list(m.tags or []),
-            space=str(m.space_id),
+            space_id=str(m.space_id),
             kind=m.kind.value,
             created_by=_creator_id(m),
         )
@@ -677,7 +723,7 @@ async def overlap_report(
 ) -> dict[str, Any]:
     settings = get_settings()
     limit = settings.resolve_search_limit(limit)
-    space_ids = await _accessible_space_ids(session, principal, space_id)
+    space_ids = await accessible_space_ids(session, principal, space_id)
     if not space_ids:
         return {"near_duplicates": [], "expiring": [], "conflicts": []}
 

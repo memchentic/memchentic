@@ -1,3 +1,4 @@
+import ssl
 from functools import lru_cache
 from typing import Literal
 from urllib.parse import quote_plus
@@ -17,6 +18,8 @@ OAuthProvider = Literal[
     "generic",
     "internal",
 ]
+
+PostgresSslMode = Literal["disable", "prefer", "require", "verify-ca", "verify-full"]
 
 
 class Settings(BaseSettings):
@@ -48,23 +51,59 @@ class Settings(BaseSettings):
 
     postgres_user: str = Field(default="memchentic", alias="POSTGRES_USER")
     postgres_password: str = Field(default="memchentic", alias="POSTGRES_PASSWORD")
+    # Runtime role (NOSUPERUSER, NOBYPASSRLS). Migrations use POSTGRES_USER.
+    postgres_app_user: str = Field(default="memchentic_app", alias="POSTGRES_APP_USER")
+    postgres_app_password: str = Field(default="", alias="POSTGRES_APP_PASSWORD")
     postgres_hostname: str = Field(default="postgres", alias="POSTGRES_HOSTNAME")
     postgres_port: int = Field(default=5432, ge=1, le=65535, alias="POSTGRES_PORT")
     postgres_db: str = Field(default="memchentic", alias="POSTGRES_DB")
+    postgres_sslmode: PostgresSslMode = Field(default="prefer", alias="POSTGRES_SSLMODE")
+    postgres_sslrootcert: str = Field(default="", alias="POSTGRES_SSLROOTCERT")
+
+    # Encrypts secrets the app itself stores in Postgres (internal JWT signing keys).
+    # Changing it makes existing signing keys unreadable; rotate by re-keying the rows.
+    encryption_key: str = Field(default="", alias="ENCRYPTION_KEY")
+
+    @property
+    def postgres_ssl(self) -> str | ssl.SSLContext:
+        """asyncpg ``ssl`` argument for ``POSTGRES_SSLMODE``.
+
+        ``verify-ca`` / ``verify-full`` build a context trusting
+        ``POSTGRES_SSLROOTCERT`` (system CAs when empty); ``verify-full`` also
+        checks the server hostname. Other modes pass through as libpq names.
+        """
+        mode = self.postgres_sslmode
+        if mode not in ("verify-ca", "verify-full"):
+            return mode
+        ctx = ssl.create_default_context(cafile=self.postgres_sslrootcert.strip() or None)
+        ctx.check_hostname = mode == "verify-full"
+        return ctx
+
+    def _dsn(self, *, user: str, password: str) -> str:
+        host = self.postgres_hostname.strip()
+        db = quote_plus(self.postgres_db)
+        return (
+            f"postgresql+asyncpg://{quote_plus(user)}:{quote_plus(password)}"
+            f"@{host}:{self.postgres_port}/{db}"
+        )
+
+    @property
+    def migration_database_url(self) -> str:
+        """Owner/superuser DSN for Alembic (table owner; can CREATE ROLE)."""
+        return self._dsn(user=self.postgres_user, password=self.postgres_password)
 
     @property
     def database_url(self) -> str:
-        """SQLAlchemy async DSN built from ``POSTGRES_*`` pieces.
+        """Runtime DSN as the non-superuser app role (RLS enforced).
 
-        Use ``POSTGRES_HOSTNAME`` for the Compose service name (``postgres``) or
-        a remote host. No separate ``DATABASE_URL`` env var.
+        Falls back to the owner URL only when ``POSTGRES_APP_PASSWORD`` is empty
+        (legacy local) — production must set the app password.
         """
-        user = quote_plus(self.postgres_user)
-        password = quote_plus(self.postgres_password)
-        host = self.postgres_hostname.strip()
-        db = quote_plus(self.postgres_db)
-        return f"postgresql+asyncpg://{user}:{password}@{host}:{self.postgres_port}/{db}"
-
+        app_user = self.postgres_app_user.strip() or "memchentic_app"
+        app_password = self.postgres_app_password
+        if not app_password:
+            return self.migration_database_url
+        return self._dsn(user=app_user, password=app_password)
     near_dup_threshold: float = Field(default=0.92, alias="NEAR_DUP_THRESHOLD")
     rrf_k: int = Field(default=60, alias="RRF_K")
 
@@ -92,6 +131,7 @@ class Settings(BaseSettings):
     session_browser_hours: int = Field(default=12, ge=1, alias="SESSION_BROWSER_HOURS")
     session_cookie_secure: bool | None = Field(default=None, alias="SESSION_COOKIE_SECURE")
     register_enabled: bool = Field(default=True, alias="REGISTER_ENABLED")
+    enable_api_docs: bool = Field(default=False, alias="ENABLE_API_DOCS")
 
     @field_validator("session_cookie_secure", mode="before")
     @classmethod
@@ -103,24 +143,41 @@ class Settings(BaseSettings):
 
     @property
     def cookie_secure(self) -> bool:
-        """Whether the session cookie carries ``Secure``; defaults on for https base URLs."""
+        """Whether the session cookie carries ``Secure``.
+
+        Explicit ``SESSION_COOKIE_SECURE`` wins. Otherwise Secure is on unless
+        the ``BASE_URL`` host is loopback (local http dev).
+        """
         if self.session_cookie_secure is not None:
             return self.session_cookie_secure
-        return self.base_url.startswith("https://")
+        from urllib.parse import urlparse
 
+        host = (urlparse(self.base_url).hostname or "").casefold()
+        return host not in {"localhost", "127.0.0.1", "::1"}
     def insecure_secret_names(self) -> list[str]:
         """Name break-glass secrets that are empty, placeholders, or too short.
 
         Returns:
             Env var names that must be changed before the API may start.
         """
-        weak = {"", "change-me", "change-me-admin-api-key"}
-        checks = {
-            "ADMIN_PASSWORD": self.admin_password,
-            "ADMIN_API_KEY": self.admin_api_key,
+        weak_exact = {"", "change-me", "change-me-admin-api-key", "memchentic"}
+        checks: dict[str, tuple[str, int]] = {
+            "ADMIN_PASSWORD": (self.admin_password, 16),
+            "ADMIN_API_KEY": (self.admin_api_key, 16),
+            "ENCRYPTION_KEY": (self.encryption_key, 32),
+            "POSTGRES_PASSWORD": (self.postgres_password, 16),
+            "POSTGRES_APP_PASSWORD": (self.postgres_app_password, 16),
         }
-        return [name for name, value in checks.items() if value in weak or len(value) < 16]
-
+        bad: list[str] = []
+        for name, (value, min_len) in checks.items():
+            lowered = value.casefold()
+            if (
+                value in weak_exact
+                or "change-me" in lowered
+                or len(value) < min_len
+            ):
+                bad.append(name)
+        return bad
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
@@ -137,12 +194,6 @@ class Settings(BaseSettings):
         external IdP (IdP JWTs keep their own issuer via JWKS verification).
         """
         return self.base_url.rstrip("/")
-
-    @property
-    def effective_issuer(self) -> str:
-        if self.oauth_provider == "internal":
-            return self.session_issuer
-        return self.oauth_issuer or self.session_issuer
 
     @property
     def effective_audience(self) -> str:

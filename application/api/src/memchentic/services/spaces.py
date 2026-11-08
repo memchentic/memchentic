@@ -3,31 +3,52 @@ from __future__ import annotations
 import uuid
 from typing import Literal
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
 from memchentic.auth.principal import Principal
+from memchentic.db.session import commit_with_rls, set_rls_context
 from memchentic.models.entities import Space, SpaceKind, SpaceMember, User
 
 
 async def ensure_personal_space(session: AsyncSession, user: User) -> Space:
+    # FORCE RLS: SELECT/INSERT policies key off app.user_id — always bind it
+    # to the space owner before looking up or creating their personal space.
+    await set_rls_context(session, user_id=user.id, is_admin=False)
     result = await session.execute(
         select(Space).where(Space.kind == SpaceKind.personal, Space.created_by_user_id == user.id)
     )
     space = result.scalar_one_or_none()
     if space:
         return space
-    space = Space(
-        id=uuid.uuid4(),
-        kind=SpaceKind.personal,
-        name="Personal",
-        created_by_user_id=user.id,
+    space_id = uuid.uuid4()
+    # SECURITY DEFINER helper evaluates WITH CHECK under the caller's GUC and
+    # inserts the membership row in the same privileged statement (avoids the
+    # INSERT…RETURNING + SELECT-policy race under FORCE RLS).
+    await session.execute(
+        text(
+            "SELECT app_insert_space(:id, CAST(:kind AS space_kind), :name, :created_by)"
+        ),
+        {
+            "id": space_id,
+            "kind": SpaceKind.personal.value,
+            "name": "Personal",
+            "created_by": user.id,
+        },
     )
-    session.add(space)
     await session.flush()
-    session.add(SpaceMember(space_id=space.id, user_id=user.id))
-    await session.flush()
+    space = await session.get(Space, space_id)
+    if space is None:
+        # Concurrent create or prior partial insert: re-read under RLS.
+        result = await session.execute(
+            select(Space).where(
+                Space.kind == SpaceKind.personal, Space.created_by_user_id == user.id
+            )
+        )
+        space = result.scalar_one_or_none()
+    if space is None:
+        raise RuntimeError("personal space insert failed")
     return space
 
 
@@ -61,16 +82,25 @@ async def create_group(
     if not principal.user_id:
         raise PermissionError("Authentication required")
     owner_id = principal.user_id
-    space = Space(
-        id=uuid.uuid4(),
-        kind=SpaceKind.group,
-        name=name.strip(),
-        created_by_user_id=owner_id,
+    space_id = uuid.uuid4()
+    await session.execute(
+        text(
+            "SELECT app_insert_space(:id, CAST(:kind AS space_kind), :name, :created_by)"
+        ),
+        {
+            "id": space_id,
+            "kind": SpaceKind.group.value,
+            "name": name.strip(),
+            "created_by": owner_id,
+        },
     )
-    session.add(space)
-    await session.flush()
-    session.add(SpaceMember(space_id=space.id, user_id=owner_id))  # type: ignore[arg-type]
-    await session.commit()
+    # Load before commit: commit/check-in clears RLS GUCs and would hide the row.
+    space = await session.get(Space, space_id)
+    if space is None:
+        raise RuntimeError("group space insert failed")
+    await commit_with_rls(
+        session, user_id=principal.user_id, is_admin=principal.is_admin
+    )
     await session.refresh(space)
     return space
 
@@ -199,7 +229,9 @@ async def add_member(
         return member
     member = SpaceMember(space_id=space_id, user_id=user_id)
     session.add(member)
-    await session.commit()
+    await commit_with_rls(
+        session, user_id=principal.user_id, is_admin=principal.is_admin
+    )
     return member
 
 
@@ -223,7 +255,9 @@ async def remove_member(
     member = result.scalar_one_or_none()
     if member:
         await session.delete(member)
-        await session.commit()
+        await commit_with_rls(
+            session, user_id=principal.user_id, is_admin=principal.is_admin
+        )
 
 
 async def rename_space(
@@ -239,7 +273,9 @@ async def rename_space(
     ):
         raise PermissionError("Cannot rename another user's personal space")
     space.name = name.strip()
-    await session.commit()
+    await commit_with_rls(
+        session, user_id=principal.user_id, is_admin=principal.is_admin
+    )
     await session.refresh(space)
     return space
 
@@ -272,7 +308,9 @@ async def delete_space(
     if not can_delete_group(space, principal):
         raise PermissionError("Only the group owner can delete")
     await session.delete(space)
-    await session.commit()
+    await commit_with_rls(
+        session, user_id=principal.user_id, is_admin=principal.is_admin
+    )
 
 
 Visibility = Literal["personal", "shared"]
@@ -385,7 +423,9 @@ async def resolve_write_space(
         if not user:
             raise PermissionError("User not found")
         space = await ensure_personal_space(session, user)
-        await session.commit()
+        await commit_with_rls(
+            session, user_id=principal.user_id, is_admin=principal.is_admin
+        )
     return space
 
 
@@ -416,6 +456,8 @@ async def set_default_shared_space(
         if space_id not in {g.id for g in groups}:
             raise PermissionError("Default shared group must be an active group you belong to")
     user.default_shared_space_id = space_id
-    await session.commit()
+    await commit_with_rls(
+        session, user_id=principal.user_id, is_admin=principal.is_admin
+    )
     await session.refresh(user)
     return user

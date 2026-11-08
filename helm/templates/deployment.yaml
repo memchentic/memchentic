@@ -43,6 +43,9 @@ spec:
             - name: http
               containerPort: 8080
               protocol: TCP
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
           envFrom:
             - configMapRef:
                 name: {{ include "memchentic.fullname" . }}-config
@@ -55,6 +58,8 @@ spec:
               value: {{ .Values.config.postgresPort | quote }}
             - name: POSTGRES_USER
               value: {{ .Values.config.postgresUser | quote }}
+            - name: POSTGRES_APP_USER
+              value: {{ .Values.config.postgresAppUser | default "memchentic_app" | quote }}
             - name: POSTGRES_DB
               value: {{ .Values.config.postgresDb | quote }}
           startupProbe:
@@ -79,6 +84,9 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

@@ -17,6 +17,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from memchentic.api.oauth import router as oauth_router
 from memchentic.api.router import api_router
+from memchentic.api.security_headers import SecurityHeadersMiddleware
 from memchentic.auth.principal import resolve_bearer
 from memchentic.auth.tokens import ensure_signing_key
 from memchentic.db.session import get_session_factory, init_db, set_rls_context
@@ -170,7 +171,7 @@ def create_app() -> FastAPI:
                 f"Refusing to start: set strong values (16+ chars) for {', '.join(weak)}"
             )
         await init_db()
-        await asyncio.to_thread(_run_migrations, settings.database_url)
+        await asyncio.to_thread(_run_migrations, settings.migration_database_url)
         logger.info("Migrations applied")
         async with get_session_factory()() as session:
             from sqlalchemy import text
@@ -179,6 +180,7 @@ def create_app() -> FastAPI:
             from memchentic.services.auth_groups import ensure_auth_groups
             from memchentic.services.instance_settings import ensure_instance_settings
 
+            await set_rls_context(session, user_id=None, is_admin=True)
             admin = await ensure_admin_user(session, settings)
             await ensure_auth_groups(session, settings)
             await ensure_instance_settings(session, settings)
@@ -219,7 +221,15 @@ def create_app() -> FastAPI:
         finally:
             await stop_memory_listener()
 
-    app = FastAPI(title="memchentic", version="0.1.0", lifespan=lifespan)
+    docs_on = settings.enable_api_docs
+    app = FastAPI(
+        title="memchentic",
+        version="0.1.0",
+        lifespan=lifespan,
+        docs_url="/docs" if docs_on else None,
+        redoc_url="/redoc" if docs_on else None,
+        openapi_url="/openapi.json" if docs_on else None,
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,
@@ -229,6 +239,7 @@ def create_app() -> FastAPI:
         expose_headers=["WWW-Authenticate", "Mcp-Session-Id"],
     )
     app.add_middleware(McpAuthMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware, hsts=settings.base_url.startswith("https://"))
 
     @app.exception_handler(PermissionError)
     async def permission_denied(_request: Request, exc: PermissionError) -> JSONResponse:

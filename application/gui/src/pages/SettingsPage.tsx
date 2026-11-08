@@ -66,9 +66,7 @@ const CATEGORIES = [
 export default function SettingsPage() {
   const { me } = useAuth();
   const [params, setParams] = useSearchParams();
-  const rawCategory = params.get("category");
-  const category =
-    rawCategory === "user-groups" ? "auth-groups" : rawCategory || "auth-groups";
+  const category = params.get("category") || "auth-groups";
 
   if (!me?.is_admin) {
     return <Navigate to="/" replace />;
@@ -423,6 +421,7 @@ function AddAuthMembersModal({
   onAdded: () => void;
 }) {
   const [users, setUsers] = useState<DirectoryUser[]>([]);
+  const [lookupHit, setLookupHit] = useState<DirectoryUser | null>(null);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
@@ -430,14 +429,46 @@ function AddAuthMembersModal({
 
   useEffect(() => {
     if (!open) return;
+    setLookupHit(null);
+    setQuery("");
+    setSelected(new Set());
     api<DirectoryUser[]>("/api/users")
       .then(setUsers)
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
   }, [open]);
 
+  useEffect(() => {
+    if (!open) return;
+    const q = query.trim();
+    const looksLikeEmail = q.includes("@") && !q.includes(" ");
+    if (!looksLikeEmail) {
+      setLookupHit(null);
+      return;
+    }
+    const already = users.some((u) => u.email.toLowerCase() === q.toLowerCase());
+    if (already) {
+      setLookupHit(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void api<DirectoryUser>(`/api/users/lookup?email=${encodeURIComponent(q)}`)
+        .then((hit) => {
+          if (!cancelled) setLookupHit(hit);
+        })
+        .catch(() => {
+          if (!cancelled) setLookupHit(null);
+        });
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [open, query, users]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return users
+    const rows = users
       .filter((u) => !memberIds.has(u.id))
       .filter((u) => {
         if (!q) return true;
@@ -446,7 +477,15 @@ function AddAuthMembersModal({
           (u.display_name ?? "").toLowerCase().includes(q)
         );
       });
-  }, [users, memberIds, query]);
+    if (
+      lookupHit &&
+      !memberIds.has(lookupHit.id) &&
+      !rows.some((u) => u.id === lookupHit.id)
+    ) {
+      return [...rows, lookupHit];
+    }
+    return rows;
+  }, [users, memberIds, query, lookupHit]);
 
   function toggle(userId: string) {
     setSelected((prev) => {
@@ -549,7 +588,7 @@ function AddAuthMembersModal({
           <FontAwesomeIcon icon={faXmark} />
         </button>
         <button
-          className="btn btn-primary"
+          className="btn"
           type="button"
           onClick={() => void done()}
           disabled={busy}

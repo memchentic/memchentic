@@ -5,11 +5,10 @@ import hmac
 from dataclasses import dataclass
 from uuid import UUID
 
-from jose import JWTError, jwt
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from memchentic.models.entities import ApiKey, User, UserIdentity
+from memchentic.models.entities import User, UserIdentity
 from memchentic.settings import Settings, get_settings
 
 
@@ -23,23 +22,11 @@ class Principal:
 
     @property
     def subject(self) -> str:
-        if self.is_admin and self.user_id is None:
-            return "admin"
         return str(self.user_id) if self.user_id else "anonymous"
 
 
 def hash_api_key(raw: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
-
-
-def email_is_admin(email: str | None, settings: Settings) -> bool:
-    """True when ``email`` is the configured break-glass admin address."""
-    if not email:
-        return False
-    return hmac.compare_digest(
-        email.strip().casefold().encode(),
-        settings.admin_contact_email.casefold().encode(),
-    )
 
 
 async def resolve_bearer(
@@ -65,29 +52,27 @@ async def resolve_bearer(
             provider="admin",
         )
 
+    # API-key lookup runs before set_rls_context; RLS would hide every row.
     key_hash = hash_api_key(token)
-    result = await session.execute(
-        select(ApiKey, User)
-        .join(User, User.id == ApiKey.user_id)
-        .where(ApiKey.key_hash == key_hash, ApiKey.revoked_at.is_(None))
-    )
-    row = result.first()
-    if row:
-        _, user = row
+    key_row = (
+        await session.execute(
+            text(
+                "SELECT user_id, email, display_name, provider "
+                "FROM app_resolve_api_key(:h)"
+            ),
+            {"h": key_hash},
+        )
+    ).first()
+    if key_row:
         from memchentic.services.auth_groups import user_is_administrator
 
         return Principal(
-            user_id=user.id,
-            email=user.email,
-            display_name=user.display_name,
-            provider=user.provider,
-            is_admin=await user_is_administrator(session, user.id),
+            user_id=key_row.user_id,
+            email=key_row.email,
+            display_name=key_row.display_name,
+            provider=key_row.provider,
+            is_admin=await user_is_administrator(session, key_row.user_id),
         )
-
-    try:
-        jwt.get_unverified_claims(token)
-    except JWTError:
-        return None
 
     try:
         from memchentic.auth.tokens import verify_access_token
@@ -99,20 +84,6 @@ async def resolve_bearer(
     sub = payload.get("sub")
     if not sub:
         return None
-
-    if sub == "admin":
-        from memchentic.auth.users import ensure_admin_user
-        from memchentic.services.auth_groups import ensure_auth_groups
-
-        admin = await ensure_admin_user(session, settings)
-        await ensure_auth_groups(session, settings)
-        return Principal(
-            is_admin=True,
-            user_id=admin.id,
-            email=admin.email,
-            display_name=admin.display_name,
-            provider="admin",
-        )
 
     from memchentic.services.auth_groups import user_is_administrator
 

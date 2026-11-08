@@ -1,0 +1,354 @@
+name: Publish App Image
+
+# Manual production release of the single application image (FastAPI + FastMCP +
+# GUI) to GHCR as a multi-arch manifest.
+#
+# Layout (Y-split, archentic-style):
+#   plan → build_amd64 ┐
+#        → build_arm64 ┴→ manifest
+# Native GitHub-hosted runners per arch (no QEMU). Per-arch refs
+# (X.Y.Z-amd64 / X.Y.Z-arm64) exist only so the manifest job can stitch the
+# published semver. Pass version=X.Y.Z explicitly, or leave it empty and set
+# increment=Major|Minor|Patch to bump from existing GHCR tags (no tags yet:
+# Major → 1.0.0, Minor → 0.1.0, Patch → 0.0.1).
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Semver to publish (e.g. 0.0.1). Empty = bump via increment.
+        required: false
+        type: string
+        default: ""
+      platforms:
+        description: Architectures to build
+        required: true
+        type: choice
+        default: both
+        options:
+          - both
+          - amd64
+          - arm64
+      increment:
+        description: Which part to bump when version is empty
+        required: true
+        type: choice
+        default: Select
+        options:
+          - Select
+          - Major
+          - Minor
+          - Patch
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  attestations: write
+
+env:
+  REGISTRY: ghcr.io
+  # Publish under the git repo owner so GITHUB_TOKEN links the package here.
+  GHCR_NAMESPACE: ${{ github.repository_owner }}
+  PACKAGE_NAME: memchentic
+
+jobs:
+  plan:
+    name: Plan publish targets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      build_amd64: ${{ steps.plan.outputs.build_amd64 }}
+      build_arm64: ${{ steps.plan.outputs.build_arm64 }}
+      version: ${{ steps.plan.outputs.version }}
+      selected_arches: ${{ steps.plan.outputs.selected_arches }}
+    steps:
+      - name: Plan version and arch legs
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER_TYPE: ${{ github.repository.owner.type }}
+          SELECTED_PLATFORMS: ${{ github.event.inputs.platforms }}
+          REQUESTED_VERSION: ${{ github.event.inputs.version }}
+          INCREMENT: ${{ github.event.inputs.increment }}
+          PACKAGE: ${{ env.PACKAGE_NAME }}
+        run: |
+          set -euo pipefail
+
+          want_amd64=false
+          want_arm64=false
+          case "${SELECTED_PLATFORMS}" in
+            both)
+              want_amd64=true
+              want_arm64=true
+              ;;
+            amd64)
+              want_amd64=true
+              ;;
+            arm64)
+              want_arm64=true
+              ;;
+            *)
+              echo "Unsupported platforms: ${SELECTED_PLATFORMS}" >&2
+              exit 1
+              ;;
+          esac
+
+          owner_path="users/${GHCR_NAMESPACE}"
+          if [ "${OWNER_TYPE}" = "Organization" ]; then
+            owner_path="orgs/${GHCR_NAMESPACE}"
+          fi
+
+          list_package_tags() {
+            local package="$1"
+            local page=1
+            : > "/tmp/tags-${package}.txt"
+            while :; do
+              http_code="$(
+                curl -sS -o /tmp/package-versions.json -w '%{http_code}' \
+                  -H "Authorization: Bearer ${GH_TOKEN}" \
+                  -H "Accept: application/vnd.github+json" \
+                  -H "X-GitHub-Api-Version: 2022-11-28" \
+                  "https://api.github.com/${owner_path}/packages/container/${package}/versions?per_page=100&page=${page}"
+              )"
+              if [ "${http_code}" = "404" ]; then
+                break
+              fi
+              if [ "${http_code}" != "200" ]; then
+                echo "::warning::Could not list GHCR tags for ${package} (HTTP ${http_code}); treating as no existing versions."
+                break
+              fi
+              jq -r '.[].metadata.container.tags[]? // empty' /tmp/package-versions.json \
+                >> "/tmp/tags-${package}.txt"
+              count="$(jq 'length' /tmp/package-versions.json)"
+              if [ "${count}" -lt 100 ]; then
+                break
+              fi
+              page="$((page + 1))"
+            done
+          }
+
+          bump_from_tags_file() {
+            local tags_file="$1"
+            local level="$2"
+            local latest_semver
+            latest_semver="$(
+              grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' "${tags_file}" \
+                | sed 's/^v//' \
+                | sort -t. -k1,1n -k2,2n -k3,3n \
+                | tail -n 1 || true
+            )"
+            if [ -z "${latest_semver}" ]; then
+              case "${level}" in
+                major) printf '%s\n' "1.0.0" ;;
+                minor) printf '%s\n' "0.1.0" ;;
+                patch) printf '%s\n' "0.0.1" ;;
+                *)
+                  echo "Unsupported increment: ${level}" >&2
+                  exit 1
+                  ;;
+              esac
+              return
+            fi
+            local major minor patch
+            IFS='.' read -r major minor patch <<<"${latest_semver}"
+            case "${level}" in
+              major) printf '%s\n' "$((major + 1)).0.0" ;;
+              minor) printf '%s\n' "${major}.$((minor + 1)).0" ;;
+              patch) printf '%s\n' "${major}.${minor}.$((patch + 1))" ;;
+              *)
+                echo "Unsupported increment: ${level}" >&2
+                exit 1
+                ;;
+            esac
+          }
+
+          requested="$(printf '%s' "${REQUESTED_VERSION:-}" | tr -d '[:space:]')"
+          if [ -n "${requested}" ]; then
+            if ! printf '%s' "${requested}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+              echo "version must be X.Y.Z (got: ${requested})" >&2
+              exit 1
+            fi
+            version="${requested}"
+          else
+            increment="$(printf '%s' "${INCREMENT:-Select}" | tr '[:upper:]' '[:lower:]')"
+            case "${increment}" in
+              major|minor|patch) ;;
+              *)
+                echo "Provide version=X.Y.Z or choose Major, Minor, or Patch." >&2
+                exit 1
+                ;;
+            esac
+            list_package_tags "${PACKAGE}"
+            version="$(bump_from_tags_file "/tmp/tags-${PACKAGE}.txt" "${increment}")"
+          fi
+
+          selected_arches=()
+          build_amd64=false
+          build_arm64=false
+          if [ "${want_amd64}" = "true" ]; then
+            selected_arches+=(amd64)
+            build_amd64=true
+          fi
+          if [ "${want_arm64}" = "true" ]; then
+            selected_arches+=(arm64)
+            build_arm64=true
+          fi
+          selected_arches_csv="$(IFS=,; echo "${selected_arches[*]}")"
+
+          {
+            echo "build_amd64=${build_amd64}"
+            echo "build_arm64=${build_arm64}"
+            echo "version=${version}"
+            echo "selected_arches=${selected_arches_csv}"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "### Publish plan" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Package: \`${PACKAGE}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Version: \`${version}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Platforms: \`${SELECTED_PLATFORMS}\` (arches: \`${selected_arches_csv}\`)" >> "$GITHUB_STEP_SUMMARY"
+
+  build_amd64:
+    needs: plan
+    if: needs.plan.outputs.build_amd64 == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    concurrency:
+      group: publish-app-image-amd64
+      cancel-in-progress: false
+    env:
+      ARCH: amd64
+      PLATFORM: linux/amd64
+      VERSION: ${{ needs.plan.outputs.version }}
+
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL || true
+          sudo docker image prune -af || true
+
+      - name: Isolate Docker CLI config
+        run: |
+          mkdir -p "${RUNNER_TEMP}/docker-config"
+          echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config" >> "$GITHUB_ENV"
+
+      - name: Check out the code
+        # actions/checkout@v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Set up Docker Buildx
+        # docker/setup-buildx-action@v3.8.0
+        uses: docker/setup-buildx-action@6524bf65af31da8d45b59e8c27de4bd072b392f5
+
+      - name: Build and push native amd64 image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_ACTOR: ${{ github.actor }}
+          SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          chmod +x scripts/ci/publish_native_image.sh
+          scripts/ci/publish_native_image.sh
+
+  build_arm64:
+    needs: plan
+    if: needs.plan.outputs.build_arm64 == 'true'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    concurrency:
+      group: publish-app-image-arm64
+      cancel-in-progress: false
+    env:
+      ARCH: arm64
+      PLATFORM: linux/arm64
+      VERSION: ${{ needs.plan.outputs.version }}
+
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL || true
+          sudo docker image prune -af || true
+
+      - name: Isolate Docker CLI config
+        run: |
+          mkdir -p "${RUNNER_TEMP}/docker-config"
+          echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config" >> "$GITHUB_ENV"
+
+      - name: Check out the code
+        # actions/checkout@v4.2.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Set up Docker Buildx
+        # docker/setup-buildx-action@v3.8.0
+        uses: docker/setup-buildx-action@6524bf65af31da8d45b59e8c27de4bd072b392f5
+
+      - name: Build and push native arm64 image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_ACTOR: ${{ github.actor }}
+          SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          chmod +x scripts/ci/publish_native_image.sh
+          scripts/ci/publish_native_image.sh
+
+  manifest:
+    needs:
+      - plan
+      - build_amd64
+      - build_arm64
+    if: >
+      always() &&
+      needs.plan.result == 'success' &&
+      (needs.plan.outputs.build_amd64 != 'true' || needs.build_amd64.result == 'success') &&
+      (needs.plan.outputs.build_arm64 != 'true' || needs.build_arm64.result == 'success')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    concurrency:
+      group: publish-app-image-manifest
+      cancel-in-progress: false
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      SELECTED_ARCHES: ${{ needs.plan.outputs.selected_arches }}
+
+    steps:
+      - name: Isolate Docker CLI config
+        run: |
+          mkdir -p "${RUNNER_TEMP}/docker-config"
+          echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        # docker/setup-buildx-action@v3.8.0
+        uses: docker/setup-buildx-action@6524bf65af31da8d45b59e8c27de4bd072b392f5
+
+      - name: Create multi-arch tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${GH_TOKEN}" | docker login ghcr.io --username "${GH_ACTOR}" --password-stdin
+
+          owner="$(printf '%s' "${GHCR_NAMESPACE}" | tr '[:upper:]' '[:lower:]')"
+          image_base="${REGISTRY}/${owner}/${PACKAGE_NAME}"
+
+          refs=()
+          IFS=',' read -r -a arches <<<"${SELECTED_ARCHES}"
+          for arch in "${arches[@]}"; do
+            [ -n "${arch}" ] || continue
+            refs+=("${image_base}:${VERSION}-${arch}")
+          done
+
+          if [ "${#refs[@]}" -eq 0 ]; then
+            echo "No arch refs to stitch" >&2
+            exit 1
+          fi
+
+          echo "Stitching ${image_base}:${VERSION} from: ${refs[*]}"
+          docker buildx imagetools create \
+            --tag "${image_base}:${VERSION}" \
+            "${refs[@]}"
+
+          echo "### Published" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`${image_base}:${VERSION}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Arch refs: \`${refs[*]}\`" >> "$GITHUB_STEP_SUMMARY"

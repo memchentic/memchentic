@@ -52,9 +52,9 @@ Copilot, and Codex.
 
 - Docker Engine with Compose v2
 - A host the browser and MCP clients can reach (set URLs in `.env`)
-- Embeddings: MiniLM ONNX is baked into the application image; override with
-  `EMBEDDING_MODEL_PATH`. For the local compose overlay (host `models/` mount),
-  run `scripts/fetch_minilm_onnx.sh` once so the bind mount is not empty.
+- Embeddings: MiniLM ONNX is hardcoded and baked under `application/api/models/`.
+  With the local compose overlay (API tree bind mount), run
+  `scripts/fetch_minilm_onnx.sh` once so that directory is not empty.
 
 ## Getting started
 

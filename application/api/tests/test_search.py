@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import uuid
 
-from memchentic.embeddings.loader import Embedder
+from memchentic.embeddings.loader import EMBEDDING_DIM, Embedder
 from memchentic.search.hybrid import rrf_fuse
 
 
@@ -29,9 +29,9 @@ def test_hash_fallback_is_deterministic_and_normalized(tmp_path) -> None:
     Args:
         tmp_path: Empty directory standing in for a missing model path.
     """
-    embedder = Embedder(str(tmp_path), dim=384)
+    embedder = Embedder(str(tmp_path))
     assert embedder.backend == "hash"
     first = embedder.embed("postgres pgvector")
     assert first == embedder.embed("postgres pgvector")
-    assert len(first) == 384
+    assert len(first) == EMBEDDING_DIM
     assert math.isclose(math.sqrt(sum(v * v for v in first)), 1.0, rel_tol=1e-6)

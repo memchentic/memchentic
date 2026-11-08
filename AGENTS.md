@@ -8,10 +8,9 @@ product: do not fork, wrap, or copy other memory servers' tool names.
 | Path | Owns |
 | --- | --- |
 | `docker/` | Compose + Dockerfile (`docker-compose.yaml` prod base; `local.yaml` overlay) |
-| `application/api/` | FastAPI + shared domain: `pyproject.toml`, `alembic/`, `src/memchentic/`, `tests/` |
+| `application/api/` | FastAPI + shared domain: `pyproject.toml`, `alembic/`, `src/memchentic/`, `tests/`, `models/` (MiniLM ONNX; baked in image, gitignored files) |
 | `application/mcp/` | FastMCP tools/context (`src/memchentic/mcp/`); image + local overlay merge into API `src/` |
 | `application/gui/` | React + Tailwind (greyscale dark) + Font Awesome |
-| `models/` | Host ONNX files for local.yaml bind mount (gitignored); image bakes MiniLM at build |
 | `marketplace/` | In-repo agent plugin (`memchentic`); host catalogs at repo root |
 
 Inside containers the code root is `/opt/memchentic` (API tree; MCP overlaid at

@@ -24,11 +24,12 @@ htmlcov/
 uv.lock
 requirements-lock.txt
 
-# ONNX / models (download at build or first run)
+# ONNX / models (download at build or via scripts/fetch_minilm_onnx.sh)
 **/*.onnx
 **/tokenizer.json
 **/tokenizer_config.json
-models/
+application/api/models/**
+!application/api/models/.gitkeep
 
 *.db
 *.sqlite*

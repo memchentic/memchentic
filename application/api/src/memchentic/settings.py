@@ -65,10 +65,6 @@ class Settings(BaseSettings):
         db = quote_plus(self.postgres_db)
         return f"postgresql+asyncpg://{user}:{password}@{host}:{self.postgres_port}/{db}"
 
-    embedding_model_path: str = Field(
-        default="/opt/memchentic/models/all-MiniLM-L6-v2", alias="EMBEDDING_MODEL_PATH"
-    )
-    embedding_dim: int = Field(default=384, alias="EMBEDDING_DIM")
     near_dup_threshold: float = Field(default=0.92, alias="NEAR_DUP_THRESHOLD")
     rrf_k: int = Field(default=60, alias="RRF_K")
 

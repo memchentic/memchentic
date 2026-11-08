@@ -4,8 +4,9 @@
 # Volume mounts (+ uvicorn --reload so bind-mounted Python picks up edits).
 # No extra services — GUI is static assets served by application.
 #
-# ../models overlays the image-baked MiniLM. Run scripts/fetch_minilm_onnx.sh
-# once on the host so that mount is not empty (otherwise hash fallback).
+# MiniLM lives under application/api/models/ (baked in the image). When this
+# overlay mounts the API tree, run scripts/fetch_minilm_onnx.sh once on the
+# host so that directory is not empty (otherwise hash fallback).
 
 services:
   application:
@@ -25,5 +26,4 @@ services:
       - ../application/api:/opt/memchentic
       # Overlay MCP onto the API src tree (image also bakes this path).
       - ../application/mcp/src/memchentic/mcp:/opt/memchentic/src/memchentic/mcp
-      - ../models:/opt/memchentic/models
       - ../application/gui/dist:/opt/memchentic/gui/dist:ro

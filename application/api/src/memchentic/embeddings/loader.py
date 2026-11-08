@@ -1,18 +1,20 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import math
-import os
 import struct
 from pathlib import Path
 
 import numpy as np
 
-from memchentic.settings import get_settings
-
 logger = logging.getLogger(__name__)
+
+# Hardcoded MiniLM — no env override. Other ONNX widths are out of scope for now.
+EMBEDDING_DIM = 384
+_MODEL_NAME = "all-MiniLM-L6-v2"
+# application/api/models/<name> — parents: embeddings → memchentic → src → api root
+DEFAULT_MODEL_DIR = Path(__file__).resolve().parents[3] / "models" / _MODEL_NAME
 
 _embedder: Embedder | None = None
 
@@ -20,12 +22,12 @@ _embedder: Embedder | None = None
 class Embedder:
     """Local embedding. Uses ONNX when model files exist; otherwise a stable hash fallback.
 
-    Fallback keeps hybrid search functional in CI / first boot before model download.
-    Production Compose should populate EMBEDDING_MODEL_PATH with all-MiniLM-L6-v2 ONNX.
+    Fallback keeps hybrid search functional in CI / first boot before the image
+    bake or ``scripts/fetch_minilm_onnx.sh`` has populated the model directory.
     """
 
-    def __init__(self, model_path: str, dim: int = 384) -> None:
-        self.model_path = Path(model_path)
+    def __init__(self, model_path: str | Path | None = None, dim: int = EMBEDDING_DIM) -> None:
+        self.model_path = Path(model_path) if model_path is not None else DEFAULT_MODEL_DIR
         self.dim = dim
         self._session = None
         self._tokenizer = None
@@ -131,16 +133,5 @@ class Embedder:
 def get_embedder() -> Embedder:
     global _embedder
     if _embedder is None:
-        settings = get_settings()
-        _embedder = Embedder(settings.embedding_model_path, settings.embedding_dim)
+        _embedder = Embedder()
     return _embedder
-
-
-def download_model_hint() -> str:
-    return json.dumps(
-        {
-            "model": "sentence-transformers/all-MiniLM-L6-v2",
-            "path": os.environ.get("EMBEDDING_MODEL_PATH", "/opt/memchentic/models/all-MiniLM-L6-v2"),
-            "files": ["model.onnx", "tokenizer.json"],
-        }
-    )

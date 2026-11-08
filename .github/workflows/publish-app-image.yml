@@ -10,7 +10,8 @@ name: Publish App Image
 # github (ubuntu-24.04 / ubuntu-24.04-arm). Per-arch refs (X.Y.Z-amd64 /
 # X.Y.Z-arm64) exist only so the manifest job can stitch the published semver.
 # Choose increment=Major|Minor|Patch to bump from existing GHCR tags (no tags
-# yet: Major → 1.0.0, Minor → 0.1.0, Patch → 0.0.1).
+# yet: Major → 1.0.0, Minor → 0.1.0, Patch → 0.0.1). The manifest job also
+# moves the floating ``latest`` tag onto the new semver multi-arch image.
 
 on:
   workflow_dispatch:
@@ -344,11 +345,13 @@ jobs:
             exit 1
           fi
 
-          echo "Stitching ${image_base}:${VERSION} from: ${refs[*]}"
+          echo "Stitching ${image_base}:${VERSION} (+ latest) from: ${refs[*]}"
           docker buildx imagetools create \
             --tag "${image_base}:${VERSION}" \
+            --tag "${image_base}:latest" \
             "${refs[@]}"
 
           echo "### Published" >> "$GITHUB_STEP_SUMMARY"
           echo "- \`${image_base}:${VERSION}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`${image_base}:latest\` (moved to this release)" >> "$GITHUB_STEP_SUMMARY"
           echo "- Arch refs: \`${refs[*]}\`" >> "$GITHUB_STEP_SUMMARY"

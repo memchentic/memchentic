@@ -1,7 +1,7 @@
 name: Publish App Image
 
 # Manual production release of the single application image (FastAPI + FastMCP +
-# GUI) to GHCR as a multi-arch manifest.
+# GUI) to GHCR and/or Zot (registry.memchentic.ai) as a multi-arch manifest.
 #
 # Layout (Y-split, archentic-style):
 #   plan → build_amd64 ┐
@@ -43,6 +43,15 @@ on:
           - Major
           - Minor
           - Patch
+      registries:
+        description: Which registries to publish the multi-arch release to
+        required: true
+        type: choice
+        default: both
+        options:
+          - both
+          - ghcr
+          - zot
 
 permissions:
   contents: read
@@ -322,7 +331,8 @@ jobs:
         # docker/setup-buildx-action@v3.8.0
         uses: docker/setup-buildx-action@6524bf65af31da8d45b59e8c27de4bd072b392f5
 
-      - name: Create multi-arch tag
+      - name: Publish multi-arch to GHCR
+        if: contains(fromJSON('["ghcr","both"]'), github.event.inputs.registries)
         env:
           GH_TOKEN: ${{ github.token }}
           GH_ACTOR: ${{ github.actor }}
@@ -351,12 +361,13 @@ jobs:
             --tag "${image_base}:latest" \
             "${refs[@]}"
 
-          echo "### Published" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Published (GHCR)" >> "$GITHUB_STEP_SUMMARY"
           echo "- \`${image_base}:${VERSION}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- \`${image_base}:latest\` (moved to this release)" >> "$GITHUB_STEP_SUMMARY"
           echo "- Arch refs: \`${refs[*]}\`" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Mirror multi-arch tag to Zot
+      - name: Publish multi-arch to Zot
+        if: contains(fromJSON('["zot","both"]'), github.event.inputs.registries)
         env:
           ZOT_REGISTRY: registry.memchentic.ai
           ZOT_USERNAME: ${{ secrets.ZOT_USERNAME }}
@@ -364,14 +375,31 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s' "${ZOT_PASSWORD}" | docker login "${ZOT_REGISTRY}" --username "${ZOT_USERNAME}" --password-stdin
+          # Arch refs always land on GHCR during the build jobs; stitch them onto Zot.
+          printf '%s' "${{ github.token }}" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
 
           owner="$(printf '%s' "${GHCR_NAMESPACE}" | tr '[:upper:]' '[:lower:]')"
-          source_ref="${REGISTRY}/${owner}/${PACKAGE_NAME}:${VERSION}"
+          source_base="${REGISTRY}/${owner}/${PACKAGE_NAME}"
           zot_base="${ZOT_REGISTRY}/${owner}/${PACKAGE_NAME}"
 
+          refs=()
+          IFS=',' read -r -a arches <<<"${SELECTED_ARCHES}"
+          for arch in "${arches[@]}"; do
+            [ -n "${arch}" ] || continue
+            refs+=("${source_base}:${VERSION}-${arch}")
+          done
+
+          if [ "${#refs[@]}" -eq 0 ]; then
+            echo "No arch refs to stitch" >&2
+            exit 1
+          fi
+
+          echo "Stitching ${zot_base}:${VERSION} (+ latest) from: ${refs[*]}"
           docker buildx imagetools create \
             --tag "${zot_base}:${VERSION}" \
             --tag "${zot_base}:latest" \
-            "${source_ref}"
+            "${refs[@]}"
 
-          echo "- \`${zot_base}:${VERSION}\` (Zot, preferred)" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Published (Zot)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`${zot_base}:${VERSION}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`${zot_base}:latest\` (moved to this release)" >> "$GITHUB_STEP_SUMMARY"

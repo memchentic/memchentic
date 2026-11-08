@@ -21,7 +21,7 @@ do not fork, wrap, or copy other memory servers' tool names.
 Inside containers the code root is `/opt/memchentic` (API tree; MCP overlaid at
 `src/memchentic/mcp`). Compose project name is `memchentic`; services are
 `postgres` and `application` (FastAPI + FastMCP + React SPA). Prod base pulls
-`APPLICATION_IMAGE` from GHCR; `local.yaml` adds `build`, bind mounts, and
+`APPLICATION_IMAGE` from Zot (`registry.memchentic.ai`; GHCR remains the mirror); `local.yaml` adds `build`, bind mounts, and
 uvicorn `--reload`.
 
 ## Run and verify
@@ -45,7 +45,7 @@ Host publishes come from `docker/.env`: `GUI_PORT` (18080), `API_PORT`
 change; with `local.yaml`, API + MCP source and `application/gui/dist` are
 bind-mounted.
 
-Prod-shaped bring-up (no bind mounts; pulls GHCR — `docker login ghcr.io` if private):
+Prod-shaped bring-up (no bind mounts; pulls Zot — anonymous pull; no login needed for public images):
 
 ```bash
 cd docker && COMPOSE_FILE=docker-compose.yaml docker compose up -d
@@ -56,7 +56,7 @@ Optional Sphinx docs overlay (`docker/docs.yaml`, not in `.env.example`):
 ```bash
 cd docker && docker compose up -d docs
 # or --build docs while iterating on ../docs
-# default DOCS_PORT=18099 — image ghcr.io/memchentic/docs (override DOCS_IMAGE)
+# default DOCS_PORT=18099 — image registry.memchentic.ai/memchentic/docs (override DOCS_IMAGE)
 ```
 
 Author user pages under `docs/sphinx/source/` (commit/push in the nested

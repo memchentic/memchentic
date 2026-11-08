@@ -2,14 +2,14 @@
 # Live sticky .env example:
 #   COMPOSE_FILE=docker-compose.yaml:local.yaml:docs.yaml
 #   DOCS_PORT=18099
-#   DOCS_IMAGE=ghcr.io/memchentic/docs:0.0.2
+#   DOCS_IMAGE=registry.memchentic.ai/memchentic/docs:latest
 #
 # Pull published image (default). Rebuild from ../docs when iterating:
 #   cd docker && docker compose up -d --build docs
 
 services:
   docs:
-    image: ${DOCS_IMAGE:-ghcr.io/memchentic/docs:0.0.2}
+    image: ${DOCS_IMAGE:-registry.memchentic.ai/memchentic/docs:latest}
     build:
       context: ../docs
       dockerfile: docker/Dockerfile

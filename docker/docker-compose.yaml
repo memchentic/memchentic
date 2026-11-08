@@ -20,7 +20,7 @@ services:
       retries: 10
 
   application:
-    image: ${APPLICATION_IMAGE:-ghcr.io/memchentic/memchentic:latest}
+    image: ${APPLICATION_IMAGE:-registry.memchentic.ai/memchentic/memchentic:latest}
     ports:
       - "${GUI_PORT:-18080}:8080"
       - "${API_PORT:-18081}:8080"

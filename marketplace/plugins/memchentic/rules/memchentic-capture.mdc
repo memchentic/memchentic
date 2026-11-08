@@ -123,5 +123,7 @@ JWT** for normal agent sessions — admin list/search is instance-wide.
 
 When overlap is plausible, call `overlap_report` (read-only), then merge via
 `revise` / `forget` — never auto-delete. Report pairs are same-title in a
-space; `conflicts` may be empty. Expiry is metadata — search does not hide
-expired rows; extend or `clear_expiry` via `revise` when needed.
+space, or cosine near-dups (`reason: near_dup`); `conflicts` may be empty.
+Past-due `expires_at` rows are hidden from recall by default (rows stay in
+the DB); pass `include_expired: true` to audit them, and extend or
+`clear_expiry` via `revise` when still true.

@@ -742,6 +742,7 @@ async def browse_memories(
     types: str | None = None,
     limit: int | None = None,
     offset: int = 0,
+    include_expired: bool = False,
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> list[dict]:
@@ -756,6 +757,7 @@ async def browse_memories(
             types=_parse_types(types),
             limit=limit,
             offset=offset,
+            include_expired=include_expired,
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
@@ -771,6 +773,7 @@ async def search_memories(
     types: str | None = None,
     kind: str | None = None,
     limit: int | None = None,
+    include_expired: bool = False,
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> list[dict]:
@@ -785,6 +788,7 @@ async def search_memories(
             entry_type=type,
             types=_parse_types(types),
             limit=limit,
+            include_expired=include_expired,
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc

@@ -142,8 +142,9 @@ async def find(
     path_hint: str | None = None,
     repo_hint: str | None = None,
     limit: int | None = None,
+    include_expired: bool = False,
 ) -> list[dict[str, Any]]:
-    """Hybrid search → digests."""
+    """Hybrid search → digests. Past-due expires_at hidden unless include_expired."""
     principal = require_principal()
     session = require_session()
     digests = await memory_service.find(
@@ -156,6 +157,7 @@ async def find(
         path_hint=path_hint,
         repo_hint=repo_hint,
         limit=limit,
+        include_expired=include_expired,
     )
     return [memory_service.digest_to_dict(d) for d in digests]
 
@@ -224,6 +226,7 @@ async def browse(
     type: str | None = None,
     limit: int | None = None,
     offset: int = 0,
+    include_expired: bool = False,
 ) -> list[dict[str, Any]]:
     """Paginated listing without a query."""
     principal = require_principal()
@@ -236,6 +239,7 @@ async def browse(
         entry_type=type,
         limit=limit,
         offset=offset,
+        include_expired=include_expired,
     )
     return [memory_service.memory_to_dict(m) for m in rows]
 
@@ -246,6 +250,7 @@ async def since(
     until: str | None = None,
     space_id: str | None = None,
     limit: int | None = None,
+    include_expired: bool = False,
 ) -> list[dict[str, Any]]:
     """Time-window recall → digests."""
     principal = require_principal()
@@ -257,6 +262,7 @@ async def since(
         until_dt=_parse_dt(until),
         space_id=_parse_uuid(space_id),
         limit=limit,
+        include_expired=include_expired,
     )
     return [memory_service.digest_to_dict(d) for d in digests]
 
@@ -267,6 +273,7 @@ async def by_tag(
     mode: str = "and",
     space_id: str | None = None,
     limit: int | None = None,
+    include_expired: bool = False,
 ) -> list[dict[str, Any]]:
     """Tag AND/OR → digests."""
     principal = require_principal()
@@ -278,6 +285,7 @@ async def by_tag(
         mode=mode,
         space_id=_parse_uuid(space_id),
         limit=limit,
+        include_expired=include_expired,
     )
     return [memory_service.digest_to_dict(d) for d in digests]
 
@@ -324,7 +332,10 @@ async def guide_write(
 
 @mcp.tool
 async def guide_find(
-    query: str, space_id: str | None = None, limit: int | None = None
+    query: str,
+    space_id: str | None = None,
+    limit: int | None = None,
+    include_expired: bool = False,
 ) -> list[dict[str, Any]]:
     """Search guides by query; rank by confidence × recency."""
     principal = require_principal()
@@ -335,19 +346,28 @@ async def guide_find(
         query=query,
         space_id=_parse_uuid(space_id),
         limit=limit,
+        include_expired=include_expired,
     )
     return [memory_service.digest_to_dict(d) for d in digests]
 
 
 @mcp.tool
 async def about_path(
-    path: str, repo_hint: str | None = None, limit: int | None = None
+    path: str,
+    repo_hint: str | None = None,
+    limit: int | None = None,
+    include_expired: bool = False,
 ) -> list[dict[str, Any]]:
     """Digests tied to a file/dir path (or repo hint)."""
     principal = require_principal()
     session = require_session()
     digests = await memory_service.about_path(
-        session, principal, path=path, repo_hint=repo_hint, limit=limit
+        session,
+        principal,
+        path=path,
+        repo_hint=repo_hint,
+        limit=limit,
+        include_expired=include_expired,
     )
     return [memory_service.digest_to_dict(d) for d in digests]
 

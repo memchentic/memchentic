@@ -106,6 +106,12 @@ class Settings(BaseSettings):
         return self._dsn(user=app_user, password=app_password)
     near_dup_threshold: float = Field(default=0.92, alias="NEAR_DUP_THRESHOLD")
     rrf_k: int = Field(default=60, alias="RRF_K")
+    near_dup_candidates: int = Field(default=5, ge=1, alias="NEAR_DUP_CANDIDATES")
+    overlap_scan_limit: int = Field(default=2000, ge=1, alias="OVERLAP_SCAN_LIMIT")
+    search_recency_half_life_days: float = Field(
+        default=30.0, gt=0, alias="SEARCH_RECENCY_HALF_LIFE_DAYS"
+    )
+    search_path_boost: float = Field(default=0.15, ge=0, alias="SEARCH_PATH_BOOST")
 
     # Default result counts when callers omit ``limit`` (MCP/REST/services).
     search_default_limit: int = Field(default=20, ge=1, alias="SEARCH_DEFAULT_LIMIT")

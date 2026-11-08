@@ -40,7 +40,8 @@ since / by_tag), clamped 1–100.
 | Move memory | `relocate` | Required `id` + destination `space_id` UUID. No `group` / `visibility`. |
 | Delete | `forget` | `id` — entry or guide the principal can access. |
 | Provenance | `trace` | `id` → kind, created_by, created_at, provenance, space_id. MCP writes store empty provenance. |
-| Near-dups / expiry hygiene | `overlap_report` | Optional `space_id`, `limit`. Read-only. Pairs are **same title** (not cosine). `conflicts` may be `[]`. Never auto-delete — merge with `revise` / `forget`. |
+| Near-dups / expiry hygiene | `overlap_report` | Optional `space_id`, `limit`. Read-only. Scans newest `OVERLAP_SCAN_LIMIT` (default 2000) rows; pairs are `same_title` or cosine `near_dup`. `conflicts` may be `[]`. Never auto-delete — merge with `revise` / `forget`. |
+| Expired rows | recall tools | `find`, `guide_find`, `browse`, `since`, `by_tag`, `about_path` hide past-due `expires_at` by default; pass `include_expired: true` to audit. Hybrid ranking boosts recent, path-tagged, and high-confidence rows. |
 
 ## Write target (remember / guide_write)
 

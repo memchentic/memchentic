@@ -107,6 +107,7 @@ JWT** for normal agent sessions — admin list/search is instance-wide.
 
 ## Hygiene
 
-`overlap_report` is read-only (same-title pairs; `conflicts` may be empty).
-Merge via `revise` / `forget` — never auto-delete. Expiry is not a retrieval
-filter; clear or extend via `revise`.
+`overlap_report` is read-only (same-title and cosine near-dup pairs;
+`conflicts` may be empty). Merge via `revise` / `forget` — never auto-delete.
+Default recall hides past-due `expires_at` rows (they are not deleted); use
+`include_expired: true` to audit, and clear or extend via `revise`.

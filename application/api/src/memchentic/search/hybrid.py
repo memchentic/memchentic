@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from sqlalchemy import ColumnElement, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -57,6 +58,58 @@ def memory_type_clause(tokens: Sequence[str] | None) -> ColumnElement[bool] | No
     return or_(*clauses)
 
 
+def active_memory_clause(
+    *, include_expired: bool, now: datetime | None = None
+) -> ColumnElement[bool] | None:
+    """Hide past-due memories from recall unless the caller asks for them.
+
+    Args:
+        include_expired: When True, apply no expiry filter.
+        now: Reference time; defaults to the current UTC time.
+
+    Returns:
+        Clause keeping rows with no expiry or a future expiry, or None.
+    """
+    if include_expired:
+        return None
+    ref = now or datetime.now(UTC)
+    return or_(Memory.expires_at.is_(None), Memory.expires_at > ref)
+
+
+def rerank_score(
+    memory: Memory,
+    base: float,
+    *,
+    now: datetime,
+    path_hint: str | None = None,
+) -> float:
+    """Adjust a fused RRF score for recency, path alignment, and guide confidence.
+
+    Args:
+        memory: Loaded memory row.
+        base: Reciprocal-rank-fusion score.
+        now: Reference time for age.
+        path_hint: Caller path filter; rows tagged with a matching ``path_hint``
+            outrank body-only matches.
+
+    Returns:
+        Re-ranked score.
+    """
+    settings = get_settings()
+    score = base
+    updated = memory.updated_at or memory.created_at
+    if updated is not None:
+        if updated.tzinfo is None:
+            updated = updated.replace(tzinfo=UTC)
+        age_days = max(0.0, (now - updated).total_seconds() / 86400.0)
+        score *= 1.0 / (1.0 + age_days / settings.search_recency_half_life_days)
+    if path_hint and memory.path_hint and path_hint.casefold() in memory.path_hint.casefold():
+        score *= 1.0 + settings.search_path_boost
+    if memory.kind == MemoryKind.guide:
+        score *= 1.0 + 0.1 * float(memory.confidence or 1.0)
+    return score
+
+
 @dataclass
 class Digest:
     id: str
@@ -100,14 +153,19 @@ async def hybrid_search(
     path_hint: str | None = None,
     repo_hint: str | None = None,
     limit: int | None = None,
+    include_expired: bool = False,
 ) -> list[Digest]:
     settings = get_settings()
     embedder = get_embedder()
     qvec = await embedder.aembed(query)
     limit = settings.resolve_search_limit(limit)
     fetch_n = max(limit * 3, 30)
+    now = datetime.now(UTC)
 
     base_filters = []
+    active = active_memory_clause(include_expired=include_expired, now=now)
+    if active is not None:
+        base_filters.append(active)
     if space_ids is not None:
         if not space_ids:
             return []
@@ -163,26 +221,29 @@ async def hybrid_search(
             )
             fts_ids = [row[0] for row in (await session.execute(like_stmt)).all()]
 
-    fused = rrf_fuse([vec_ids, fts_ids], k=settings.rrf_k)[:limit]
+    fused = rrf_fuse([vec_ids, fts_ids], k=settings.rrf_k)
     if not fused:
         return []
 
-    ids = [item_id for item_id, _ in fused]
-    score_map = {item_id: score for item_id, score in fused}
+    rrf_map = dict(fused)
     rows = (
-        await session.execute(select(Memory).where(Memory.id.in_(ids)))
+        await session.execute(select(Memory).where(Memory.id.in_(list(rrf_map))))
     ).scalars().all()
-    by_id = {m.id: m for m in rows}
+    scored = sorted(
+        (
+            (m, rerank_score(m, rrf_map[m.id], now=now, path_hint=path_hint))
+            for m in rows
+        ),
+        key=lambda pair: pair[1],
+        reverse=True,
+    )[:limit]
     digests: list[Digest] = []
-    for item_id in ids:
-        m = by_id.get(item_id)
-        if not m:
-            continue
+    for m, score in scored:
         digests.append(
             Digest(
                 id=str(m.id),
                 title=m.title,
-                score=round(score_map[item_id], 6),
+                score=round(score, 6),
                 snippet=_snippet(m.body),
                 type=m.entry_type.value if m.entry_type else None,
                 tags=list(m.tags or []),

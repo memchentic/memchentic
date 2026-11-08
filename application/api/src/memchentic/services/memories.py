@@ -5,7 +5,8 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import or_, select
+import numpy as np
+from sqlalchemy import Select, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from memchentic.auth.principal import Principal
@@ -13,7 +14,13 @@ from memchentic.db.session import commit_with_rls
 from memchentic.embeddings import get_embedder
 from memchentic.events import memory_event_from_row, publish_memory_event
 from memchentic.models.entities import EntryType, Memory, MemoryKind, SpaceKind, User
-from memchentic.search.hybrid import Digest, escape_ilike, hybrid_search, memory_type_clause
+from memchentic.search.hybrid import (
+    Digest,
+    active_memory_clause,
+    escape_ilike,
+    hybrid_search,
+    memory_type_clause,
+)
 from memchentic.services.spaces import (
     Visibility,
     can_manage_group,
@@ -151,6 +158,15 @@ def resolve_type_tokens(
     return None
 
 
+def _active_select(space_ids: list[uuid.UUID], include_expired: bool) -> Select[tuple[Memory]]:
+    """Memories in ``space_ids``, hiding past-due rows unless ``include_expired``."""
+    stmt = select(Memory).where(Memory.space_id.in_(space_ids))
+    active = active_memory_clause(include_expired=include_expired)
+    if active is not None:
+        stmt = stmt.where(active)
+    return stmt
+
+
 async def find_near_duplicate(
     session: AsyncSession,
     *,
@@ -162,37 +178,39 @@ async def find_near_duplicate(
     settings = get_settings()
     embedder = get_embedder()
     vec = await embedder.aembed_memory_text(title, body)
+    distance = Memory.embedding.cosine_distance(vec)
     stmt = (
-        select(Memory)
+        select(Memory, distance)
         .where(
             Memory.space_id == space_id,
             Memory.kind == kind,
             Memory.embedding.is_not(None),
         )
-        .order_by(Memory.embedding.cosine_distance(vec))
-        .limit(1)
+        .order_by(distance)
+        .limit(settings.near_dup_candidates)
     )
-    result = await session.execute(stmt)
-    candidate = result.scalar_one_or_none()
-    if not candidate or candidate.embedding is None:
-        # title exact match fallback
+    candidates = (await session.execute(stmt)).all()
+    if not candidates:
         result = await session.execute(
-            select(Memory).where(
+            select(Memory)
+            .where(
                 Memory.space_id == space_id,
                 Memory.kind == kind,
                 Memory.title == title,
             )
+            .order_by(Memory.updated_at.desc())
+            .limit(1)
         )
         return result.scalar_one_or_none()
 
-    # cosine_distance = 1 - cosine_similarity for pgvector
-    dist_stmt = select(Memory.embedding.cosine_distance(vec)).where(Memory.id == candidate.id)
-    dist = (await session.execute(dist_stmt)).scalar_one()
-    similarity = 1.0 - float(dist)
-    if similarity >= settings.near_dup_threshold:
-        return candidate
-    if candidate.title.strip().lower() == title.strip().lower():
-        return candidate
+    wanted = title.strip().lower()
+    for candidate, dist in candidates:
+        # pgvector cosine_distance = 1 - cosine_similarity
+        if 1.0 - float(dist) >= settings.near_dup_threshold:
+            return candidate
+    for candidate, _ in candidates:
+        if candidate.title.strip().lower() == wanted:
+            return candidate
     return None
 
 
@@ -384,6 +402,7 @@ async def browse(
     types: Sequence[str] | None = None,
     limit: int | None = None,
     offset: int = 0,
+    include_expired: bool = False,
 ) -> list[Memory]:
     space_ids = await accessible_space_ids(
         session, principal, space_id, space_scope=space_scope
@@ -391,7 +410,7 @@ async def browse(
     if not space_ids:
         return []
     limit = get_settings().resolve_browse_limit(limit)
-    stmt = select(Memory).where(Memory.space_id.in_(space_ids))
+    stmt = _active_select(space_ids, include_expired)
     tokens = resolve_type_tokens(types=types, kind=kind, entry_type=entry_type)
     clause = memory_type_clause(tokens)
     if clause is not None:
@@ -408,12 +427,13 @@ async def since(
     until_dt: datetime | None = None,
     space_id: uuid.UUID | None = None,
     limit: int | None = None,
+    include_expired: bool = False,
 ) -> list[Digest]:
     space_ids = await accessible_space_ids(session, principal, space_id)
     if not space_ids:
         return []
     limit = get_settings().resolve_browse_limit(limit)
-    stmt = select(Memory).where(Memory.space_id.in_(space_ids))
+    stmt = _active_select(space_ids, include_expired)
     if since_dt:
         stmt = stmt.where(Memory.updated_at >= since_dt)
     if until_dt:
@@ -444,12 +464,13 @@ async def by_tag(
     mode: str = "and",
     space_id: uuid.UUID | None = None,
     limit: int | None = None,
+    include_expired: bool = False,
 ) -> list[Digest]:
     space_ids = await accessible_space_ids(session, principal, space_id)
     if not space_ids or not tags:
         return []
     limit = get_settings().resolve_browse_limit(limit)
-    stmt = select(Memory).where(Memory.space_id.in_(space_ids))
+    stmt = _active_select(space_ids, include_expired)
     if mode == "or":
         stmt = stmt.where(Memory.tags.overlap(tags))
     else:
@@ -508,6 +529,7 @@ async def find(
     path_hint: str | None = None,
     repo_hint: str | None = None,
     limit: int | None = None,
+    include_expired: bool = False,
 ) -> list[Digest]:
     space_ids = await accessible_space_ids(
         session, principal, space_id, space_scope=space_scope
@@ -524,6 +546,7 @@ async def find(
         path_hint=path_hint,
         repo_hint=repo_hint,
         limit=limit,
+        include_expired=include_expired,
     )
 
 
@@ -538,6 +561,7 @@ async def search(
     entry_type: str | None = None,
     types: Sequence[str] | None = None,
     limit: int | None = None,
+    include_expired: bool = False,
 ) -> list[Digest]:
     """Hybrid search across entries and/or guides for the GUI/REST surface."""
     space_ids = await accessible_space_ids(
@@ -547,35 +571,14 @@ async def search(
     if tokens is None and kind is None and entry_type is None:
         # Default REST search historically searched entries only.
         tokens = [e.value for e in EntryType]
-    digests = await hybrid_search(
+    return await hybrid_search(
         session,
         query=query,
         space_ids=space_ids,
         type_tokens=tokens,
         limit=limit,
+        include_expired=include_expired,
     )
-    if tokens == ["guide"]:
-        return await _boost_guide_scores(session, digests)
-    return digests
-
-
-async def _boost_guide_scores(
-    session: AsyncSession, digests: list[Digest]
-) -> list[Digest]:
-    """Re-rank guide digests by confidence (same formula as ``guide_find``)."""
-    if not digests:
-        return digests
-    ids = [uuid.UUID(d.id) for d in digests]
-    rows = {
-        m.id: m
-        for m in (await session.execute(select(Memory).where(Memory.id.in_(ids)))).scalars()
-    }
-    for d in digests:
-        m = rows.get(uuid.UUID(d.id))
-        if m:
-            d.score = round(d.score * (1.0 + 0.1 * float(m.confidence or 1.0)), 6)
-    digests.sort(key=lambda x: x.score, reverse=True)
-    return digests
 
 
 async def guide_write(
@@ -642,8 +645,9 @@ async def guide_find(
     space_id: uuid.UUID | None = None,
     space_scope: str | None = None,
     limit: int | None = None,
+    include_expired: bool = False,
 ) -> list[Digest]:
-    digests = await hybrid_search(
+    return await hybrid_search(
         session,
         query=query,
         space_ids=await accessible_space_ids(
@@ -651,8 +655,8 @@ async def guide_find(
         ),
         type_tokens=["guide"],
         limit=limit,
+        include_expired=include_expired,
     )
-    return await _boost_guide_scores(session, digests)
 
 
 async def about_path(
@@ -662,14 +666,14 @@ async def about_path(
     path: str,
     repo_hint: str | None = None,
     limit: int | None = None,
+    include_expired: bool = False,
 ) -> list[Digest]:
     space_ids = await accessible_space_ids(session, principal, None)
     if not space_ids:
         return []
     limit = get_settings().resolve_search_limit(limit)
     path_pat = f"%{escape_ilike(path)}%"
-    stmt = select(Memory).where(
-        Memory.space_id.in_(space_ids),
+    stmt = _active_select(space_ids, include_expired).where(
         or_(
             Memory.path_hint.ilike(path_pat, escape="\\"),
             Memory.body.ilike(path_pat, escape="\\"),
@@ -733,34 +737,57 @@ async def overlap_report(
                 select(Memory)
                 .where(Memory.space_id.in_(space_ids), Memory.embedding.is_not(None))
                 .order_by(Memory.updated_at.desc())
-                .limit(200)
+                .limit(settings.overlap_scan_limit)
             )
         ).scalars()
     )
 
-    near_duplicates = []
+    near_duplicates: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
-    for i, a in enumerate(rows):
-        for b in rows[i + 1 :]:
-            if a.space_id != b.space_id or a.kind != b.kind:
-                continue
-            # cheap title similarity + distance query
-            if a.title.strip().lower() == b.title.strip().lower():
-                key = tuple(sorted((str(a.id), str(b.id))))
-                if key not in seen:
-                    seen.add(key)
-                    near_duplicates.append(
-                        {
-                            "a": str(a.id),
-                            "b": str(b.id),
-                            "title": a.title,
-                            "reason": "same_title",
-                        }
-                    )
-            if len(near_duplicates) >= limit:
-                break
+
+    def _add(a: Memory, b: Memory, reason: str, similarity: float | None = None) -> None:
+        key = tuple(sorted((str(a.id), str(b.id))))
+        if key in seen:
+            return
+        seen.add(key)
+        item: dict[str, Any] = {
+            "a": str(a.id),
+            "b": str(b.id),
+            "title": a.title,
+            "reason": reason,
+        }
+        if similarity is not None:
+            item["similarity"] = round(similarity, 4)
+        near_duplicates.append(item)
+
+    by_title: dict[tuple[uuid.UUID, MemoryKind, str], Memory] = {}
+    for m in rows:
+        key = (m.space_id, m.kind, m.title.strip().lower())
+        first = by_title.setdefault(key, m)
+        if first is not m:
+            _add(first, m, "same_title")
         if len(near_duplicates) >= limit:
             break
+
+    if len(near_duplicates) < limit:
+        groups: dict[tuple[uuid.UUID, MemoryKind], list[Memory]] = {}
+        for m in rows:
+            groups.setdefault((m.space_id, m.kind), []).append(m)
+        threshold = settings.near_dup_threshold
+        for members in groups.values():
+            if len(members) < 2 or len(near_duplicates) >= limit:
+                continue
+            matrix = np.asarray([m.embedding for m in members], dtype=np.float32)
+            norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+            norms[norms == 0] = 1.0
+            unit = matrix / norms
+            sims = unit @ unit.T
+            idx_a, idx_b = np.where(np.triu(sims, k=1) >= threshold)
+            for i, j in zip(idx_a.tolist(), idx_b.tolist(), strict=True):
+                _add(members[i], members[j], "near_dup", float(sims[i, j]))
+                if len(near_duplicates) >= limit:
+                    break
+    near_duplicates = near_duplicates[:limit]
 
     now = datetime.now(UTC)
     expiring = [

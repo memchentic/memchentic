@@ -1,6 +1,6 @@
 {
   "name": "memchentic",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "memchentic MCP craft: gated recall/capture with personal+group spaces, entries vs guides, hybrid find. Pair with public global posture plugins.",
   "author": {
     "name": "nodadyoushutup",

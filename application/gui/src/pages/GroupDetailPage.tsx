@@ -1,12 +1,11 @@
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faArrowLeft,
-  faBoxArchive,
   faCheck,
   faPen,
   faPlus,
   faRightFromBracket,
-  faUserMinus,
+  faTrash,
   faUserPlus,
   faXmark,
 } from "@fortawesome/free-solid-svg-icons";
@@ -63,7 +62,8 @@ export default function GroupDetailPage() {
     }
   }
 
-  const canManage = !!me?.is_admin || (!!group && group.created_by === me?.id);
+  const isOwner = !!group && group.created_by === me?.id;
+  const canManage = !!me?.is_admin || isOwner;
 
   function rename() {
     if (!group) return;
@@ -83,43 +83,53 @@ export default function GroupDetailPage() {
   return (
     <div>
       <PageHeader title={group?.name ?? "Group"}>
-        <Link to="/groups" className="btn">
-          <FontAwesomeIcon icon={faArrowLeft} /> Groups
+        <Link to="/groups" className="btn" title="Groups" aria-label="Groups">
+          <FontAwesomeIcon icon={faArrowLeft} />
         </Link>
         {group && canManage && (
-          <>
-            <button className="btn" type="button" onClick={rename}>
-              <FontAwesomeIcon icon={faPen} /> Rename
-            </button>
-            <button
-              className="btn"
-              type="button"
-              onClick={() => {
-                if (!confirm(`Archive ${group.name}?`)) return;
-                void (async () => {
-                  try {
-                    await api(`/api/spaces/${group.id}/archive`, { method: "POST" });
-                    await refresh();
-                    navigate("/groups");
-                  } catch (err) {
-                    setError(err instanceof Error ? err.message : String(err));
-                  }
-                })();
-              }}
-            >
-              <FontAwesomeIcon icon={faBoxArchive} /> Archive
-            </button>
-          </>
-        )}
-        {group && !canManage && me?.id && (
           <button
             className="btn"
             type="button"
+            title="Rename"
+            aria-label="Rename"
+            onClick={rename}
+          >
+            <FontAwesomeIcon icon={faPen} />
+          </button>
+        )}
+        {group && isOwner && (
+          <button
+            className="btn"
+            type="button"
+            title="Delete"
+            aria-label="Delete"
+            onClick={() => {
+              if (!confirm(`Delete ${group.name}? This removes the group and its memories.`)) return;
+              void (async () => {
+                try {
+                  await api(`/api/spaces/${group.id}`, { method: "DELETE" });
+                  await refresh();
+                  navigate("/groups");
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : String(err));
+                }
+              })();
+            }}
+          >
+            <FontAwesomeIcon icon={faTrash} />
+          </button>
+        )}
+        {group && !isOwner && me?.id && group.members.some((m) => m.user_id === me.id) && (
+          <button
+            className="btn"
+            type="button"
+            title="Leave"
+            aria-label="Leave"
             onClick={() =>
               confirm(`Leave ${group.name}?`) && void remove(me.id).then(() => navigate("/groups"))
             }
           >
-            <FontAwesomeIcon icon={faRightFromBracket} /> Leave
+            <FontAwesomeIcon icon={faRightFromBracket} />
           </button>
         )}
       </PageHeader>
@@ -130,8 +140,14 @@ export default function GroupDetailPage() {
           <div className="mb-3 flex items-center justify-between gap-2">
             <h3 className="text-sm font-medium uppercase tracking-wider text-faint">Members</h3>
             {canManage && (
-              <button className="btn" type="button" onClick={() => setAddOpen(true)}>
-                <FontAwesomeIcon icon={faUserPlus} /> Add
+              <button
+                className="btn"
+                type="button"
+                title="Add"
+                aria-label="Add"
+                onClick={() => setAddOpen(true)}
+              >
+                <FontAwesomeIcon icon={faUserPlus} />
               </button>
             )}
           </div>
@@ -163,12 +179,14 @@ export default function GroupDetailPage() {
                         <button
                           className="btn"
                           type="button"
+                          title="Remove"
+                          aria-label="Remove"
                           onClick={(e) => {
                             e.stopPropagation();
                             void remove(m.user_id);
                           }}
                         >
-                          <FontAwesomeIcon icon={faUserMinus} /> Remove
+                          <FontAwesomeIcon icon={faTrash} />
                         </button>
                       )}
                     </td>
@@ -321,11 +339,37 @@ function AddMembersModal({
           })}
         </ul>
         <div className="flex justify-end gap-2 border-t border-border px-4 py-3">
-          <button className="btn" type="button" onClick={onClose} disabled={busy}>
-            Cancel
+          <button
+            className="btn"
+            type="button"
+            onClick={onClose}
+            disabled={busy}
+            title="Cancel"
+            aria-label="Cancel"
+          >
+            <FontAwesomeIcon icon={faXmark} />
           </button>
-          <button className="btn btn-primary" type="button" onClick={() => void done()} disabled={busy}>
-            {busy ? "Adding…" : selected.size ? `Done (${selected.size})` : "Done"}
+          <button
+            className="btn btn-primary"
+            type="button"
+            onClick={() => void done()}
+            disabled={busy}
+            title={
+              busy
+                ? "Adding…"
+                : selected.size
+                  ? `Done (${selected.size})`
+                  : "Done"
+            }
+            aria-label={
+              busy
+                ? "Adding…"
+                : selected.size
+                  ? `Done (${selected.size})`
+                  : "Done"
+            }
+          >
+            <FontAwesomeIcon icon={faCheck} />
           </button>
         </div>
       </div>

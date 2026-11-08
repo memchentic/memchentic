@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
 from typing import Literal
 
 from sqlalchemy import select
@@ -245,18 +244,35 @@ async def rename_space(
     return space
 
 
-async def archive_space(
+def can_delete_group(space: Space, principal: Principal) -> bool:
+    """True when the caller owns the group (or is break-glass admin)."""
+    if space.kind != SpaceKind.group:
+        return False
+    if principal.user_id and space.created_by_user_id == principal.user_id:
+        return True
+    return bool(principal.is_admin)
+
+
+async def delete_space(
     session: AsyncSession, principal: Principal, space_id: uuid.UUID
-) -> Space:
+) -> None:
+    """Hard-delete a group the principal owns (memories and members cascade).
+
+    Args:
+        session: Database session.
+        principal: Authenticated caller.
+        space_id: Group space id.
+
+    Raises:
+        PermissionError: Missing group, or caller is not the owner (or admin).
+    """
     space = await show_space(session, principal, space_id)
     if not space or space.kind != SpaceKind.group:
         raise PermissionError("Group not found")
-    if not can_manage_group(space, principal):
-        raise PermissionError("Only the group creator or admin can archive")
-    space.archived_at = datetime.now(UTC)
+    if not can_delete_group(space, principal):
+        raise PermissionError("Only the group owner can delete")
+    await session.delete(space)
     await session.commit()
-    await session.refresh(space)
-    return space
 
 
 Visibility = Literal["personal", "shared"]

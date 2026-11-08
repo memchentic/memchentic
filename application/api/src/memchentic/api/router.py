@@ -555,17 +555,17 @@ async def rename_space(
     return {"id": str(space.id), "name": space.name, "kind": space.kind.value}
 
 
-@api_router.post("/spaces/{space_id}/archive")
-async def archive_space(
+@api_router.delete("/spaces/{space_id}")
+async def delete_space(
     space_id: str,
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict:
     try:
-        space = await space_service.archive_space(session, principal, uuid.UUID(space_id))
+        await space_service.delete_space(session, principal, uuid.UUID(space_id))
     except PermissionError as exc:
         raise HTTPException(403, str(exc)) from exc
-    return {"id": str(space.id), "archived_at": space.archived_at.isoformat() if space.archived_at else None}
+    return {"status": "ok"}
 
 
 @api_router.post("/spaces/{space_id}/members")

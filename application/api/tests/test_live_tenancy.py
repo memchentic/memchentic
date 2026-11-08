@@ -181,7 +181,7 @@ def test_user_detail_groups_are_acl_scoped(client: TestClient) -> None:
 
 
 def test_user_detail_acl_edges(client: TestClient) -> None:
-    """User detail requires auth, rejects bad ids, and hides archived groups."""
+    """User detail requires auth, rejects bad ids, and hides deleted groups."""
     ghost = uuid.uuid4()
     assert client.get(f"/api/users/{ghost}").status_code == 401
 
@@ -212,9 +212,11 @@ def test_user_detail_acl_edges(client: TestClient) -> None:
     self_a = client.get(f"/api/users/{user_a}", headers=auth_a).json()
     assert {both["id"], solo["id"]} <= {t["id"] for t in self_a["groups"]}
 
-    assert client.post(f"/api/spaces/{both['id']}/archive", headers=auth_a).status_code == 200
-    after_archive = client.get(f"/api/users/{user_b}", headers=auth_a).json()
-    assert both["id"] not in {t["id"] for t in after_archive["groups"]}
+    # Non-owner cannot delete; owner can.
+    assert client.delete(f"/api/spaces/{both['id']}", headers=auth_b).status_code == 403
+    assert client.delete(f"/api/spaces/{both['id']}", headers=auth_a).status_code == 200
+    after_delete = client.get(f"/api/users/{user_b}", headers=auth_a).json()
+    assert both["id"] not in {t["id"] for t in after_delete["groups"]}
 
 
 def test_write_target_resolution(client: TestClient) -> None:

@@ -1,7 +1,7 @@
 {
   "name": "memchentic",
   "version": "0.1.1",
-  "description": "memchentic MCP craft: gated recall/capture with personal+team spaces, entries vs guides, hybrid find. Pair with public global posture plugins.",
+  "description": "memchentic MCP craft: gated recall/capture with personal+group spaces, entries vs guides, hybrid find. Pair with public global posture plugins.",
   "author": {
     "name": "nodadyoushutup",
     "email": "admin@nodadyoushutup.com"
@@ -24,7 +24,7 @@
   "commands": "./commands/",
   "interface": {
     "displayName": "Memchentic",
-    "shortDescription": "memchentic MCP craft: gated recall/capture with personal+team spaces, entries vs guides, hybrid find.",
+    "shortDescription": "memchentic MCP craft: gated recall/capture with personal+group spaces, entries vs guides, hybrid find.",
     "developerName": "nodadyoushutup",
     "category": "Productivity",
     "websiteURL": "https://github.com/nodadyoushutup/memchentic",

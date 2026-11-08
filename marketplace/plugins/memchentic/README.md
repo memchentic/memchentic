@@ -31,7 +31,7 @@ Claude Code does not load plugin rules — use the skills for the same posture.
 ```text
 you (me)
   ├── personal        private entries/guides
-  └── teams[]         shared spaces you belong to
+  └── groups[]         shared spaces you belong to
         └── entries / guides
 ```
 

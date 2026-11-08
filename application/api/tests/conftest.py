@@ -1,0 +1,181 @@
+"""Pytest isolation: all DB writes go to ``memchentic_test``, never live ``memchentic``.
+
+HTTP integration suites use an in-process FastAPI app (TestClient + lifespan) bound
+to that same test database (``POSTGRES_DB=memchentic_test``). External
+``MEMCHENTIC_TEST_URL`` targeting the running Compose app is refused so agents
+cannot re-pollute the GUI database.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import re
+from collections.abc import AsyncIterator, Iterator
+from pathlib import Path
+
+import pytest
+import pytest_asyncio
+from fastapi.testclient import TestClient
+from sqlalchemy import text
+from sqlalchemy.engine.url import make_url
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from memchentic.db.session import reset_engine, set_rls_context
+from memchentic.settings import get_settings
+
+_API_ROOT = Path(__file__).resolve().parents[1]
+_LIVE_DB_NAME = "memchentic"
+_TEST_DB_NAME = "memchentic_test"
+_SAFE_DB = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _apply_postgres_url(url: str) -> None:
+    """Write ``POSTGRES_*`` env pieces from a SQLAlchemy URL.
+
+    Args:
+        url: Async Postgres URL to split into discrete env vars.
+    """
+    parsed = make_url(url)
+    if parsed.username is not None:
+        os.environ["POSTGRES_USER"] = parsed.username
+    if parsed.password is not None:
+        os.environ["POSTGRES_PASSWORD"] = parsed.password
+    if parsed.host is not None:
+        os.environ["POSTGRES_HOSTNAME"] = parsed.host
+    if parsed.port is not None:
+        os.environ["POSTGRES_PORT"] = str(parsed.port)
+    if parsed.database is not None:
+        os.environ["POSTGRES_DB"] = parsed.database
+    os.environ.pop("DATABASE_URL", None)
+
+
+def _assert_isolated(url: str) -> None:
+    """Refuse to run pytest against the live application database.
+
+    Args:
+        url: Candidate SQLAlchemy URL.
+
+    Raises:
+        RuntimeError: When the URL targets the live ``memchentic`` database.
+    """
+    name = make_url(url).database
+    if name == _LIVE_DB_NAME:
+        raise RuntimeError(
+            "Refusing to run pytest against the live database "
+            f"{_LIVE_DB_NAME!r}. Use memchentic_test (default) or set "
+            "MEMCHENTIC_TEST_DATABASE_URL to a dedicated database."
+        )
+    if name is None or not _SAFE_DB.match(name):
+        raise RuntimeError(f"Unsafe or missing test database name: {name!r}")
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Point ``POSTGRES_DB`` at the isolated test database before imports run.
+
+    Args:
+        config: Pytest config (unused; hook exists for env side effects).
+    """
+    del config
+    if os.environ.get("MEMCHENTIC_TEST_URL") and os.environ.get("MEMCHENTIC_ALLOW_LIVE_DB") != "1":
+        raise RuntimeError(
+            "MEMCHENTIC_TEST_URL would hit the running app's live database. "
+            "HTTP tests use an in-process app against memchentic_test. "
+            "Unset MEMCHENTIC_TEST_URL, or set MEMCHENTIC_ALLOW_LIVE_DB=1 only "
+            "if you intentionally accept live pollution."
+        )
+    override = os.environ.get("MEMCHENTIC_TEST_DATABASE_URL", "").strip()
+    if override:
+        _apply_postgres_url(override)
+    else:
+        os.environ["POSTGRES_DB"] = _TEST_DB_NAME
+        os.environ.pop("DATABASE_URL", None)
+    get_settings.cache_clear()
+    test_url = get_settings().database_url
+    _assert_isolated(test_url)
+    reset_engine()
+
+
+async def _ensure_test_database(url: str) -> None:
+    """Create the test database if it does not already exist.
+
+    Args:
+        url: Async URL whose database name should exist.
+    """
+    parsed = make_url(url)
+    assert parsed.database is not None
+    _assert_isolated(url)
+    admin_url = parsed.set(database="postgres").render_as_string(hide_password=False)
+    engine = create_async_engine(admin_url, isolation_level="AUTOCOMMIT")
+    try:
+        async with engine.connect() as conn:
+            exists = await conn.scalar(
+                text("SELECT 1 FROM pg_database WHERE datname = :name"),
+                {"name": parsed.database},
+            )
+            if not exists:
+                await conn.execute(text(f'CREATE DATABASE "{parsed.database}"'))
+    finally:
+        await engine.dispose()
+
+
+def _run_migrations(url: str) -> None:
+    """Apply Alembic migrations to head on the isolated test database.
+
+    Args:
+        url: Async SQLAlchemy URL (must match ``get_settings().database_url``).
+    """
+    from alembic.config import Config
+
+    from alembic import command
+
+    cfg = Config(str(_API_ROOT / "alembic.ini"))
+    cfg.set_main_option("script_location", str(_API_ROOT / "alembic"))
+    cfg.set_main_option("sqlalchemy.url", url)
+    command.upgrade(cfg, "head")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def prepare_test_database() -> None:
+    """Ensure ``memchentic_test`` exists and is migrated once per pytest process."""
+    url = get_settings().database_url
+    _assert_isolated(url)
+    asyncio.run(_ensure_test_database(url))
+    get_settings.cache_clear()
+    reset_engine()
+    _run_migrations(url)
+
+
+@pytest.fixture(scope="session")
+def client() -> Iterator[TestClient]:
+    """In-process HTTP client against the app bound to ``memchentic_test``.
+
+    Yields:
+        A ``TestClient`` with lifespan started (migrations + MCP).
+    """
+    _assert_isolated(get_settings().database_url)
+    reset_engine()
+    get_settings.cache_clear()
+    # Import after DATABASE_URL rewrite so module-level wiring sees the test DB.
+    from memchentic.main import create_app
+
+    app = create_app()
+    with TestClient(app, raise_server_exceptions=True) as test_client:
+        yield test_client
+
+
+@pytest_asyncio.fixture
+async def session() -> AsyncIterator[AsyncSession]:
+    """Admin-scoped session against the isolated test database.
+
+    Yields:
+        An ``AsyncSession`` with RLS admin context set.
+    """
+    settings = get_settings()
+    _assert_isolated(settings.database_url)
+    engine = create_async_engine(settings.database_url, echo=False)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with factory() as db:
+        await set_rls_context(db, user_id=None, is_admin=True)
+        yield db
+    await engine.dispose()

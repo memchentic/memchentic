@@ -3,7 +3,7 @@ name: memchentic
 description: >-
   Gated memchentic MCP index: skip when disconnected; otherwise recall early
   and often, capture verified durable insights into entries and guides, and
-  respect personal+team spaces. Use at session start, on retries/corrections,
+  respect personal+group spaces. Use at session start, on retries/corrections,
   or when unsure which memchentic skill to load. Deeper playbooks:
   memchentic-recall, memchentic-capture.
 ---
@@ -28,14 +28,14 @@ When connected, prefer the smallest tool set:
 ```text
 you (me)
   ├── personal        private entries/guides
-  └── teams[]         shared spaces you belong to
+  └── groups[]         shared spaces you belong to
 ```
 
 - **Entry** — keep with `remember` (typed).
 - **Guide** — re-teach with `guide_write` (confidence rises on duplicates).
 - **Find** → digests; **`open`** → full body.
 - Omit `space_id` → **personal** for user principals. Admin API key must pass
-  `space_id` (no personal default; cannot create teams).
+  `space_id` (no personal default; cannot create groups).
 
 ## Session defaults
 

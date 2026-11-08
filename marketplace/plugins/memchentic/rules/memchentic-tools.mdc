@@ -30,7 +30,7 @@ on recall + capture tools only.
 | Job | Tool |
 | --- | --- |
 | Who am I / spaces | `me`, `space_list`, `space_show` |
-| Create a team | `space_create` (user principal; not admin API key) |
+| Create a group | `space_create` (user principal; not admin API key) |
 | Paginated list | `browse` |
 | Time window | `since` |
 | Tag filter | `by_tag` |

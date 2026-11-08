@@ -40,11 +40,11 @@ success narration or “task done” with no insight.
 Where it lands (first match wins):
 
 1. `space_id` — only when you already know the UUID.
-2. `team: "<name>"` — exact name of one of your teams (see `me` memberships).
-3. `visibility: "shared"` — your default shared team, or your only team.
+2. `group: "<name>"` — exact name of one of your groups (see `me` memberships).
+3. `visibility: "shared"` — your default shared group, or your only group.
 4. Nothing → **personal**. When unsure who should see it, use personal.
 
-Never invent a team name. On an ambiguous/unknown-team error, save personal
+Never invent a group name. On an ambiguous/unknown-group error, save personal
 and mention it, or ask once. **Admin API key** has no personal default — pass
 `space_id`. Prefer per-user API key or JWT for agent
 sessions. Use `path_hint` / `repo_hint` for path-scoped insights. Near-

@@ -9,13 +9,17 @@ services:
   postgres:
     image: pgvector/pgvector:pg16
     environment:
-      POSTGRES_USER: memchentic
-      POSTGRES_PASSWORD: memchentic
-      POSTGRES_DB: memchentic
+      POSTGRES_USER: ${POSTGRES_USER:-memchentic}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-memchentic}
+      POSTGRES_DB: ${POSTGRES_DB:-memchentic}
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U memchentic -d memchentic"]
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}",
+        ]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -25,11 +29,13 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
     ports:
-      - "${MEMCHENTIC_API_PORT:-18080}:8080"
+      # One uvicorn serves GUI (/), API (/api), and MCP (/mcp). Separate host
+      # ports are optional publishes of that same listener for reverse proxies.
+      - "${GUI_PORT:-18080}:8080"
+      - "${API_PORT:-18081}:8080"
+      - "${MCP_PORT:-18082}:8080"
     env_file: .env
-    environment:
-      # EMBEDDING_MODEL_PATH comes from image ENV / .env (baked MiniLM by default).
-      DATABASE_URL: postgresql+asyncpg://memchentic:memchentic@postgres:5432/memchentic
+    # POSTGRES_* and EMBEDDING_MODEL_PATH come from .env (image bakes MiniLM).
     working_dir: /opt/memchentic
     depends_on:
       postgres:

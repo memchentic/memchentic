@@ -29,11 +29,7 @@ requirements-lock.txt
 **/tokenizer.json
 **/tokenizer_config.json
 models/
-data/models/
 
-# Local runtime / compose data
-data/
-!data/.gitkeep
 *.db
 *.sqlite*
 
@@ -55,7 +51,7 @@ docker-compose.override.yml
 
 # Node
 node_modules/
-gui/dist/
+application/gui/dist/
 
 # Product docs (local for now; re-track when ready to publish)
 # Keep the README logo under docs/assets/ tracked.

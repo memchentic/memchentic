@@ -1,9 +1,9 @@
 # Build the React SPA, then run FastAPI + FastMCP + static GUI in one image.
 FROM node:22-alpine AS gui-build
 WORKDIR /gui
-COPY gui/package.json gui/package-lock.json* ./
+COPY application/gui/package.json application/gui/package-lock.json* ./
 RUN npm install
-COPY gui/ ./
+COPY application/gui/ ./
 RUN npm run build
 
 FROM python:3.12-slim
@@ -19,10 +19,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl \
 
 WORKDIR /opt/memchentic
 
-COPY api/pyproject.toml ./
-COPY api/src ./src
-COPY api/alembic.ini ./
-COPY api/alembic ./alembic
+COPY application/api/pyproject.toml ./
+COPY application/api/src ./src
+COPY application/mcp/src/memchentic/mcp ./src/memchentic/mcp
+COPY application/api/alembic.ini ./
+COPY application/api/alembic ./alembic
 COPY README.md LICENSE ./
 COPY --from=gui-build /gui/dist ./gui/dist
 

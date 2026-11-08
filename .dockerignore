@@ -6,7 +6,7 @@
 **/.pytest_cache
 **/.ruff_cache
 **/node_modules
-gui/dist
+application/gui/dist
+application/gui/node_modules
 models
-data
 docs

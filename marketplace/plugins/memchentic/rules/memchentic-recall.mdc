@@ -60,7 +60,7 @@ the domain changes. Prefer one sharp query over synonym spam.
   or runtime before relying on them.
 - Do not dump raw memory payloads into the user chat.
 - On tool failure: continue; do not retry-spam.
-- Personal vs team isolation is **server ACL**. Do not ask the model to
+- Personal vs group isolation is **server ACL**. Do not ask the model to
   impersonate another user or pass a client-supplied user id.
 
 ## Out of scope here

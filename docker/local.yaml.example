@@ -22,6 +22,8 @@ services:
         "/opt/memchentic/src",
       ]
     volumes:
-      - ../api:/opt/memchentic
+      - ../application/api:/opt/memchentic
+      # Overlay MCP onto the API src tree (image also bakes this path).
+      - ../application/mcp/src/memchentic/mcp:/opt/memchentic/src/memchentic/mcp
       - ../models:/opt/memchentic/models
-      - ../gui/dist:/opt/memchentic/gui/dist:ro
+      - ../application/gui/dist:/opt/memchentic/gui/dist:ro

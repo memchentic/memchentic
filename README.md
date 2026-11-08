@@ -13,7 +13,7 @@
 Coding agents are brilliant in the moment and amnesiac the next. Every new
 chat relearns your stack, your preferences, the bug you already fixed, and the
 decision you already made. Context windows fill with rediscovery. Humans paste
-the same “remember this” notes into prompts. Teams lose what one person taught
+the same “remember this” notes into prompts. Groups lose what one person taught
 an agent last week.
 
 **memchentic** is the place those lessons live. Agents write durable memory when
@@ -26,7 +26,7 @@ next job. You keep ownership of the data — self-hosted, multi-user, yours.
   and file-scoped notes survive across Cursor, Claude, and other MCP clients.
 - **Less rediscovery** — recall before you re-investigate; capture after you
   prove something, not before.
-- **Shared team memory** — optional teams so a roster can share what belongs to
+- **Shared group memory** — optional groups so a roster can share what belongs to
   the product, not just one laptop.
 - **Human oversight** — a web UI to browse, search, and manage keys when you
   want to see what agents stored.
@@ -39,7 +39,7 @@ memchentic is an MCP memory server plus a small React console. Agents talk to
 it over streamable HTTP (`/mcp`). Memories are **entries** (facts worth
 keeping) and **guides** (lessons worth re-teaching). Search mixes keyword and
 vector recall so “that Postgres pool bug” still surfaces when the wording
-changes. Personal space is the default; teams are opt-in shared collections.
+changes. Personal space is the default; groups are opt-in shared collections.
 
 The server alone is a toolbox. The **accompanying marketplace plugin** is what
 makes the loop autonomous: always-on recall and capture craft so the agent
@@ -63,7 +63,7 @@ git clone https://github.com/nodadyoushutup/memchentic.git
 cd memchentic/docker
 cp .env.example .env
 cp local.yaml.example local.yaml
-# set admin password + API key; set MEMCHENTIC_BASE_URL and CORS_ORIGINS to your host
+# set admin password + API key; set BASE_URL and CORS_ORIGINS to your host
 docker compose up -d --build
 ```
 

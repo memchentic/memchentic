@@ -8,18 +8,12 @@ name: Publish App Image
 #        → build_arm64 ┴→ manifest
 # Native GitHub-hosted runners per arch (no QEMU). Per-arch refs
 # (X.Y.Z-amd64 / X.Y.Z-arm64) exist only so the manifest job can stitch the
-# published semver. Pass version=X.Y.Z explicitly, or leave it empty and set
-# increment=Major|Minor|Patch to bump from existing GHCR tags (no tags yet:
-# Major → 1.0.0, Minor → 0.1.0, Patch → 0.0.1).
+# published semver. Choose increment=Major|Minor|Patch to bump from existing
+# GHCR tags (no tags yet: Major → 1.0.0, Minor → 0.1.0, Patch → 0.0.1).
 
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: Semver to publish (e.g. 0.0.1). Empty = bump via increment.
-        required: false
-        type: string
-        default: ""
       platforms:
         description: Architectures to build
         required: true
@@ -30,7 +24,7 @@ on:
           - amd64
           - arm64
       increment:
-        description: Which part to bump when version is empty
+        description: Which part of the semver to bump
         required: true
         type: choice
         default: Select
@@ -69,7 +63,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           OWNER_TYPE: ${{ github.repository.owner.type }}
           SELECTED_PLATFORMS: ${{ github.event.inputs.platforms }}
-          REQUESTED_VERSION: ${{ github.event.inputs.version }}
           INCREMENT: ${{ github.event.inputs.increment }}
           PACKAGE: ${{ env.PACKAGE_NAME }}
         run: |
@@ -163,25 +156,16 @@ jobs:
             esac
           }
 
-          requested="$(printf '%s' "${REQUESTED_VERSION:-}" | tr -d '[:space:]')"
-          if [ -n "${requested}" ]; then
-            if ! printf '%s' "${requested}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-              echo "version must be X.Y.Z (got: ${requested})" >&2
+          increment="$(printf '%s' "${INCREMENT:-Select}" | tr '[:upper:]' '[:lower:]')"
+          case "${increment}" in
+            major|minor|patch) ;;
+            *)
+              echo "Choose Major, Minor, or Patch." >&2
               exit 1
-            fi
-            version="${requested}"
-          else
-            increment="$(printf '%s' "${INCREMENT:-Select}" | tr '[:upper:]' '[:lower:]')"
-            case "${increment}" in
-              major|minor|patch) ;;
-              *)
-                echo "Provide version=X.Y.Z or choose Major, Minor, or Patch." >&2
-                exit 1
-                ;;
-            esac
-            list_package_tags "${PACKAGE}"
-            version="$(bump_from_tags_file "/tmp/tags-${PACKAGE}.txt" "${increment}")"
-          fi
+              ;;
+          esac
+          list_package_tags "${PACKAGE}"
+          version="$(bump_from_tags_file "/tmp/tags-${PACKAGE}.txt" "${increment}")"
 
           selected_arches=()
           build_amd64=false

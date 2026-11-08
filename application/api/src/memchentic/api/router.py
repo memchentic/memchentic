@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import uuid
+from collections.abc import AsyncIterator
 from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from memchentic.auth.principal import Principal, check_admin_password
+from memchentic.auth.principal import Principal, check_admin_password, resolve_bearer
 from memchentic.auth.sessions import (
     SESSION_COOKIE,
     SESSION_COOKIE_PATH,
@@ -27,7 +30,9 @@ from memchentic.auth.users import (
     providers_for,
     register_internal_user,
 )
+from memchentic.db.session import get_session_factory, set_rls_context
 from memchentic.deps import db_session, get_principal
+from memchentic.events import subscribe_memory_events
 from memchentic.models.entities import User
 from memchentic.services import api_keys as api_key_service
 from memchentic.services import memories as memory_service
@@ -124,6 +129,68 @@ def _dt(value: str | None) -> datetime | None:
 @api_router.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok", "service": "memchentic"}
+
+
+async def _readable_space_ids(principal: Principal) -> set[str]:
+    """Load space ids the principal may read using a short-lived session."""
+    factory = get_session_factory()
+    async with factory() as session:
+        await set_rls_context(session, user_id=principal.user_id, is_admin=principal.is_admin)
+        ids = await memory_service.accessible_space_ids(session, principal, None)
+        return {str(sid) for sid in ids}
+
+
+@api_router.get("/events/memories")
+async def memory_events(request: Request) -> StreamingResponse:
+    """SSE stream of memory mutations the caller is allowed to see.
+
+    Auth is resolved before the stream starts so the request does not hold a
+    pooled DB session open for the lifetime of the SSE connection. Events are
+    ACL-filtered by space membership. Clients should reconnect on drop; the
+    GUI also keeps a 30s safety poll.
+    """
+    auth = request.headers.get("Authorization") or ""
+    token = auth[7:].strip() if auth.lower().startswith("bearer ") else None
+    factory = get_session_factory()
+    async with factory() as session:
+        principal = await resolve_bearer(session, token)
+        if principal is None:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        await set_rls_context(session, user_id=principal.user_id, is_admin=principal.is_admin)
+        allowed = {
+            str(sid)
+            for sid in await memory_service.accessible_space_ids(session, principal, None)
+        }
+
+    async def gen() -> AsyncIterator[bytes]:
+        nonlocal allowed
+        yield b": connected\n\n"
+        async with subscribe_memory_events() as queue:
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=25.0)
+                except TimeoutError:
+                    # Re-resolve membership so revoked spaces stop receiving events.
+                    allowed = await _readable_space_ids(principal)
+                    yield b": keepalive\n\n"
+                    continue
+                space_id = str(event.get("space_id") or "")
+                if space_id not in allowed:
+                    allowed = await _readable_space_ids(principal)
+                    if space_id not in allowed:
+                        continue
+                data = json.dumps(event, separators=(",", ":"))
+                yield f"event: memory\ndata: {data}\n\n".encode()
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @api_router.post("/auth/register")

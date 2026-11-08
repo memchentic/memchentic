@@ -1,0 +1,39 @@
+{% extends "!layout.html" %}
+
+{% block htmltitle %}
+{%- set page_title = title|striptags|trim %}
+{%- if page_title and page_title != docstitle %}
+<title>{{ docstitle|e }} | {{ page_title|e }}</title>
+{%- else %}
+<title>{{ docstitle|e }}</title>
+{%- endif %}
+{% endblock %}
+
+{% block extrahead %}
+<link rel="icon" href="{{ pathto('_static/favicon.svg', 1) }}" type="image/svg+xml" />
+{%- if pagename == "index" %}
+<style>
+  .rst-content h1,
+  .rst-content .toctree-wrapper {
+    display: none !important;
+  }
+</style>
+{%- endif %}
+{% endblock %}
+
+{% block sidebartitle %}
+{%- set _root_doc = root_doc|default(master_doc) %}
+<a class="docs-brand" href="{{ pathto(_root_doc) }}">
+  <img class="docs-brand-mark" src="{{ pathto('_static/mark-white.svg', 1) }}" alt="" width="28" height="28">
+  <span class="docs-brand-word">memchentic Docs</span>
+</a>
+{% include "searchbox.html" %}
+{% endblock %}
+
+{% block mobile_nav %}
+<i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+<a class="docs-brand" href="{{ pathto(root_doc|default(master_doc)) }}">
+  <img class="docs-brand-mark" src="{{ pathto('_static/mark-white.svg', 1) }}" alt="" width="28" height="28">
+  <span class="docs-brand-word">memchentic Docs</span>
+</a>
+{% endblock %}

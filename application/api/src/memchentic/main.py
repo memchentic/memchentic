@@ -20,6 +20,7 @@ from memchentic.api.router import api_router
 from memchentic.auth.principal import resolve_bearer
 from memchentic.auth.tokens import ensure_signing_key
 from memchentic.db.session import get_session_factory, init_db, set_rls_context
+from memchentic.events import start_memory_listener, stop_memory_listener
 from memchentic.mcp.context import principal_var, session_var
 from memchentic.mcp.server import create_mcp
 from memchentic.settings import Settings, get_settings
@@ -174,8 +175,12 @@ def create_app() -> FastAPI:
         if settings.oauth_provider == "internal":
             async with get_session_factory()() as session:
                 await ensure_signing_key(session)
-        async with mcp_app.lifespan(app):
-            yield
+        await start_memory_listener()
+        try:
+            async with mcp_app.lifespan(app):
+                yield
+        finally:
+            await stop_memory_listener()
 
     app = FastAPI(title="memchentic", version="0.1.0", lifespan=lifespan)
     app.add_middleware(

@@ -56,6 +56,10 @@ application/gui/dist/
 
 # Product docs (local for now; re-track when ready to publish)
 # Keep the README logo under docs/assets/ tracked.
+# Sphinx user site under docs/sphinx/ is tracked; ignore its build output.
 docs/*
 !docs/assets/
 !docs/assets/**
+!docs/sphinx/
+!docs/sphinx/**
+docs/sphinx/_build/

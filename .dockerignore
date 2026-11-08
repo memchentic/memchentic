@@ -9,4 +9,7 @@
 application/gui/dist
 application/gui/node_modules
 models
-docs
+# Keep product-truth markdown out of image contexts; allow Sphinx sources.
+docs/*
+!docs/sphinx/
+!docs/sphinx/**

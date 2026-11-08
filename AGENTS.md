@@ -7,12 +7,13 @@ product: do not fork, wrap, or copy other memory servers' tool names.
 
 | Path | Owns |
 | --- | --- |
-| `docker/` | Compose + Dockerfile (`docker-compose.yaml` prod base; `local.yaml` overlay) |
+| `docker/` | Compose + Dockerfile (`docker-compose.yaml` prod base; `local.yaml` overlay; optional `docs.yaml`) |
 | `helm/` | Kubernetes Helm chart (app Deployment + optional pgvector; `values.yaml` + secret modes) |
 | `application/api/` | FastAPI + shared domain: `pyproject.toml`, `alembic/`, `src/memchentic/`, `tests/`, `models/` (MiniLM ONNX; baked in image, gitignored files) |
 | `application/mcp/` | FastMCP tools/context (`src/memchentic/mcp/`); image + local overlay merge into API `src/` |
 | `application/gui/` | React + Tailwind (greyscale dark) + Font Awesome |
 | `marketplace/` | In-repo agent plugin (`memchentic`); host catalogs at repo root |
+| `docs/` | Product truth (`DECISIONS.md`, …). User-facing Sphinx site under `docs/sphinx/` |
 
 Inside containers the code root is `/opt/memchentic` (API tree; MCP overlaid at
 `src/memchentic/mcp`). Compose project name is `memchentic`; services are
@@ -46,6 +47,15 @@ Prod-shaped bring-up (no bind mounts; pulls GHCR — `docker login ghcr.io` if p
 ```bash
 cd docker && COMPOSE_FILE=docker-compose.yaml docker compose up -d
 ```
+
+Optional Sphinx docs overlay (`docker/docs.yaml`, not in `.env.example`):
+
+```bash
+cd docker && docker compose up -d --build docs
+# default DOCS_PORT=18099 — nginx serves built HTML
+```
+
+Product truth stays in `docs/*.md`. Author user pages under `docs/sphinx/source/`.
 
 ## Rules
 

@@ -5,7 +5,7 @@ import {
   faMagnifyingGlass,
   faXmark,
 } from "@fortawesome/free-solid-svg-icons";
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import {
@@ -17,6 +17,7 @@ import {
   SpaceSelect,
   type MemoryRow,
 } from "../components/ui";
+import { applyMemoryEvent, startMemoryLive } from "../liveMemories";
 
 const PAGE = 25;
 
@@ -31,6 +32,8 @@ export default function MemoriesPage() {
   const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const searching = q.length > 0;
+  const loadRef = useRef<() => Promise<void>>(async () => {});
+  const viewRef = useRef({ searching, space, kind, offset });
 
   const load = useCallback(async () => {
     try {
@@ -50,9 +53,35 @@ export default function MemoriesPage() {
     }
   }, [searching, q, space, kind, offset]);
 
+  loadRef.current = load;
+  viewRef.current = { searching, space, kind, offset };
+
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    return startMemoryLive({
+      onEvent: (event) => {
+        const view = viewRef.current;
+        if (view.searching) {
+          void loadRef.current();
+          return;
+        }
+        setRows((prev) =>
+          applyMemoryEvent(prev, event, {
+            space: view.space,
+            kind: view.kind,
+            offset: view.offset,
+            pageSize: PAGE,
+          }),
+        );
+      },
+      onSafetyPoll: () => {
+        void loadRef.current();
+      },
+    });
+  }, []);
 
   useEffect(() => {
     setDraft(params.get("q") ?? "");

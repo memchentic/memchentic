@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from memchentic.auth.principal import Principal
 from memchentic.embeddings import get_embedder
+from memchentic.events import memory_event_from_row, publish_memory_event
 from memchentic.models.entities import EntryType, Memory, MemoryKind
 from memchentic.search.hybrid import Digest, hybrid_search
 from memchentic.services.spaces import Visibility, list_spaces, resolve_write_space, show_space
@@ -52,14 +53,30 @@ def digest_to_dict(d: Digest) -> dict[str, Any]:
     }
 
 
-async def _accessible_space_ids(
+async def accessible_space_ids(
     session: AsyncSession, principal: Principal, space_id: uuid.UUID | None
 ) -> list[uuid.UUID]:
+    """Return space ids the principal may read (optionally narrowed to one).
+
+    Args:
+        session: Database session.
+        principal: Authenticated caller.
+        space_id: When set, return that id only if readable; else all readable.
+
+    Returns:
+        Zero or more space UUIDs.
+    """
     if space_id:
         space = await show_space(session, principal, space_id)
         return [space.id] if space else []
     spaces = await list_spaces(session, principal)
     return [s.id for s in spaces]
+
+
+async def _accessible_space_ids(
+    session: AsyncSession, principal: Principal, space_id: uuid.UUID | None
+) -> list[uuid.UUID]:
+    return await accessible_space_ids(session, principal, space_id)
 
 
 async def find_near_duplicate(
@@ -155,6 +172,9 @@ async def remember(
         created_by_user_id=principal.user_id,
     )
     session.add(memory)
+    await session.flush()
+    await session.refresh(memory)
+    await publish_memory_event(session, memory_event_from_row("created", memory))
     await session.commit()
     await session.refresh(memory)
     return memory
@@ -223,6 +243,7 @@ async def revise(
     if text_changed:
         memory.embedding = get_embedder().embed_memory_text(memory.title, memory.body)
     memory.updated_at = datetime.now(UTC)
+    await publish_memory_event(session, memory_event_from_row("updated", memory))
     await session.commit()
     await session.refresh(memory)
     return memory
@@ -234,7 +255,9 @@ async def forget(
     memory = await open_memory(session, principal, memory_id=memory_id)
     if not memory:
         raise PermissionError("Memory not found")
+    event = memory_event_from_row("deleted", memory)
     await session.delete(memory)
+    await publish_memory_event(session, event)
     await session.commit()
 
 
@@ -341,8 +364,11 @@ async def relocate(
     if not memory:
         raise PermissionError("Memory not found")
     target = await resolve_write_space(session, principal, target_space_id)
+    left = memory_event_from_row("deleted", memory)
     memory.space_id = target.id
     memory.updated_at = datetime.now(UTC)
+    await publish_memory_event(session, left)
+    await publish_memory_event(session, memory_event_from_row("created", memory))
     await session.commit()
     await session.refresh(memory)
     return memory
@@ -399,6 +425,7 @@ async def guide_write(
             dup.tags = tags
         dup.embedding = get_embedder().embed_memory_text(dup.title, dup.body)
         dup.updated_at = datetime.now(UTC)
+        await publish_memory_event(session, memory_event_from_row("updated", dup))
         await session.commit()
         await session.refresh(dup)
         return dup
@@ -417,6 +444,9 @@ async def guide_write(
         provenance={},
     )
     session.add(memory)
+    await session.flush()
+    await session.refresh(memory)
+    await publish_memory_event(session, memory_event_from_row("created", memory))
     await session.commit()
     await session.refresh(memory)
     return memory

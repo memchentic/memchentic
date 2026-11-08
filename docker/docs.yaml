@@ -1,0 +1,22 @@
+# Optional Sphinx docs overlay. Not listed in .env.example.
+# Live sticky .env example:
+#   COMPOSE_FILE=docker-compose.yaml:local.yaml:docs.yaml
+#   DOCS_PORT=18099
+#
+#   cd docker && docker compose up -d --build docs
+
+services:
+  docs:
+    image: memchentic-docs:local
+    build:
+      context: ..
+      dockerfile: docker/docs/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${DOCS_PORT:-18099}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 5s

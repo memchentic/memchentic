@@ -72,6 +72,8 @@ config:
   sessionBrowserHours: "12"
   # Leave empty to derive Secure from baseUrl scheme.
   sessionCookieSecure: ""
+  # Public self-registration when OAUTH_PROVIDER=internal (System Settings can toggle live).
+  registerEnabled: "true"
 
 # Secret modes (exactly one):
 #   inline          — chart renders a Secret from secrets.inline (dev default)

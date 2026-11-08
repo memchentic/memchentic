@@ -32,6 +32,16 @@ def hash_api_key(raw: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def email_is_admin(email: str | None, settings: Settings) -> bool:
+    """True when ``email`` is the configured break-glass admin address."""
+    if not email:
+        return False
+    return hmac.compare_digest(
+        email.strip().casefold().encode(),
+        settings.admin_contact_email.casefold().encode(),
+    )
+
+
 async def resolve_bearer(
     session: AsyncSession,
     token: str | None,
@@ -42,10 +52,16 @@ async def resolve_bearer(
     settings = settings or get_settings()
 
     if hmac.compare_digest(token.encode(), settings.admin_api_key.encode()):
+        from memchentic.auth.users import ensure_admin_user
+        from memchentic.services.auth_groups import ensure_auth_groups
+
+        admin = await ensure_admin_user(session, settings)
+        await ensure_auth_groups(session, settings)
         return Principal(
             is_admin=True,
-            email=settings.admin_contact_email,
-            display_name=settings.admin_display_name.strip() or None,
+            user_id=admin.id,
+            email=admin.email,
+            display_name=admin.display_name,
             provider="admin",
         )
 
@@ -58,11 +74,14 @@ async def resolve_bearer(
     row = result.first()
     if row:
         _, user = row
+        from memchentic.services.auth_groups import user_is_administrator
+
         return Principal(
             user_id=user.id,
             email=user.email,
             display_name=user.display_name,
             provider=user.provider,
+            is_admin=await user_is_administrator(session, user.id),
         )
 
     try:
@@ -82,17 +101,25 @@ async def resolve_bearer(
         return None
 
     if sub == "admin":
+        from memchentic.auth.users import ensure_admin_user
+        from memchentic.services.auth_groups import ensure_auth_groups
+
+        admin = await ensure_admin_user(session, settings)
+        await ensure_auth_groups(session, settings)
         return Principal(
             is_admin=True,
-            email=settings.admin_contact_email,
-            display_name=settings.admin_display_name.strip() or None,
+            user_id=admin.id,
+            email=admin.email,
+            display_name=admin.display_name,
             provider="admin",
         )
+
+    from memchentic.services.auth_groups import user_is_administrator
 
     try:
         user_id = UUID(sub)
     except ValueError:
-        # provider subject style — look up any durable binding
+        # provider subject style — look up any durable binding; provision on first hit
         provider = payload.get("provider") or settings.oauth_provider
         result = await session.execute(
             select(User)
@@ -103,6 +130,10 @@ async def resolve_bearer(
             )
         )
         user = result.scalar_one_or_none()
+        if not user and settings.oauth_provider != "internal":
+            user = await _upsert_from_external_claims(
+                session, payload, provider=provider, subject=str(sub)
+            )
         if not user:
             return None
         return Principal(
@@ -110,6 +141,7 @@ async def resolve_bearer(
             email=user.email,
             display_name=user.display_name,
             provider=user.provider,
+            is_admin=await user_is_administrator(session, user.id),
         )
 
     result = await session.execute(select(User).where(User.id == user_id))
@@ -121,8 +153,55 @@ async def resolve_bearer(
         email=user.email,
         display_name=user.display_name,
         provider=user.provider,
-        is_admin=False,
+        is_admin=await user_is_administrator(session, user.id),
     )
+
+
+async def _upsert_from_external_claims(
+    session: AsyncSession,
+    payload: dict,
+    *,
+    provider: str,
+    subject: str,
+) -> User | None:
+    """Create or link a user from verified email claims on a first IdP JWT.
+
+    Args:
+        session: Database session.
+        payload: Verified JWT claims.
+        provider: Active OAuth provider name.
+        subject: Provider subject claim.
+
+    Returns:
+        The upserted user, or ``None`` when email is missing/unverified.
+    """
+    from memchentic.auth.idp_groups import groups_from_claims
+    from memchentic.auth.users import upsert_oauth_user
+
+    email = payload.get("email")
+    if not isinstance(email, str) or not email.strip():
+        return None
+    raw_verified = payload.get("email_verified", False)
+    if isinstance(raw_verified, str):
+        verified = raw_verified.lower() in {"1", "true", "yes"}
+    else:
+        verified = bool(raw_verified)
+    if not verified:
+        return None
+    display = payload.get("name") or payload.get("preferred_username")
+    try:
+        return await upsert_oauth_user(
+            session,
+            provider=provider,
+            subject=subject,
+            email=email,
+            display_name=str(display) if display else None,
+            email_verified=True,
+            idp_groups=groups_from_claims(payload),
+        )
+    except ValueError:
+        return None
+
 
 
 def check_admin_password(email: str, password: str, settings: Settings | None = None) -> bool:

@@ -172,8 +172,45 @@ def create_app() -> FastAPI:
         await init_db()
         await asyncio.to_thread(_run_migrations, settings.database_url)
         logger.info("Migrations applied")
-        if settings.oauth_provider == "internal":
-            async with get_session_factory()() as session:
+        async with get_session_factory()() as session:
+            from sqlalchemy import text
+
+            from memchentic.auth.users import ensure_admin_user
+            from memchentic.services.auth_groups import ensure_auth_groups
+            from memchentic.services.instance_settings import ensure_instance_settings
+
+            admin = await ensure_admin_user(session, settings)
+            await ensure_auth_groups(session, settings)
+            await ensure_instance_settings(session, settings)
+            # Attribute orphan memories to the space owner, else the admin user.
+            await session.execute(
+                text(
+                    """
+                    UPDATE memories AS m
+                    SET created_by_user_id = s.created_by_user_id
+                    FROM spaces AS s
+                    WHERE m.space_id = s.id
+                      AND m.created_by_user_id IS NULL
+                      AND s.created_by_user_id IS NOT NULL
+                    """
+                )
+            )
+            result = await session.execute(
+                text(
+                    """
+                    UPDATE memories
+                    SET created_by_user_id = :admin_id
+                    WHERE created_by_user_id IS NULL
+                    """
+                ),
+                {"admin_id": str(admin.id)},
+            )
+            await session.commit()
+            if result.rowcount:
+                logger.info(
+                    "Backfilled created_by on %s memories to admin user", result.rowcount
+                )
+            if settings.oauth_provider == "internal":
                 await ensure_signing_key(session)
         await start_memory_listener()
         try:
@@ -223,16 +260,27 @@ def create_app() -> FastAPI:
     app.include_router(api_router)
 
     @app.get("/api/provider")
-    async def provider_info() -> dict[str, str]:
+    async def provider_info() -> dict[str, object]:
         """Expose non-secret auth configuration for the GUI.
 
         Returns:
-            Active provider name, public base URL, and MCP endpoint URL.
+            Active provider name, public URLs, and whether web OAuth Sign-in
+            is available (external IdP with ``OAUTH_CLIENT_ID`` set).
         """
+        from memchentic.auth.providers import provider_label
+        from memchentic.db.session import get_session_factory
+        from memchentic.services.instance_settings import get_register_enabled
+
+        live = get_settings()
+        async with get_session_factory()() as session:
+            register_enabled = await get_register_enabled(session)
         return {
-            "oauth_provider": settings.oauth_provider,
-            "base_url": settings.base_url,
-            "mcp_url": settings.mcp_resource_url,
+            "oauth_provider": live.oauth_provider,
+            "base_url": live.base_url,
+            "mcp_url": live.mcp_resource_url,
+            "web_oauth": live.web_oauth_enabled,
+            "oauth_label": provider_label(live),
+            "register_enabled": register_enabled,
         }
 
     app.mount("/mcp", mcp_app)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import math
@@ -128,6 +129,29 @@ class Embedder:
 
     def embed_memory_text(self, title: str, body: str) -> list[float]:
         return self.embed(f"{title}\n{body}")
+
+    async def aembed(self, text: str) -> list[float]:
+        """Embed text off the event loop so concurrent requests can share CPU.
+
+        Args:
+            text: Raw text to embed.
+
+        Returns:
+            L2-normalized embedding vector of length ``dim``.
+        """
+        return await asyncio.to_thread(self.embed, text)
+
+    async def aembed_memory_text(self, title: str, body: str) -> list[float]:
+        """Embed title+body off the event loop (request-path writes/search).
+
+        Args:
+            title: Memory title.
+            body: Memory body.
+
+        Returns:
+            L2-normalized embedding vector of length ``dim``.
+        """
+        return await asyncio.to_thread(self.embed_memory_text, title, body)
 
 
 def get_embedder() -> Embedder:

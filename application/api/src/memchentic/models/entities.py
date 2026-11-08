@@ -65,6 +65,9 @@ class User(Base):
     identities: Mapped[list[UserIdentity]] = relationship(
         back_populates="user", cascade="all, delete-orphan", order_by="UserIdentity.provider"
     )
+    auth_group_memberships: Mapped[list[AuthGroupMember]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class UserIdentity(Base):
@@ -85,6 +88,47 @@ class UserIdentity(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user: Mapped[User] = relationship(back_populates="identities")
+
+
+class AuthGroup(Base):
+    """Fixed system auth roster (Administrators / Users), not a memory space."""
+
+    __tablename__ = "auth_groups"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    slug: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    system: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    idp_group_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    idp_group_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    members: Mapped[list[AuthGroupMember]] = relationship(
+        back_populates="group", cascade="all, delete-orphan"
+    )
+
+    @property
+    def is_bound(self) -> bool:
+        """True when this roster is synced from an IdP group bind."""
+        return bool(self.idp_group_id and self.idp_group_id.strip())
+
+
+class AuthGroupMember(Base):
+    __tablename__ = "auth_group_members"
+
+    group_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("auth_groups.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    source: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=text("'manual'")
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    group: Mapped[AuthGroup] = relationship(back_populates="members")
+    user: Mapped[User] = relationship(back_populates="auth_group_memberships")
 
 
 class ApiKey(Base):
@@ -245,3 +289,15 @@ class InternalSigningKey(Base):
     public_pem: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+
+
+class InstanceSetting(Base):
+    """Singleton key/value rows for System Settings that outlive a process."""
+
+    __tablename__ = "instance_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

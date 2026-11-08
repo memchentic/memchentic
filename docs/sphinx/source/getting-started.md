@@ -85,9 +85,9 @@ Plugin concepts and harness notes: {doc}`marketplace`.
 
 Point the host MCP client at `http://your-host:18082/mcp` (or your reverse
 proxy URL that reaches `/mcp`). Authenticate with a per-user API key or a
-Bearer JWT from GUI sign-in. The break-glass `ADMIN_API_KEY` is an admin
-principal and must pass `space_id` on writes — prefer a per-user key for
-normal agent sessions.
+Bearer JWT from GUI / MCP Authorize is preferred. The break-glass
+`ADMIN_API_KEY` is the same admin user (personal space + `created_by`); use a
+per-user key when acting as a non-admin account.
 
 Suggested first calls: `me`, then `guide_find` / `find`, then `remember` or
 `guide_write` when something is worth keeping. Tool reference:

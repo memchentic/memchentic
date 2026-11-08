@@ -93,7 +93,7 @@ async def hybrid_search(
 ) -> list[Digest]:
     settings = get_settings()
     embedder = get_embedder()
-    qvec = embedder.embed(query)
+    qvec = await embedder.aembed(query)
     limit = settings.resolve_search_limit(limit)
     fetch_n = max(limit * 3, 30)
 

@@ -26,3 +26,4 @@ data:
   {{- if .Values.config.sessionCookieSecure }}
   SESSION_COOKIE_SECURE: {{ .Values.config.sessionCookieSecure | quote }}
   {{- end }}
+  REGISTER_ENABLED: {{ .Values.config.registerEnabled | quote }}

@@ -116,7 +116,7 @@ async def issue_access_token(
     key = await ensure_signing_key(session)
     now = datetime.now(UTC)
     payload = {
-        "iss": settings.effective_issuer,
+        "iss": settings.session_issuer,
         "aud": settings.effective_audience,
         "sub": subject,
         "email": email,
@@ -129,32 +129,71 @@ async def issue_access_token(
     return jwt.encode(payload, key.private_pem, algorithm="RS256", headers={"kid": key.kid})
 
 
+async def _verify_session_token(
+    session: AsyncSession, token: str, settings: Settings
+) -> dict:
+    """Verify a memchentic-signed GUI/session access token.
+
+    Args:
+        session: Database session for the active signing key.
+        token: Compact JWT.
+        settings: App settings (session issuer and audience).
+
+    Returns:
+        Decoded claims.
+
+    Raises:
+        JWTError: When the key is unknown or the token is invalid.
+    """
+    kid = jwt.get_unverified_header(token).get("kid")
+    result = await session.execute(
+        select(InternalSigningKey).where(
+            InternalSigningKey.kid == kid, InternalSigningKey.active.is_(True)
+        )
+    )
+    key = result.scalar_one_or_none()
+    if key is None:
+        raise JWTError("Unknown signing key")
+    return jwt.decode(
+        token,
+        key.public_pem,
+        algorithms=["RS256"],
+        audience=settings.effective_audience,
+        issuer=settings.session_issuer,
+    )
+
+
 async def verify_access_token(
     session: AsyncSession,
     token: str,
     settings: Settings | None = None,
 ) -> dict:
+    """Verify a Bearer JWT from a GUI session or an external IdP.
+
+    Session tokens are always memchentic-signed with ``session_issuer``. When
+    ``OAUTH_PROVIDER`` is external, IdP JWTs verified via JWKS are also
+    accepted so MCP harness Authorize and web Sign-in share one deployment.
+
+    Args:
+        session: Database session.
+        token: Compact JWT.
+        settings: Optional settings override.
+
+    Returns:
+        Decoded claims.
+
+    Raises:
+        JWTError: When neither session nor IdP verification succeeds.
+    """
     settings = settings or get_settings()
 
-    if settings.oauth_provider == "internal":
-        kid = jwt.get_unverified_header(token).get("kid")
-        result = await session.execute(
-            select(InternalSigningKey).where(
-                InternalSigningKey.kid == kid, InternalSigningKey.active.is_(True)
-            )
-        )
-        key = result.scalar_one_or_none()
-        if key is None:
-            raise JWTError("Unknown signing key")
-        return jwt.decode(
-            token,
-            key.public_pem,
-            algorithms=["RS256"],
-            audience=settings.effective_audience,
-            issuer=settings.effective_issuer,
-        )
+    try:
+        return await _verify_session_token(session, token, settings)
+    except Exception:
+        # Fall through to IdP JWKS when external; re-raise for internal-only.
+        if settings.oauth_provider == "internal":
+            raise
 
-    # External: JWKS URI
     from memchentic.auth.providers import fetch_jwks_and_decode
 
     return await fetch_jwks_and_decode(token, settings)

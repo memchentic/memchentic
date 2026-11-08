@@ -166,7 +166,7 @@ async def find_near_duplicate(
 ) -> Memory | None:
     settings = get_settings()
     embedder = get_embedder()
-    vec = embedder.embed_memory_text(title, body)
+    vec = await embedder.aembed_memory_text(title, body)
     stmt = (
         select(Memory)
         .where(
@@ -232,7 +232,7 @@ async def remember(
             )
 
     embedder = get_embedder()
-    embedding = embedder.embed_memory_text(title, body)
+    embedding = await embedder.aembed_memory_text(title, body)
     memory = Memory(
         id=uuid.uuid4(),
         space_id=space.id,
@@ -318,7 +318,9 @@ async def revise(
     if repo_hint is not None:
         memory.repo_hint = repo_hint
     if text_changed:
-        memory.embedding = get_embedder().embed_memory_text(memory.title, memory.body)
+        memory.embedding = await get_embedder().aembed_memory_text(
+            memory.title, memory.body
+        )
     memory.updated_at = datetime.now(UTC)
     await publish_memory_event(session, memory_event_from_row("updated", memory))
     await session.commit()
@@ -563,7 +565,7 @@ async def guide_write(
         dup.title = title.strip()
         if tags is not None:
             dup.tags = tags
-        dup.embedding = get_embedder().embed_memory_text(dup.title, dup.body)
+        dup.embedding = await get_embedder().aembed_memory_text(dup.title, dup.body)
         dup.updated_at = datetime.now(UTC)
         await publish_memory_event(session, memory_event_from_row("updated", dup))
         await session.commit()
@@ -579,7 +581,7 @@ async def guide_write(
         body=body,
         tags=tags or [],
         confidence=1.0,
-        embedding=get_embedder().embed_memory_text(title, body),
+        embedding=await get_embedder().aembed_memory_text(title, body),
         created_by_user_id=principal.user_id,
         provenance={},
     )

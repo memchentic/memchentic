@@ -224,13 +224,16 @@ async def authorize_post(
     client = await _require_registered_client(
         session, client_id, redirect_uri, code_challenge, code_challenge_method
     )
-    # Prefer a real DB user when email+password match; break-glass is fallback.
+    # Prefer a real DB user when email+password match; break-glass binds to
+    # the ensured ADMIN_EMAIL user so tokens always carry a user id.
     user = await authenticate_internal(session, email=email, password=password)
     user_id: uuid.UUID | None
     if user:
         user_id = user.id
     elif check_admin_password(email, password, settings):
-        user_id = None
+        from memchentic.auth.users import ensure_admin_user
+
+        user_id = (await ensure_admin_user(session, settings)).id
     else:
         fields = {
             "client_id": client_id,
@@ -311,9 +314,14 @@ async def token_endpoint(
             raise HTTPException(400, "PKCE verification failed")
         auth_code.consumed_at = datetime.now(UTC)
         if auth_code.user_id is None:
-            subject, email_claim, provider = "admin", settings.admin_contact_email, "admin"
+            from memchentic.auth.users import ensure_admin_user
+
+            admin = await ensure_admin_user(session, settings)
+            subject, email_claim, provider = str(admin.id), admin.email, "admin"
+            token_user_id = admin.id
         else:
             subject, email_claim, provider = str(auth_code.user_id), None, "internal"
+            token_user_id = auth_code.user_id
         access = await issue_access_token(
             session,
             subject=subject,
@@ -327,7 +335,7 @@ async def token_endpoint(
                 id=uuid.uuid4(),
                 token_hash=hash_token(refresh),
                 client_id=client_id,
-                user_id=auth_code.user_id,
+                user_id=token_user_id,
                 scope=auth_code.scope,
                 expires_at=datetime.now(UTC) + timedelta(days=30),
             )
@@ -356,7 +364,10 @@ async def token_endpoint(
         if not row or row.expires_at < datetime.now(UTC) or row.client_id != client_id:
             raise HTTPException(400, "Invalid refresh token")
         if row.user_id is None:
-            subject, email_claim, provider = "admin", settings.admin_contact_email, "admin"
+            from memchentic.auth.users import ensure_admin_user
+
+            admin = await ensure_admin_user(session, settings)
+            subject, email_claim, provider = str(admin.id), admin.email, "admin"
         else:
             subject, email_claim, provider = str(row.user_id), None, "internal"
         access = await issue_access_token(

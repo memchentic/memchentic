@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Collection
+from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,6 +11,9 @@ from sqlalchemy.orm import selectinload
 from memchentic.auth.passwords import hash_password, verify_password
 from memchentic.models.entities import User, UserIdentity
 from memchentic.services.spaces import ensure_personal_space
+
+if TYPE_CHECKING:
+    from memchentic.settings import Settings
 
 
 def normalize_email(email: str) -> str:
@@ -183,6 +188,9 @@ async def register_internal_user(
     await session.flush()
     await _ensure_identity(session, user, provider="internal", subject=email_n)
     await ensure_personal_space(session, user)
+    from memchentic.services.auth_groups import add_to_users_group
+
+    await add_to_users_group(session, user.id)
     await session.commit()
     await session.refresh(user)
     return user
@@ -226,13 +234,15 @@ async def upsert_oauth_user(
     email: str,
     display_name: str | None = None,
     email_verified: bool = True,
+    idp_groups: Collection[str] | None = None,
 ) -> User:
     """Find or create a user keyed by email; accumulate OAuth provider bindings.
 
     Email is the stable identity. Each successful IdP login adds (or refreshes)
     that provider's subject on the same user without removing other bindings,
     so switching ``OAUTH_PROVIDER`` or linking another IdP with the same
-    verified email keeps prior logins working.
+    verified email keeps prior logins working. When ``idp_groups`` is provided,
+    Auth Group membership is synced from IdP binds.
 
     Args:
         session: Database session.
@@ -241,6 +251,7 @@ async def upsert_oauth_user(
         email: Required verified email from the IdP.
         display_name: Optional display name from the IdP profile.
         email_verified: Whether the IdP asserts the email is verified.
+        idp_groups: Optional IdP group ids/names from the login claims.
 
     Returns:
         The existing or newly created user.
@@ -255,6 +266,15 @@ async def upsert_oauth_user(
     subject_n = subject.strip()
     if not subject_n:
         raise ValueError("OAuth subject is required")
+    groups = list(idp_groups or [])
+
+    async def _finish(user: User) -> User:
+        from memchentic.services.auth_groups import sync_user_from_idp_groups
+
+        await sync_user_from_idp_groups(session, user, groups, commit=False)
+        await session.commit()
+        await session.refresh(user)
+        return user
 
     user = await get_user_by_provider_subject(session, provider=provider, subject=subject_n)
     if user:
@@ -267,9 +287,7 @@ async def upsert_oauth_user(
             user.display_name = display_name
         user.provider = provider
         user.provider_subject = subject_n
-        await session.commit()
-        await session.refresh(user)
-        return user
+        return await _finish(user)
 
     by_email = await get_user_by_email(session, email_n)
     if by_email:
@@ -278,9 +296,7 @@ async def upsert_oauth_user(
         by_email.provider_subject = subject_n
         if display_name:
             by_email.display_name = display_name
-        await session.commit()
-        await session.refresh(by_email)
-        return by_email
+        return await _finish(by_email)
 
     user = User(
         id=uuid.uuid4(),
@@ -294,8 +310,57 @@ async def upsert_oauth_user(
     await session.flush()
     await _ensure_identity(session, user, provider=provider, subject=subject_n)
     await ensure_personal_space(session, user)
-    await session.commit()
-    await session.refresh(user)
+    from memchentic.services.auth_groups import add_to_users_group
+
+    await add_to_users_group(session, user.id)
+    return await _finish(user)
+
+
+async def ensure_admin_user(
+    session: AsyncSession,
+    settings: Settings | None = None,
+) -> User:
+    """Ensure the break-glass admin exists as a real ``User`` row.
+
+    ``ADMIN_EMAIL`` / ``ADMIN_PASSWORD`` / ``ADMIN_DISPLAY_NAME`` stay the
+    source of truth. Creates the user when missing, syncs password + display
+    name when present, and ensures a personal space.
+
+    Args:
+        session: Database session.
+        settings: Settings override; defaults to the cached settings.
+
+    Returns:
+        The admin user row.
+    """
+    from memchentic.settings import get_settings
+
+    settings = settings or get_settings()
+    email_n = normalize_email(settings.admin_contact_email)
+    display = settings.admin_display_name.strip() or email_n.split("@")[0]
+
+    user = await get_user_by_email(session, email_n)
+    if user is None:
+        user = User(
+            id=uuid.uuid4(),
+            email=email_n,
+            password_hash=hash_password(settings.admin_password),
+            provider="internal",
+            provider_subject=email_n,
+            display_name=display,
+        )
+        session.add(user)
+        await session.flush()
+    else:
+        if not user.password_hash or not verify_password(
+            settings.admin_password, user.password_hash
+        ):
+            user.password_hash = hash_password(settings.admin_password)
+        if user.display_name != display:
+            user.display_name = display
+    await _ensure_identity(session, user, provider="internal", subject=email_n)
+    await ensure_personal_space(session, user)
+    await session.flush()
     return user
 
 

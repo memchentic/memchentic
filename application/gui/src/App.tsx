@@ -4,6 +4,7 @@ import Layout from "./components/Layout";
 import ApiKeysPage from "./pages/ApiKeysPage";
 import EntryPage from "./pages/EntryPage";
 import MemoriesPage from "./pages/MemoriesPage";
+import SettingsPage from "./pages/SettingsPage";
 import SignInPage from "./pages/SignInPage";
 import GroupDetailPage from "./pages/GroupDetailPage";
 import GroupsPage from "./pages/GroupsPage";
@@ -48,6 +49,7 @@ export default function App() {
         <Route path="users" element={<UsersPage />} />
         <Route path="users/:id" element={<UserDetailPage />} />
         <Route path="api-keys" element={<ApiKeysPage />} />
+        <Route path="settings" element={<SettingsPage />} />
       </Route>
     </Routes>
   );

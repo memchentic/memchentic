@@ -1,15 +1,59 @@
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faArrowRightToBracket, faUserPlus } from "@fortawesome/free-solid-svg-icons";
+import {
+  faGithub,
+  faGitlab,
+  faGoogle,
+  faMicrosoft,
+  faOpenid,
+} from "@fortawesome/free-brands-svg-icons";
+import {
+  faArrowRightToBracket,
+  faKey,
+  faShieldHalved,
+  faUserPlus,
+} from "@fortawesome/free-solid-svg-icons";
+import type { IconDefinition } from "@fortawesome/fontawesome-svg-core";
 import { useEffect, useState, type FormEvent } from "react";
-import { Navigate } from "react-router-dom";
+import { Navigate, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { formatDocumentTitle } from "../documentTitle";
 
-type Provider = { oauth_provider: string; base_url: string; mcp_url: string };
+type Provider = {
+  oauth_provider: string;
+  base_url: string;
+  mcp_url: string;
+  web_oauth?: boolean;
+  oauth_label?: string;
+  register_enabled?: boolean;
+};
+
+function providerIcon(name: string): IconDefinition {
+  switch (name) {
+    case "google":
+      return faGoogle;
+    case "github":
+      return faGithub;
+    case "gitlab":
+      return faGitlab;
+    case "entra":
+      return faMicrosoft;
+    case "generic":
+      return faOpenid;
+    case "okta":
+    case "authentik":
+    case "keycloak":
+      return faShieldHalved;
+    case "auth0":
+      return faKey;
+    default:
+      return faOpenid;
+  }
+}
 
 export default function SignInPage() {
   const { me, login, register } = useAuth();
+  const [searchParams] = useSearchParams();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -24,8 +68,21 @@ export default function SignInPage() {
   }, []);
 
   useEffect(() => {
-    document.title = formatDocumentTitle(mode === "login" ? "Sign in" : "Create account");
-  }, [mode]);
+    const oauthError = searchParams.get("error");
+    if (oauthError) setError(oauthError);
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (mode === "register" && provider && provider.register_enabled === false) {
+      setMode("login");
+    }
+  }, [mode, provider]);
+
+  useEffect(() => {
+    document.title = formatDocumentTitle(
+      mode === "login" || provider?.register_enabled === false ? "Sign in" : "Create account",
+    );
+  }, [mode, provider]);
 
   if (me) return <Navigate to="/" replace />;
 
@@ -34,7 +91,7 @@ export default function SignInPage() {
     setBusy(true);
     setError(null);
     try {
-      if (mode === "login") await login(email, password, remember);
+      if (mode === "login" || !registerEnabled) await login(email, password, remember);
       else await register(email, password, displayName || undefined, remember);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -44,11 +101,21 @@ export default function SignInPage() {
   }
 
   const internal = !provider || provider.oauth_provider === "internal";
-  const title = mode === "login" ? "Sign in" : "Create account";
+  const registerEnabled = provider?.register_enabled !== false;
+  const webOauth = Boolean(provider?.web_oauth) && mode === "login";
+  const oauthName = provider?.oauth_provider || "generic";
+  const oauthLabel = provider?.oauth_label || oauthName;
+  const effectiveMode = mode === "register" && !registerEnabled ? "login" : mode;
+  const title = effectiveMode === "login" ? "Sign in" : "Create account";
   const subtitle =
-    mode === "login"
+    effectiveMode === "login"
       ? "Sign in with your email and password."
       : "Email is required — it is your account identity on this instance.";
+
+  function continueWithProvider() {
+    const params = remember ? "?remember=true" : "";
+    window.location.assign(`/api/auth/oauth/start${params}`);
+  }
 
   return (
     <main className="auth-shell">
@@ -78,7 +145,7 @@ export default function SignInPage() {
               placeholder="you@example.com"
             />
           </label>
-          {mode === "register" && (
+          {effectiveMode === "register" && (
             <label className="auth-field">
               <span>Display name</span>
               <input
@@ -96,8 +163,10 @@ export default function SignInPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              minLength={mode === "register" ? 8 : undefined}
-              autoComplete={mode === "login" ? "current-password" : "new-password"}
+              minLength={effectiveMode === "register" ? 8 : undefined}
+              autoComplete={
+                effectiveMode === "login" ? "current-password" : "new-password"
+              }
             />
           </label>
           <label className="flex items-center gap-2.5 text-sm font-medium text-ink">
@@ -110,31 +179,39 @@ export default function SignInPage() {
             Remember this session
           </label>
           <button className="btn w-full" disabled={busy} type="submit">
-            <FontAwesomeIcon icon={mode === "login" ? faArrowRightToBracket : faUserPlus} />
-            {mode === "login" ? "Sign in" : "Create account"}
+            <FontAwesomeIcon
+              icon={effectiveMode === "login" ? faArrowRightToBracket : faUserPlus}
+            />
+            {effectiveMode === "login" ? "Sign in" : "Create account"}
           </button>
         </form>
 
-        {internal && (
+        {internal && registerEnabled && (
           <p className="auth-switch">
-            {mode === "login" ? "No account? " : "Have an account? "}
+            {effectiveMode === "login" ? "No account? " : "Have an account? "}
             <button
               className="auth-switch-action"
               type="button"
-              onClick={() => setMode(mode === "login" ? "register" : "login")}
+              onClick={() =>
+                setMode(effectiveMode === "login" ? "register" : "login")
+              }
             >
-              {mode === "login" ? "Register" : "Sign in"}
+              {effectiveMode === "login" ? "Register" : "Sign in"}
             </button>
           </p>
         )}
 
-        {provider && (
-          <p className="auth-meta">
-            Provider: <span className="text-muted">{provider.oauth_provider}</span>
-            <br />
-            MCP endpoint: <span className="break-all text-muted">{provider.mcp_url}</span>
-          </p>
-        )}
+        {webOauth ? (
+          <div className="auth-sso">
+            <div className="auth-divider" role="separator">
+              <span>or</span>
+            </div>
+            <button className="btn w-full" type="button" onClick={continueWithProvider}>
+              <FontAwesomeIcon icon={providerIcon(oauthName)} />
+              Continue with {oauthLabel}
+            </button>
+          </div>
+        ) : null}
       </section>
     </main>
   );

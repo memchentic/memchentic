@@ -2,6 +2,8 @@ from memchentic.models.base import Base
 from memchentic.models.entities import (
     ApiKey,
     AuthCode,
+    AuthGroup,
+    AuthGroupMember,
     AuthRefreshToken,
     InternalSigningKey,
     Memory,
@@ -15,6 +17,8 @@ from memchentic.models.entities import (
 __all__ = [
     "ApiKey",
     "AuthCode",
+    "AuthGroup",
+    "AuthGroupMember",
     "AuthRefreshToken",
     "Base",
     "InternalSigningKey",

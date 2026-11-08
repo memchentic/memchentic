@@ -37,6 +37,7 @@ async def me() -> dict[str, Any]:
     user = await session.get(User, principal.user_id) if principal.user_id else None
     default_shared = user.default_shared_space_id if user else None
     return {
+        "id": str(principal.user_id) if principal.user_id else None,
         "default_shared_space_id": str(default_shared) if default_shared else None,
         "subject": principal.subject,
         "email": principal.email,

@@ -40,7 +40,7 @@ async def get_personal_space(session: AsyncSession, user_id: uuid.UUID) -> Space
 
 
 async def list_spaces(session: AsyncSession, principal: Principal) -> list[Space]:
-    if principal.is_admin and principal.user_id is None:
+    if principal.is_admin:
         result = await session.execute(
             select(Space).where(Space.archived_at.is_(None)).order_by(Space.created_at.desc())
         )
@@ -59,11 +59,9 @@ async def list_spaces(session: AsyncSession, principal: Principal) -> list[Space
 async def create_group(
     session: AsyncSession, principal: Principal, *, name: str
 ) -> Space:
-    if not principal.user_id and not principal.is_admin:
+    if not principal.user_id:
         raise PermissionError("Authentication required")
     owner_id = principal.user_id
-    if principal.is_admin and owner_id is None:
-        raise PermissionError("Admin API key cannot own groups; use a user account")
     space = Space(
         id=uuid.uuid4(),
         kind=SpaceKind.group,
@@ -355,15 +353,13 @@ async def resolve_write_space(
             without ``space_id``.
         ValueError: Group name or shared default cannot be resolved to one group.
     """
-    if not principal.user_id and not principal.is_admin:
+    if not principal.user_id:
         raise PermissionError("Authentication required")
     if space_id is not None:
         space = await show_space(session, principal, space_id)
         if not space:
             raise PermissionError("Space not found or not accessible")
         return space
-    if not principal.user_id:
-        raise PermissionError("Admin API key must pass space_id")
     if group and group.strip():
         return await resolve_group_by_name(session, principal, group)
     if visibility == "shared":

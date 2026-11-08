@@ -80,9 +80,9 @@ Entry types: `fact`, `preference`, `decision`, `instruction`, `feedback`,
 
 ## Auth notes for tools
 
-Principals come from Bearer JWT, per-user API key, or `ADMIN_API_KEY`. ACL
-never trusts client-supplied user ids. Admin API key has no personal default —
-pass `space_id` explicitly on writes. Prefer a per-user key for normal agent
-sessions.
+Principals come from Bearer JWT (preferred; MCP Authorize / GUI sign-in),
+per-user API key, or `ADMIN_API_KEY`. ACL never trusts client-supplied user
+ids. The admin API key is the real `ADMIN_EMAIL` user (personal space +
+`created_by`). Prefer OAuth/Authorize for agent sessions.
 
 See also {doc}`memory-types`.

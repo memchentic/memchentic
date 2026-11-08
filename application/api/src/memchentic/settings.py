@@ -91,6 +91,7 @@ class Settings(BaseSettings):
     session_remember_days: int = Field(default=30, ge=1, alias="SESSION_REMEMBER_DAYS")
     session_browser_hours: int = Field(default=12, ge=1, alias="SESSION_BROWSER_HOURS")
     session_cookie_secure: bool | None = Field(default=None, alias="SESSION_COOKIE_SECURE")
+    register_enabled: bool = Field(default=True, alias="REGISTER_ENABLED")
 
     @field_validator("session_cookie_secure", mode="before")
     @classmethod
@@ -129,14 +130,32 @@ class Settings(BaseSettings):
         return f"{self.base_url.rstrip('/')}/mcp"
 
     @property
+    def session_issuer(self) -> str:
+        """Issuer claim for memchentic-signed GUI/session access tokens.
+
+        Always this instance's ``BASE_URL``, even when ``OAUTH_PROVIDER`` is an
+        external IdP (IdP JWTs keep their own issuer via JWKS verification).
+        """
+        return self.base_url.rstrip("/")
+
+    @property
     def effective_issuer(self) -> str:
         if self.oauth_provider == "internal":
-            return self.base_url.rstrip("/")
-        return self.oauth_issuer or self.base_url.rstrip("/")
+            return self.session_issuer
+        return self.oauth_issuer or self.session_issuer
 
     @property
     def effective_audience(self) -> str:
         return self.oauth_audience or self.mcp_resource_url
+
+    @property
+    def web_oauth_enabled(self) -> bool:
+        """True when an external IdP client is configured for browser Sign-in."""
+        return self.oauth_provider != "internal" and bool(self.oauth_client_id.strip())
+
+    def web_oauth_redirect_uri(self) -> str:
+        """Fixed browser OAuth callback registered on the IdP."""
+        return f"{self.base_url.rstrip('/')}/api/auth/oauth/callback"
 
 
 @lru_cache

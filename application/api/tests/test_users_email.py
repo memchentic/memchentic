@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from memchentic.auth.users import (
+    ensure_admin_user,
     get_user,
     normalize_email,
     providers_for,
@@ -17,6 +18,8 @@ from memchentic.auth.users import (
     upsert_oauth_user,
 )
 from memchentic.models.entities import User
+from memchentic.services.spaces import get_personal_space
+from memchentic.settings import get_settings
 
 
 def test_normalize_email_requires_value() -> None:
@@ -90,3 +93,17 @@ async def test_internal_then_oauth_keeps_both_bindings(session: AsyncSession) ->
     )
     loaded = result.scalar_one()
     assert providers_for(loaded) == ["internal", "okta"]
+
+
+@pytest.mark.asyncio
+async def test_ensure_admin_user_is_real_user_with_personal_space(
+    session: AsyncSession,
+) -> None:
+    """Break-glass admin is a durable User row with a personal space."""
+    settings = get_settings()
+    admin = await ensure_admin_user(session, settings)
+    await session.commit()
+    again = await ensure_admin_user(session, settings)
+    assert again.id == admin.id
+    assert admin.email == settings.admin_contact_email.casefold()
+    assert await get_personal_space(session, admin.id) is not None

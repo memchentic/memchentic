@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
 import uuid
+
+import pytest
 
 from memchentic.embeddings.loader import EMBEDDING_DIM, Embedder
 from memchentic.search.hybrid import rrf_fuse
@@ -35,3 +38,35 @@ def test_hash_fallback_is_deterministic_and_normalized(tmp_path) -> None:
     assert first == embedder.embed("postgres pgvector")
     assert len(first) == EMBEDDING_DIM
     assert math.isclose(math.sqrt(sum(v * v for v in first)), 1.0, rel_tol=1e-6)
+
+
+@pytest.mark.asyncio
+async def test_aembed_matches_sync_embed(tmp_path) -> None:
+    """Async offload returns the same vector as sync embed on the hash backend.
+
+    Args:
+        tmp_path: Empty directory standing in for a missing model path.
+    """
+    embedder = Embedder(str(tmp_path))
+    text = "concurrent embed offload"
+    assert await embedder.aembed(text) == embedder.embed(text)
+    assert await embedder.aembed_memory_text("t", "b") == embedder.embed_memory_text(
+        "t", "b"
+    )
+
+
+@pytest.mark.asyncio
+async def test_concurrent_aembed_completes(tmp_path) -> None:
+    """Two concurrent aembed calls both finish (awaitable offload contract).
+
+    Args:
+        tmp_path: Empty directory standing in for a missing model path.
+    """
+    embedder = Embedder(str(tmp_path))
+    left, right = await asyncio.gather(
+        embedder.aembed("alpha query"),
+        embedder.aembed("beta query"),
+    )
+    assert len(left) == EMBEDDING_DIM
+    assert len(right) == EMBEDDING_DIM
+    assert left != right

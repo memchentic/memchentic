@@ -256,15 +256,25 @@ def test_write_target_resolution(client: TestClient) -> None:
                         json={"default_shared_space_id": other["id"]}).status_code == 403
 
 
-def test_admin_key_write_requires_space_id(client: TestClient) -> None:
-    """The env admin key has no personal space and gets no name/default resolution."""
+def test_admin_key_writes_as_admin_user(client: TestClient) -> None:
+    """The env admin key is a real user: personal writes work and stamp created_by."""
     if not ADMIN_KEY:
         pytest.skip("ADMIN_API_KEY not set")
     auth = {"Authorization": f"Bearer {ADMIN_KEY}"}
-    for target in ({}, {"visibility": "shared"}, {"group": "anything"}):
-        resp = client.post("/api/memories", headers=auth,
-                           json={"title": "admin", "body": uuid.uuid4().hex, **target})
-        assert resp.status_code == 403
+    me = client.get("/api/me", headers=auth).json()
+    assert me["is_admin"] is True
+    assert me["id"]
+    assert me.get("personal_space_id")
+    body = uuid.uuid4().hex
+    resp = client.post(
+        "/api/memories",
+        headers=auth,
+        json={"title": f"admin-owner-{body}", "body": body, "force": True},
+    )
+    assert resp.status_code == 200, resp.text
+    row = resp.json()
+    assert row["created_by"] == me["id"]
+    assert row.get("created_by_display_name") or row.get("created_by_email")
 
 
 def test_api_keys_bind_to_user_and_admin_key_is_admin(client: TestClient) -> None:
@@ -274,7 +284,9 @@ def test_api_keys_bind_to_user_and_admin_key_is_admin(client: TestClient) -> Non
                       json={"name": "test"}).json()["key"]
     assert _tool(client, raw, "me", {})["structuredContent"]["email"] == email
     if ADMIN_KEY:
-        assert _tool(client, ADMIN_KEY, "me", {})["structuredContent"]["is_admin"] is True
+        admin_me = _tool(client, ADMIN_KEY, "me", {})["structuredContent"]
+        assert admin_me["is_admin"] is True
+        assert admin_me.get("personal_space_id")
 
 
 def test_api_key_cycle_is_own_only_and_admin_can_cycle_others(client: TestClient) -> None:
@@ -433,13 +445,11 @@ def test_authorize_accepts_admin_email(client: TestClient) -> None:
     access = token.json()["access_token"]
     me = client.get("/api/me", headers={"Authorization": f"Bearer {access}"})
     assert me.status_code == 200
-    # DB user for the same email wins when passwords match; otherwise break-glass.
+    # Admin email resolves to the real admin user (is_admin + durable id).
     body = me.json()
     assert body.get("email", "").casefold() == ADMIN_EMAIL.casefold()
-    if body.get("is_admin"):
-        assert body.get("provider") == "admin"
-    else:
-        assert body.get("id")
+    assert body.get("is_admin") is True
+    assert body.get("id")
 
 
 def test_roster_rules_and_no_email_enumeration(client: TestClient) -> None:

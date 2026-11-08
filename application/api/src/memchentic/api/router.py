@@ -31,10 +31,12 @@ from memchentic.auth.users import (
     register_internal_user,
 )
 from memchentic.db.session import get_session_factory, set_rls_context
-from memchentic.deps import db_session, get_principal
+from memchentic.deps import db_session, get_optional_principal, get_principal
 from memchentic.events import subscribe_memory_events
 from memchentic.models.entities import User
 from memchentic.services import api_keys as api_key_service
+from memchentic.services import auth_groups as auth_group_service
+from memchentic.services import instance_settings as instance_settings_service
 from memchentic.services import memories as memory_service
 from memchentic.services import spaces as space_service
 from memchentic.services.spaces import SpaceResolveError, Visibility
@@ -218,10 +220,18 @@ async def memory_events(request: Request) -> StreamingResponse:
 
 
 @api_router.post("/auth/register")
-async def register(body: RegisterIn, session: AsyncSession = Depends(db_session)) -> dict:
+async def register(
+    body: RegisterIn,
+    session: AsyncSession = Depends(db_session),
+    principal: Principal | None = Depends(get_optional_principal),
+) -> dict:
     settings = get_settings()
     if settings.oauth_provider != "internal":
         raise HTTPException(400, "Registration only in internal mode")
+    if not await instance_settings_service.get_register_enabled(session) and (
+        principal is None or not principal.is_admin
+    ):
+        raise HTTPException(403, "Registration is disabled")
     try:
         user = await register_internal_user(
             session, email=body.email, password=body.password, display_name=body.display_name
@@ -286,24 +296,33 @@ async def login(
     # Prefer a real DB user when email+password match; break-glass is fallback.
     user = await authenticate_internal(session, email=body.email, password=body.password)
     if user:
+        from memchentic.services.auth_groups import ensure_auth_groups, user_is_administrator
+
+        await ensure_auth_groups(session, settings)
         subject, email, provider, user_id = str(user.id), user.email, user.provider, user.id
         extra = {
-            "is_admin": False,
+            "is_admin": await user_is_administrator(session, user.id),
             "id": str(user.id),
             "email": user.email,
             "display_name": user.display_name,
         }
     elif check_admin_password(body.email, body.password, settings):
+        from memchentic.auth.users import ensure_admin_user
+        from memchentic.services.auth_groups import ensure_auth_groups
+
+        admin = await ensure_admin_user(session, settings)
+        await ensure_auth_groups(session, settings)
         subject, email, provider, user_id = (
+            str(admin.id),
+            admin.email,
             "admin",
-            settings.admin_contact_email,
-            "admin",
-            None,
+            admin.id,
         )
         extra = {
             "is_admin": True,
-            "email": email,
-            "display_name": settings.admin_display_name.strip() or None,
+            "id": str(admin.id),
+            "email": admin.email,
+            "display_name": admin.display_name,
         }
     else:
         raise HTTPException(401, "Invalid credentials")
@@ -356,6 +375,31 @@ async def logout(
         await revoke_session(session, raw)
     _clear_session_cookie(response)
     return {"status": "ok"}
+
+
+@api_router.get("/auth/oauth/start", response_model=None)
+async def oauth_web_start(remember: bool = False) -> Response:
+    """Begin browser OAuth against the configured external IdP."""
+    from memchentic.auth.oauth_browser import start_oauth_login
+
+    return await start_oauth_login(remember=remember)
+
+
+@api_router.get("/auth/oauth/callback", response_model=None)
+async def oauth_web_callback(
+    request: Request,
+    session: AsyncSession = Depends(db_session),
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+) -> Response:
+    """Finish browser OAuth: upsert user, set session cookie, redirect home."""
+    from memchentic.auth.oauth_browser import finish_oauth_login
+
+    return await finish_oauth_login(
+        request, session, code=code, state=state, error=error
+    )
+
 
 
 @api_router.get("/me")
@@ -815,3 +859,160 @@ async def revoke_key(
     except PermissionError as exc:
         raise HTTPException(403, str(exc)) from exc
     return {"status": "revoked"}
+
+
+class AuthGroupMemberIn(BaseModel):
+    user_id: str
+
+
+class AuthGroupIdpBindIn(BaseModel):
+    idp_group_id: str | None = None
+    idp_group_name: str | None = None
+
+
+class RegistrationSettingIn(BaseModel):
+    enabled: bool
+
+
+@api_router.get("/system/registration")
+async def get_registration_setting(
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(db_session),
+) -> dict[str, bool]:
+    """Admin: whether public self-registration is enabled."""
+    if not principal.is_admin:
+        raise HTTPException(403, "Administrators only")
+    return {"enabled": await instance_settings_service.get_register_enabled(session)}
+
+
+@api_router.put("/system/registration")
+async def put_registration_setting(
+    body: RegistrationSettingIn,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(db_session),
+) -> dict[str, bool]:
+    """Admin: enable or disable public self-registration."""
+    try:
+        enabled = await instance_settings_service.set_register_enabled(
+            session, principal, body.enabled
+        )
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    return {"enabled": enabled}
+
+
+@api_router.get("/auth-groups")
+async def list_auth_groups(
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(db_session),
+) -> list[dict[str, Any]]:
+    try:
+        return await auth_group_service.list_groups(session, principal)
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
+
+
+@api_router.get("/auth-groups/idp-groups")
+async def list_auth_idp_groups(
+    principal: Principal = Depends(get_principal),
+) -> dict[str, Any]:
+    """Admin: list IdP directory groups for the Bound IdP group dropdown."""
+    if not principal.is_admin:
+        raise HTTPException(403, "Administrators only")
+    from memchentic.auth.idp_groups import list_idp_groups
+
+    result = await list_idp_groups(get_settings())
+    return {
+        "provider": result.provider,
+        "supports_groups": result.supports_groups,
+        "groups": [{"id": g.id, "name": g.name} for g in result.groups],
+        "error": result.error,
+    }
+
+
+@api_router.get("/auth-groups/{slug}/idp-bind")
+async def get_auth_group_idp_bind(
+    slug: str,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(db_session),
+) -> dict[str, Any]:
+    try:
+        return await auth_group_service.get_idp_bind(session, principal, slug)
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@api_router.put("/auth-groups/{slug}/idp-bind")
+async def put_auth_group_idp_bind(
+    slug: str,
+    body: AuthGroupIdpBindIn,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(db_session),
+) -> dict[str, Any]:
+    try:
+        return await auth_group_service.set_idp_bind(
+            session,
+            principal,
+            slug,
+            idp_group_id=body.idp_group_id,
+            idp_group_name=body.idp_group_name,
+        )
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@api_router.get("/auth-groups/{slug}/members")
+async def list_auth_group_members(
+    slug: str,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(db_session),
+) -> list[dict[str, Any]]:
+    try:
+        return await auth_group_service.list_members(session, principal, slug)
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@api_router.post("/auth-groups/{slug}/members")
+async def add_auth_group_member(
+    slug: str,
+    body: AuthGroupMemberIn,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(db_session),
+) -> dict[str, Any]:
+    try:
+        return await auth_group_service.add_member(
+            session, principal, slug, uuid.UUID(body.user_id)
+        )
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@api_router.delete("/auth-groups/{slug}/members/{user_id}")
+async def remove_auth_group_member(
+    slug: str,
+    user_id: str,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(db_session),
+) -> dict[str, str]:
+    try:
+        await auth_group_service.remove_member(
+            session, principal, slug, uuid.UUID(user_id)
+        )
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"status": "removed"}

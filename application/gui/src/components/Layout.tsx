@@ -2,6 +2,7 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faBook,
   faChevronDown,
+  faGear,
   faKey,
   faRightFromBracket,
   faUsers,
@@ -52,10 +53,7 @@ function UserMenu() {
         onClick={() => setOpen((value) => !value)}
         type="button"
       >
-        <span className="user-menu-label truncate max-w-48">
-          {label}
-          {me?.is_admin ? " · admin" : ""}
-        </span>
+        <span className="user-menu-label truncate max-w-48">{label}</span>
         <FontAwesomeIcon
           icon={faChevronDown}
           className={`user-menu-chevron ${open ? "user-menu-chevron-open" : ""}`}
@@ -68,6 +66,17 @@ function UserMenu() {
           role="menu"
           aria-label="Account"
         >
+          {me?.is_admin ? (
+            <Link
+              className="user-menu-item"
+              role="menuitem"
+              to="/settings"
+              onClick={() => setOpen(false)}
+            >
+              <FontAwesomeIcon icon={faGear} className="opacity-70" />
+              System Settings
+            </Link>
+          ) : null}
           <Link
             className="user-menu-item"
             role="menuitem"

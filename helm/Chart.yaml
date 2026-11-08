@@ -3,4 +3,4 @@ name: memchentic
 description: memchentic — FastAPI + FastMCP + React SPA with optional pgvector Postgres
 type: application
 version: 0.1.0
-appVersion: "0.0.1"
+appVersion: "0.0.2"

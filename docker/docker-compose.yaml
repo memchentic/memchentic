@@ -1,10 +1,5 @@
 name: memchentic
 
-# Production-shaped stack: images and named volumes only (no source bind mounts).
-# Project name: memchentic (Compose `name:`).
-# Services: application (FastAPI + FastMCP + React SPA) + postgres.
-# Local bind mounts live in local.yaml (see COMPOSE_FILE in .env).
-
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -29,13 +24,10 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
     ports:
-      # One uvicorn serves GUI (/), API (/api), and MCP (/mcp). Separate host
-      # ports are optional publishes of that same listener for reverse proxies.
       - "${GUI_PORT:-18080}:8080"
       - "${API_PORT:-18081}:8080"
       - "${MCP_PORT:-18082}:8080"
     env_file: .env
-    # POSTGRES_* come from .env. MiniLM ONNX is baked into the image (no env switch).
     working_dir: /opt/memchentic
     depends_on:
       postgres:
@@ -48,5 +40,4 @@ services:
 
 volumes:
   postgres-data:
-    # Keep the pre-rename volume so local data survives the service rename.
     name: memchentic_db-data

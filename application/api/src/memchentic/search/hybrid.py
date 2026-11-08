@@ -1,14 +1,48 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import ColumnElement, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from memchentic.embeddings import get_embedder
-from memchentic.models.entities import Memory, MemoryKind
+from memchentic.models.entities import EntryType, Memory, MemoryKind
 from memchentic.settings import get_settings
+
+
+def memory_type_clause(tokens: Sequence[str] | None) -> ColumnElement[bool] | None:
+    """Build an OR filter for entry types and/or guides.
+
+    Args:
+        tokens: Entry-type values and/or ``guide``. Empty/None means no filter.
+
+    Returns:
+        SQLAlchemy clause, or None when unrestricted.
+    """
+    if not tokens:
+        return None
+    include_guide = "guide" in tokens
+    entry_names = [t for t in tokens if t != "guide"]
+    entry_enums: list[EntryType] = []
+    for name in entry_names:
+        try:
+            entry_enums.append(EntryType(name))
+        except ValueError as exc:
+            raise ValueError(f"unknown memory type: {name}") from exc
+    clauses: list[ColumnElement[bool]] = []
+    if include_guide:
+        clauses.append(Memory.kind == MemoryKind.guide)
+    if entry_enums:
+        clauses.append(
+            and_(Memory.kind == MemoryKind.entry, Memory.entry_type.in_(entry_enums))
+        )
+    if not clauses:
+        return None
+    if len(clauses) == 1:
+        return clauses[0]
+    return or_(*clauses)
 
 
 @dataclass
@@ -21,6 +55,7 @@ class Digest:
     tags: list[str]
     space: str
     kind: str
+    created_by: str | None = None
 
 
 def _snippet(body: str, limit: int = 180) -> str:
@@ -49,6 +84,7 @@ async def hybrid_search(
     space_ids: list[uuid.UUID] | None = None,
     kind: MemoryKind | None = None,
     entry_type: str | None = None,
+    type_tokens: Sequence[str] | None = None,
     tags: list[str] | None = None,
     tag_mode: str = "and",
     path_hint: str | None = None,
@@ -66,10 +102,15 @@ async def hybrid_search(
         if not space_ids:
             return []
         base_filters.append(Memory.space_id.in_(space_ids))
-    if kind is not None:
-        base_filters.append(Memory.kind == kind)
-    if entry_type:
-        base_filters.append(Memory.entry_type == entry_type)
+    if type_tokens is not None:
+        clause = memory_type_clause(type_tokens)
+        if clause is not None:
+            base_filters.append(clause)
+    else:
+        if kind is not None:
+            base_filters.append(Memory.kind == kind)
+        if entry_type:
+            base_filters.append(Memory.entry_type == entry_type)
     if path_hint:
         base_filters.append(Memory.path_hint.ilike(f"%{path_hint}%"))
     if repo_hint:
@@ -133,6 +174,7 @@ async def hybrid_search(
                 tags=list(m.tags or []),
                 space=str(m.space_id),
                 kind=m.kind.value,
+                created_by=str(m.created_by_user_id) if m.created_by_user_id else None,
             )
         )
     return digests

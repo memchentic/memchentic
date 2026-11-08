@@ -1,5 +1,10 @@
 import { getToken, refreshAccessToken } from "./api";
-import type { MemoryRow } from "./components/ui";
+import {
+  MEMORY_TYPE_TOKENS,
+  type MemoryRow,
+  type MemoryTypeToken,
+  type SpaceScope,
+} from "./components/ui";
 
 export type MemoryLiveEvent = {
   action: "created" | "updated" | "deleted";
@@ -11,9 +16,14 @@ export type MemoryLiveEvent = {
   tags: string[];
   snippet?: string;
   confidence?: number | null;
+  created_by?: string | null;
+  created_by_email?: string | null;
+  created_by_display_name?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 };
+
+export type MembershipLite = { id: string; kind: string };
 
 const SAFETY_POLL_MS = 30_000;
 
@@ -27,18 +37,41 @@ function eventToRow(event: MemoryLiveEvent): MemoryRow {
     tags: event.tags ?? [],
     snippet: event.snippet,
     confidence: event.confidence ?? undefined,
+    created_by: event.created_by,
+    created_by_email: event.created_by_email,
+    created_by_display_name: event.created_by_display_name,
     created_at: event.created_at,
     updated_at: event.updated_at,
   };
 }
 
+function eventTypeToken(event: MemoryLiveEvent): string {
+  return event.kind === "guide" ? "guide" : (event.type ?? "");
+}
+
 function matchesFilters(
   event: MemoryLiveEvent,
-  space: string,
-  kind: string,
+  opts: {
+    spaceScope: SpaceScope;
+    types: MemoryTypeToken[];
+    memberships: MembershipLite[];
+  },
 ): boolean {
-  if (space && event.space_id !== space) return false;
-  if (kind && event.kind !== kind) return false;
+  if (opts.spaceScope === "personal") {
+    const personal = opts.memberships.find((m) => m.kind === "personal");
+    if (!personal || event.space_id !== personal.id) return false;
+  } else if (opts.spaceScope === "group") {
+    const groupIds = new Set(
+      opts.memberships.filter((m) => m.kind === "group").map((m) => m.id),
+    );
+    if (!groupIds.has(event.space_id)) return false;
+  }
+
+  const unrestricted =
+    opts.types.length === 0 || opts.types.length === MEMORY_TYPE_TOKENS.length;
+  if (!unrestricted && !opts.types.includes(eventTypeToken(event) as MemoryTypeToken)) {
+    return false;
+  }
   return true;
 }
 
@@ -46,13 +79,19 @@ function matchesFilters(
 export function applyMemoryEvent(
   rows: MemoryRow[],
   event: MemoryLiveEvent,
-  opts: { space: string; kind: string; offset: number; pageSize: number },
+  opts: {
+    spaceScope: SpaceScope;
+    types: MemoryTypeToken[];
+    memberships: MembershipLite[];
+    offset: number;
+    pageSize: number;
+  },
 ): MemoryRow[] {
   if (event.action === "deleted") {
     return rows.filter((r) => r.id !== event.id);
   }
-  if (!matchesFilters(event, opts.space, opts.kind)) {
-    // Relocate / kind mismatch: drop the row if it no longer belongs in this view.
+  if (!matchesFilters(event, opts)) {
+    // Relocate / filter mismatch: drop the row if it no longer belongs in this view.
     return rows.filter((r) => r.id !== event.id);
   }
   const next = eventToRow(event);

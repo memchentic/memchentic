@@ -68,11 +68,23 @@ export default function EntryPage() {
           </>
         ) : (
           <>
-            <button className="btn" type="button" onClick={() => setEditing(true)}>
-              <FontAwesomeIcon icon={faPen} /> Revise
+            <button
+              className="btn"
+              type="button"
+              title="Revise"
+              aria-label="Revise"
+              onClick={() => setEditing(true)}
+            >
+              <FontAwesomeIcon icon={faPen} />
             </button>
-            <button className="btn" type="button" onClick={() => void forget()}>
-              <FontAwesomeIcon icon={faTrash} /> Forget
+            <button
+              className="btn"
+              type="button"
+              title="Forget"
+              aria-label="Forget"
+              onClick={() => void forget()}
+            >
+              <FontAwesomeIcon icon={faTrash} />
             </button>
           </>
         )}

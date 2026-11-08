@@ -268,14 +268,14 @@ body {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
-  /* Keep the centered .page from shifting when a page needs a scrollbar. */
+  /* Keep the full-width .page from shifting when a page needs a scrollbar. */
   scrollbar-gutter: stable;
 }
 
 .page {
   width: 100%;
-  max-width: 90rem;
-  margin-inline: auto;
+  max-width: none;
+  margin: 0;
   padding: 0;
   background: var(--color-surface);
   color: var(--color-ink);
@@ -473,24 +473,14 @@ select.input optgroup {
 }
 
 .toolbar-search {
-  position: relative;
   display: flex;
   min-width: min(100%, 18rem);
   flex: 1 1 18rem;
   align-items: center;
 }
 
-.toolbar-search-icon {
-  position: absolute;
-  left: 0.85rem;
-  z-index: 1;
-  color: var(--color-faint);
-  font-size: 0.8rem;
-  pointer-events: none;
-}
-
 .toolbar-search .input {
-  padding-left: 2.25rem;
+  width: 100%;
 }
 
 .toolbar-divider {
@@ -512,6 +502,90 @@ select.input optgroup {
   width: auto;
   min-width: 9.5rem;
   flex: 0 0 auto;
+}
+
+.filter-menu {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.filter-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 9.5rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.filter-menu-label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.filter-menu-chevron {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  opacity: 0.7;
+  transition: transform 160ms ease;
+}
+
+.filter-menu-chevron-open {
+  transform: rotate(180deg);
+}
+
+.filter-menu-panel {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  right: 0;
+  z-index: 40;
+  display: flex;
+  min-width: 11rem;
+  max-height: 18rem;
+  flex-direction: column;
+  gap: 0.125rem;
+  overflow: auto;
+  padding: 0.35rem;
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  box-shadow: 0 0.5rem 1.25rem color-mix(in oklab, black 35%, transparent);
+}
+
+.filter-menu-item {
+  display: inline-flex;
+  width: 100%;
+  min-height: var(--control-height);
+  align-items: center;
+  gap: 0.55rem;
+  border-radius: var(--radius-sm);
+  padding: 0.25rem 0.65rem;
+  color: var(--color-ink);
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-transform: none;
+  cursor: pointer;
+}
+
+.filter-menu-item:hover {
+  background: var(--color-surface-3);
+}
+
+.filter-menu-item input {
+  accent-color: var(--color-ink);
+}
+
+/* Reuse kind-chip-* hues as text color only (no chip chrome). */
+.type-tint[class*="kind-chip-"] {
+  border: none;
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+  font-weight: 500;
+  letter-spacing: inherit;
+  text-transform: none;
+  white-space: inherit;
 }
 
 .empty-state {
@@ -542,22 +616,33 @@ select.input optgroup {
 
 .memory-table th:nth-child(1),
 .memory-table td:nth-child(1) {
-  width: 55%;
+  width: 36%;
 }
 
 .memory-table th:nth-child(2),
 .memory-table td:nth-child(2) {
-  width: 8rem;
+  width: 7rem;
 }
 
 .memory-table th:nth-child(3),
 .memory-table td:nth-child(3) {
-  width: 8rem;
+  width: 26rem;
+  min-width: 22rem;
 }
 
 .memory-table th:nth-child(4),
 .memory-table td:nth-child(4) {
+  width: 8rem;
+}
+
+.memory-table th:nth-child(5),
+.memory-table td:nth-child(5) {
   width: 10rem;
+}
+
+.memory-table th:nth-child(6),
+.memory-table td:nth-child(6) {
+  width: 9rem;
 }
 
 .memory-snippet {
@@ -577,7 +662,23 @@ select.input optgroup {
   flex-wrap: wrap;
   align-items: center;
   gap: 0.35rem;
-  margin-top: 0.55rem;
+  margin-top: 0;
+}
+
+.memory-tags-more {
+  color: var(--color-muted);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.memory-actions-col {
+  width: 3rem;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.memory-row-forget {
+  padding: 0.35rem 0.55rem;
 }
 
 .kind-chip {

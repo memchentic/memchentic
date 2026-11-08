@@ -126,6 +126,30 @@ def _dt(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value)
 
 
+async def _memory_out(
+    session: AsyncSession, memory: Any, *, full: bool = False
+) -> dict:
+    """Serialize a memory and attach creator email / display name."""
+    rows = await memory_service.enrich_creator_fields(
+        session, [memory_service.memory_to_dict(memory, full=full)]
+    )
+    return rows[0]
+
+
+async def _memories_out(session: AsyncSession, memories: list[Any]) -> list[dict]:
+    """Serialize memories and attach creator email / display name."""
+    return await memory_service.enrich_creator_fields(
+        session, [memory_service.memory_to_dict(m) for m in memories]
+    )
+
+
+async def _digests_out(session: AsyncSession, digests: list[Any]) -> list[dict]:
+    """Serialize digests and attach creator email / display name."""
+    return await memory_service.enrich_creator_fields(
+        session, [memory_service.digest_to_dict(d) for d in digests]
+    )
+
+
 @api_router.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok", "service": "memchentic"}
@@ -538,47 +562,72 @@ async def remove_member(
     return {"status": "ok"}
 
 
+def _parse_types(raw: str | None) -> list[str] | None:
+    """Split a comma-separated ``types`` query into tokens."""
+    if raw is None:
+        return None
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
 @api_router.get("/memories")
 async def browse_memories(
     space_id: str | None = None,
+    space_scope: str | None = None,
     kind: str | None = None,
     type: str | None = None,
+    types: str | None = None,
     limit: int | None = None,
     offset: int = 0,
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> list[dict]:
-    rows = await memory_service.browse(
-        session,
-        principal,
-        space_id=_uid(space_id),
-        kind=kind,
-        entry_type=type,
-        limit=limit,
-        offset=offset,
-    )
-    return [memory_service.memory_to_dict(m) for m in rows]
+    try:
+        rows = await memory_service.browse(
+            session,
+            principal,
+            space_id=_uid(space_id),
+            space_scope=space_scope,
+            kind=kind,
+            entry_type=type,
+            types=_parse_types(types),
+            limit=limit,
+            offset=offset,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return await _memories_out(session, rows)
 
 
 @api_router.get("/memories/search")
 async def search_memories(
     q: str,
     space_id: str | None = None,
+    space_scope: str | None = None,
     type: str | None = None,
-    kind: str = "entry",
+    types: str | None = None,
+    kind: str | None = None,
     limit: int | None = None,
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> list[dict]:
-    if kind == "guide":
-        digests = await memory_service.guide_find(
-            session, principal, query=q, space_id=_uid(space_id), limit=limit
+    type_tokens = _parse_types(types)
+    # Preserve prior default: entry-only search when no types filter is given.
+    legacy_kind = kind if kind is not None else ("entry" if type_tokens is None else None)
+    try:
+        digests = await memory_service.search(
+            session,
+            principal,
+            query=q,
+            space_id=_uid(space_id),
+            space_scope=space_scope,
+            kind=legacy_kind,
+            entry_type=type,
+            types=type_tokens,
+            limit=limit,
         )
-    else:
-        digests = await memory_service.find(
-            session, principal, query=q, space_id=_uid(space_id), entry_type=type, limit=limit
-        )
-    return [memory_service.digest_to_dict(d) for d in digests]
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return await _digests_out(session, digests)
 
 
 @api_router.post("/memories")
@@ -609,7 +658,7 @@ async def create_memory(
         raise HTTPException(409, str(exc)) from exc
     except PermissionError as exc:
         raise HTTPException(403, str(exc)) from exc
-    return memory_service.memory_to_dict(memory, full=True)
+    return await _memory_out(session, memory, full=True)
 
 
 @api_router.get("/memories/{memory_id}")
@@ -623,7 +672,7 @@ async def get_memory(
     )
     if not memory:
         raise HTTPException(404, "Not found")
-    return memory_service.memory_to_dict(memory, full=True)
+    return await _memory_out(session, memory, full=True)
 
 
 @api_router.patch("/memories/{memory_id}")
@@ -649,7 +698,7 @@ async def patch_memory(
         )
     except PermissionError as exc:
         raise HTTPException(403, str(exc)) from exc
-    return memory_service.memory_to_dict(memory, full=True)
+    return await _memory_out(session, memory, full=True)
 
 
 @api_router.delete("/memories/{memory_id}")
@@ -686,7 +735,7 @@ async def create_guide(
         raise HTTPException(422, str(exc)) from exc
     except PermissionError as exc:
         raise HTTPException(403, str(exc)) from exc
-    return memory_service.memory_to_dict(memory, full=True)
+    return await _memory_out(session, memory, full=True)
 
 
 @api_router.get("/api-keys")

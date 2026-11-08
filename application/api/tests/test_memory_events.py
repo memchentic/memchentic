@@ -61,6 +61,7 @@ def test_create_memory_fans_out_local_subscribers(client: TestClient) -> None:
         assert found["action"] == "created"
         assert found["title"] == title
         assert found.get("created_at")
+        assert found.get("created_by") == create.json()["created_by"]
     finally:
         _subscribers.discard(queue)
 

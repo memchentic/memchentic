@@ -8,53 +8,85 @@ import {
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
+import { useAuth } from "../auth";
 import {
   ENTRY_TYPES,
   ErrorNote,
+  MEMORY_TYPE_TOKENS,
   MemoryList,
   NewToggleButton,
   PageHeader,
+  SpaceScopeSelect,
   SpaceSelect,
+  TypeFilterMenu,
   type MemoryRow,
+  type MemoryTypeToken,
+  type SpaceScope,
 } from "../components/ui";
 import { applyMemoryEvent, startMemoryLive } from "../liveMemories";
 
 const PAGE = 25;
 
+function typesQuery(selected: MemoryTypeToken[]): string | null {
+  if (selected.length === 0 || selected.length === MEMORY_TYPE_TOKENS.length) {
+    return null;
+  }
+  return selected.join(",");
+}
+
 export default function MemoriesPage() {
+  const { me } = useAuth();
   const [params, setParams] = useSearchParams();
   const q = (params.get("q") ?? "").trim();
   const [draft, setDraft] = useState(params.get("q") ?? "");
-  const [space, setSpace] = useState("");
-  const [kind, setKind] = useState("");
+  const [spaceScope, setSpaceScope] = useState<SpaceScope>("");
+  const [types, setTypes] = useState<MemoryTypeToken[]>([...MEMORY_TYPE_TOKENS]);
   const [offset, setOffset] = useState(0);
   const [rows, setRows] = useState<MemoryRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const searching = q.length > 0;
   const loadRef = useRef<() => Promise<void>>(async () => {});
-  const viewRef = useRef({ searching, space, kind, offset });
+  const viewRef = useRef({
+    searching,
+    spaceScope,
+    types,
+    offset,
+    memberships: me?.memberships ?? [],
+  });
 
   const load = useCallback(async () => {
     try {
+      const typeFilter = typesQuery(types);
       if (searching) {
-        const qs = new URLSearchParams({ q, kind: kind || "entry" });
-        if (space) qs.set("space_id", space);
+        const qs = new URLSearchParams({ q });
+        if (spaceScope) qs.set("space_scope", spaceScope);
+        if (typeFilter) qs.set("types", typeFilter);
+        else qs.set("types", MEMORY_TYPE_TOKENS.join(","));
         setRows(await api<MemoryRow[]>(`/api/memories/search?${qs}`));
       } else {
-        const listParams = new URLSearchParams({ limit: String(PAGE), offset: String(offset) });
-        if (space) listParams.set("space_id", space);
-        if (kind) listParams.set("kind", kind);
+        const listParams = new URLSearchParams({
+          limit: String(PAGE),
+          offset: String(offset),
+        });
+        if (spaceScope) listParams.set("space_scope", spaceScope);
+        if (typeFilter) listParams.set("types", typeFilter);
         setRows(await api<MemoryRow[]>(`/api/memories?${listParams}`));
       }
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [searching, q, space, kind, offset]);
+  }, [searching, q, spaceScope, types, offset]);
 
   loadRef.current = load;
-  viewRef.current = { searching, space, kind, offset };
+  viewRef.current = {
+    searching,
+    spaceScope,
+    types,
+    offset,
+    memberships: me?.memberships ?? [],
+  };
 
   useEffect(() => {
     void load();
@@ -70,8 +102,9 @@ export default function MemoriesPage() {
         }
         setRows((prev) =>
           applyMemoryEvent(prev, event, {
-            space: view.space,
-            kind: view.kind,
+            spaceScope: view.spaceScope,
+            types: view.types,
+            memberships: view.memberships,
             offset: view.offset,
             pageSize: PAGE,
           }),
@@ -104,6 +137,13 @@ export default function MemoriesPage() {
   const rangeStart = searching ? 1 : offset + 1;
   const rangeEnd = searching ? rows.length : offset + rows.length;
 
+  const defaultWriteSpace =
+    spaceScope === "group"
+      ? (me?.memberships.find((s) => s.kind === "group")?.id ?? "")
+      : (me?.memberships.find((s) => s.kind === "personal")?.id ??
+        me?.memberships[0]?.id ??
+        "");
+
   return (
     <div>
       <PageHeader title="Memories">
@@ -114,7 +154,6 @@ export default function MemoriesPage() {
       <div className="page-body">
         <form className="toolbar" onSubmit={submitSearch}>
           <div className="toolbar-search">
-            <FontAwesomeIcon icon={faMagnifyingGlass} className="toolbar-search-icon" />
             <input
               className="input"
               placeholder="Search memories"
@@ -123,8 +162,8 @@ export default function MemoriesPage() {
               aria-label="Search memories"
             />
           </div>
-          <button className="btn" type="submit">
-            Find
+          <button className="btn" type="submit" aria-label="Find" title="Find">
+            <FontAwesomeIcon icon={faMagnifyingGlass} />
           </button>
           {searching && (
             <button className="btn" type="button" onClick={clearSearch}>
@@ -132,26 +171,20 @@ export default function MemoriesPage() {
             </button>
           )}
           <div className="toolbar-divider" aria-hidden="true" />
-          <SpaceSelect
-            value={space}
+          <SpaceScopeSelect
+            value={spaceScope}
             onChange={(v) => {
-              setSpace(v);
+              setSpaceScope(v);
               setOffset(0);
             }}
           />
-          <select
-            className="input w-auto"
-            value={kind}
-            onChange={(e) => {
-              setKind(e.target.value);
+          <TypeFilterMenu
+            selected={types}
+            onChange={(next) => {
+              setTypes(next);
               setOffset(0);
             }}
-            aria-label="Memory kind"
-          >
-            <option value="">Entries + guides</option>
-            <option value="entry">Entries</option>
-            <option value="guide">Guides</option>
-          </select>
+          />
         </form>
 
         {searching && (
@@ -164,7 +197,7 @@ export default function MemoriesPage() {
 
         {!searching && showNew && (
           <NewMemory
-            defaultSpace={space}
+            defaultSpace={defaultWriteSpace}
             onCreated={() => {
               setShowNew(false);
               void load();
@@ -173,7 +206,11 @@ export default function MemoriesPage() {
           />
         )}
 
-        <MemoryList rows={rows} empty={searching ? "No matches." : "Nothing here yet."} />
+        <MemoryList
+          rows={rows}
+          empty={searching ? "No matches." : "Nothing here yet."}
+          onDeleted={(id) => setRows((prev) => prev.filter((row) => row.id !== id))}
+        />
 
         {!searching && (
           <div className="pager">
@@ -231,7 +268,10 @@ function NewMemory({
       if (kind === "guide") {
         await api("/api/guides", { method: "POST", body: JSON.stringify(payload) });
       } else {
-        await api("/api/memories", { method: "POST", body: JSON.stringify({ ...payload, type, force }) });
+        await api("/api/memories", {
+          method: "POST",
+          body: JSON.stringify({ ...payload, type, force }),
+        });
       }
       onCreated();
     } catch (err) {
@@ -251,7 +291,11 @@ function NewMemory({
       <div className="composer-grid">
         <label className="field">
           <span>Kind</span>
-          <select className="input" value={kind} onChange={(e) => setKind(e.target.value as "entry" | "guide")}>
+          <select
+            className="input"
+            value={kind}
+            onChange={(e) => setKind(e.target.value as "entry" | "guide")}
+          >
             <option value="entry">Entry</option>
             <option value="guide">Guide</option>
           </select>
@@ -272,11 +316,21 @@ function NewMemory({
         </label>
         <label className="field field-span">
           <span>Title</span>
-          <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} required />
+          <input
+            className="input"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            required
+          />
         </label>
         <label className="field field-span">
           <span>Body</span>
-          <textarea className="input min-h-28" value={body} onChange={(e) => setBody(e.target.value)} required />
+          <textarea
+            className="input min-h-28"
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            required
+          />
         </label>
         <label className="field field-span">
           <span>Tags</span>

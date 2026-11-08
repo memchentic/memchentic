@@ -48,6 +48,7 @@ class MemoryEvent:
         tags: Tag list.
         snippet: Short body preview (empty on delete).
         confidence: Guide confidence when present.
+        created_by: Creator user UUID string when known.
         created_at: ISO timestamp when known.
         updated_at: ISO timestamp when known.
     """
@@ -61,6 +62,7 @@ class MemoryEvent:
     tags: list[str]
     snippet: str = ""
     confidence: float | None = None
+    created_by: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
 
@@ -90,6 +92,7 @@ def memory_event_from_row(action: Action, memory: Memory) -> MemoryEvent:
         tags=list(memory.tags or []),
         snippet=body[:180] + ("…" if len(body) > 180 else ""),
         confidence=float(memory.confidence) if memory.confidence is not None else None,
+        created_by=str(memory.created_by_user_id) if memory.created_by_user_id else None,
         created_at=memory.created_at.isoformat() if memory.created_at else None,
         updated_at=memory.updated_at.isoformat() if memory.updated_at else None,
     )

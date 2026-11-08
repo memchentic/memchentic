@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -10,8 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from memchentic.auth.principal import Principal
 from memchentic.embeddings import get_embedder
 from memchentic.events import memory_event_from_row, publish_memory_event
-from memchentic.models.entities import EntryType, Memory, MemoryKind
-from memchentic.search.hybrid import Digest, hybrid_search
+from memchentic.models.entities import EntryType, Memory, MemoryKind, SpaceKind, User
+from memchentic.search.hybrid import Digest, hybrid_search, memory_type_clause
 from memchentic.services.spaces import Visibility, list_spaces, resolve_write_space, show_space
 from memchentic.settings import get_settings
 
@@ -28,6 +29,7 @@ def memory_to_dict(m: Memory, *, full: bool = False) -> dict[str, Any]:
         "repo_hint": m.repo_hint,
         "expires_at": m.expires_at.isoformat() if m.expires_at else None,
         "confidence": m.confidence,
+        "created_by": str(m.created_by_user_id) if m.created_by_user_id else None,
         "created_at": m.created_at.isoformat() if m.created_at else None,
         "updated_at": m.updated_at.isoformat() if m.updated_at else None,
         "provenance": m.provenance or {},
@@ -50,18 +52,61 @@ def digest_to_dict(d: Digest) -> dict[str, Any]:
         "tags": d.tags,
         "space": d.space,
         "kind": d.kind,
+        "created_by": d.created_by,
     }
 
 
+async def enrich_creator_fields(
+    session: AsyncSession, rows: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Attach ``created_by_email`` / ``created_by_display_name`` from users.
+
+    Args:
+        session: DB session.
+        rows: Memory or digest dicts that may include ``created_by``.
+
+    Returns:
+        The same list, mutated in place with creator label fields.
+    """
+    raw_ids: set[uuid.UUID] = set()
+    for row in rows:
+        cid = row.get("created_by")
+        if not cid:
+            continue
+        try:
+            raw_ids.add(uuid.UUID(str(cid)))
+        except ValueError:
+            continue
+    by_id: dict[str, User] = {}
+    if raw_ids:
+        result = await session.execute(select(User).where(User.id.in_(raw_ids)))
+        by_id = {str(u.id): u for u in result.scalars().all()}
+    for row in rows:
+        user = by_id.get(str(row.get("created_by") or ""))
+        row["created_by_email"] = user.email if user else None
+        row["created_by_display_name"] = user.display_name if user else None
+    return rows
+
+
+def _creator_id(m: Memory) -> str | None:
+    return str(m.created_by_user_id) if m.created_by_user_id else None
+
+
 async def accessible_space_ids(
-    session: AsyncSession, principal: Principal, space_id: uuid.UUID | None
+    session: AsyncSession,
+    principal: Principal,
+    space_id: uuid.UUID | None,
+    *,
+    space_scope: str | None = None,
 ) -> list[uuid.UUID]:
-    """Return space ids the principal may read (optionally narrowed to one).
+    """Return space ids the principal may read (optionally narrowed).
 
     Args:
         session: Database session.
         principal: Authenticated caller.
         space_id: When set, return that id only if readable; else all readable.
+        space_scope: Optional ``personal`` or ``group`` filter when ``space_id``
+            is unset. Ignored when ``space_id`` is set.
 
     Returns:
         Zero or more space UUIDs.
@@ -70,13 +115,45 @@ async def accessible_space_ids(
         space = await show_space(session, principal, space_id)
         return [space.id] if space else []
     spaces = await list_spaces(session, principal)
+    if space_scope:
+        kind = SpaceKind(space_scope)
+        spaces = [s for s in spaces if s.kind == kind]
     return [s.id for s in spaces]
 
 
 async def _accessible_space_ids(
-    session: AsyncSession, principal: Principal, space_id: uuid.UUID | None
+    session: AsyncSession,
+    principal: Principal,
+    space_id: uuid.UUID | None,
+    *,
+    space_scope: str | None = None,
 ) -> list[uuid.UUID]:
-    return await accessible_space_ids(session, principal, space_id)
+    return await accessible_space_ids(
+        session, principal, space_id, space_scope=space_scope
+    )
+
+
+def resolve_type_tokens(
+    *,
+    types: Sequence[str] | None = None,
+    kind: str | None = None,
+    entry_type: str | None = None,
+) -> list[str] | None:
+    """Normalize type filters to tokens (entry types and/or ``guide``).
+
+    Explicit ``types`` wins. Legacy ``kind`` / ``entry_type`` map to tokens.
+    None means no type restriction.
+    """
+    if types is not None:
+        tokens = [t.strip() for t in types if t and t.strip()]
+        return tokens or None
+    if kind == "guide":
+        return ["guide"]
+    if kind == "entry":
+        return [entry_type] if entry_type else [e.value for e in EntryType]
+    if entry_type:
+        return [entry_type]
+    return None
 
 
 async def find_near_duplicate(
@@ -266,20 +343,24 @@ async def browse(
     principal: Principal,
     *,
     space_id: uuid.UUID | None = None,
+    space_scope: str | None = None,
     kind: str | None = None,
     entry_type: str | None = None,
+    types: Sequence[str] | None = None,
     limit: int | None = None,
     offset: int = 0,
 ) -> list[Memory]:
-    space_ids = await _accessible_space_ids(session, principal, space_id)
+    space_ids = await _accessible_space_ids(
+        session, principal, space_id, space_scope=space_scope
+    )
     if not space_ids:
         return []
     limit = get_settings().resolve_browse_limit(limit)
     stmt = select(Memory).where(Memory.space_id.in_(space_ids))
-    if kind:
-        stmt = stmt.where(Memory.kind == MemoryKind(kind))
-    if entry_type:
-        stmt = stmt.where(Memory.entry_type == EntryType(entry_type))
+    tokens = resolve_type_tokens(types=types, kind=kind, entry_type=entry_type)
+    clause = memory_type_clause(tokens)
+    if clause is not None:
+        stmt = stmt.where(clause)
     stmt = stmt.order_by(Memory.updated_at.desc()).limit(limit).offset(offset)
     return list((await session.execute(stmt)).scalars())
 
@@ -314,6 +395,7 @@ async def since(
             tags=list(m.tags or []),
             space=str(m.space_id),
             kind=m.kind.value,
+            created_by=_creator_id(m),
         )
         for m in rows
     ]
@@ -349,6 +431,7 @@ async def by_tag(
             tags=list(m.tags or []),
             space=str(m.space_id),
             kind=m.kind.value,
+            created_by=_creator_id(m),
         )
         for m in rows
     ]
@@ -380,24 +463,81 @@ async def find(
     *,
     query: str,
     space_id: uuid.UUID | None = None,
+    space_scope: str | None = None,
     entry_type: str | None = None,
+    types: Sequence[str] | None = None,
     tags: list[str] | None = None,
     path_hint: str | None = None,
     repo_hint: str | None = None,
     limit: int | None = None,
 ) -> list[Digest]:
-    space_ids = await _accessible_space_ids(session, principal, space_id)
+    space_ids = await _accessible_space_ids(
+        session, principal, space_id, space_scope=space_scope
+    )
+    tokens = resolve_type_tokens(
+        types=types, kind="entry" if types is None else None, entry_type=entry_type
+    )
     return await hybrid_search(
         session,
         query=query,
         space_ids=space_ids,
-        kind=MemoryKind.entry,
-        entry_type=entry_type,
+        type_tokens=tokens,
         tags=tags,
         path_hint=path_hint,
         repo_hint=repo_hint,
         limit=limit,
     )
+
+
+async def search(
+    session: AsyncSession,
+    principal: Principal,
+    *,
+    query: str,
+    space_id: uuid.UUID | None = None,
+    space_scope: str | None = None,
+    kind: str | None = None,
+    entry_type: str | None = None,
+    types: Sequence[str] | None = None,
+    limit: int | None = None,
+) -> list[Digest]:
+    """Hybrid search across entries and/or guides for the GUI/REST surface."""
+    space_ids = await _accessible_space_ids(
+        session, principal, space_id, space_scope=space_scope
+    )
+    tokens = resolve_type_tokens(types=types, kind=kind, entry_type=entry_type)
+    if tokens is None and kind is None and entry_type is None:
+        # Default REST search historically searched entries only.
+        tokens = [e.value for e in EntryType]
+    digests = await hybrid_search(
+        session,
+        query=query,
+        space_ids=space_ids,
+        type_tokens=tokens,
+        limit=limit,
+    )
+    if tokens == ["guide"]:
+        return await _boost_guide_scores(session, digests)
+    return digests
+
+
+async def _boost_guide_scores(
+    session: AsyncSession, digests: list[Digest]
+) -> list[Digest]:
+    """Re-rank guide digests by confidence (same formula as ``guide_find``)."""
+    if not digests:
+        return digests
+    ids = [uuid.UUID(d.id) for d in digests]
+    rows = {
+        m.id: m
+        for m in (await session.execute(select(Memory).where(Memory.id.in_(ids)))).scalars()
+    }
+    for d in digests:
+        m = rows.get(uuid.UUID(d.id))
+        if m:
+            d.score = round(d.score * (1.0 + 0.1 * float(m.confidence or 1.0)), 6)
+    digests.sort(key=lambda x: x.score, reverse=True)
+    return digests
 
 
 async def guide_write(
@@ -458,30 +598,19 @@ async def guide_find(
     *,
     query: str,
     space_id: uuid.UUID | None = None,
+    space_scope: str | None = None,
     limit: int | None = None,
 ) -> list[Digest]:
     digests = await hybrid_search(
         session,
         query=query,
-        space_ids=await _accessible_space_ids(session, principal, space_id),
+        space_ids=await _accessible_space_ids(
+            session, principal, space_id, space_scope=space_scope
+        ),
         kind=MemoryKind.guide,
         limit=limit,
     )
-    # Boost by confidence × recency is partly handled by storing confidence;
-    # re-rank lightly by loading confidence.
-    if not digests:
-        return digests
-    ids = [uuid.UUID(d.id) for d in digests]
-    rows = {
-        m.id: m
-        for m in (await session.execute(select(Memory).where(Memory.id.in_(ids)))).scalars()
-    }
-    for d in digests:
-        m = rows.get(uuid.UUID(d.id))
-        if m:
-            d.score = round(d.score * (1.0 + 0.1 * float(m.confidence or 1.0)), 6)
-    digests.sort(key=lambda x: x.score, reverse=True)
-    return digests
+    return await _boost_guide_scores(session, digests)
 
 
 async def about_path(
@@ -514,6 +643,7 @@ async def about_path(
             tags=list(m.tags or []),
             space=str(m.space_id),
             kind=m.kind.value,
+            created_by=_creator_id(m),
         )
         for m in rows
     ]

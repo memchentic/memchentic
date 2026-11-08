@@ -3,7 +3,7 @@
 Deploys the single application image (FastAPI + FastMCP + React SPA) and
 optional in-cluster pgvector Postgres.
 
-Image default: `ghcr.io/memchentic/memchentic:0.0.2` (org package).
+Image default: `ghcr.io/memchentic/memchentic:0.0.4` (org package).
 
 ## Install
 

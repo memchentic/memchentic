@@ -6,14 +6,23 @@ name: Publish App Image
 # Layout (Y-split, archentic-style):
 #   plan → build_amd64 ┐
 #        → build_arm64 ┴→ manifest
-# Native GitHub-hosted runners per arch (no QEMU). Per-arch refs
-# (X.Y.Z-amd64 / X.Y.Z-arm64) exist only so the manifest job can stitch the
-# published semver. Choose increment=Major|Minor|Patch to bump from existing
-# GHCR tags (no tags yet: Major → 1.0.0, Minor → 0.1.0, Patch → 0.0.1).
+# Runner pool is a workflow_dispatch choice: self-hosted (homelab labels) or
+# github (ubuntu-24.04 / ubuntu-24.04-arm). Per-arch refs (X.Y.Z-amd64 /
+# X.Y.Z-arm64) exist only so the manifest job can stitch the published semver.
+# Choose increment=Major|Minor|Patch to bump from existing GHCR tags (no tags
+# yet: Major → 1.0.0, Minor → 0.1.0, Patch → 0.0.1).
 
 on:
   workflow_dispatch:
     inputs:
+      runner:
+        description: Runner pool
+        required: true
+        type: choice
+        default: github
+        options:
+          - github
+          - self-hosted
       platforms:
         description: Architectures to build
         required: true
@@ -49,7 +58,7 @@ env:
 jobs:
   plan:
     name: Plan publish targets
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(github.event.inputs.runner == 'self-hosted' && '["self-hosted","linux","memchentic","build"]' || '["ubuntu-24.04"]') }}
     timeout-minutes: 5
     outputs:
       build_amd64: ${{ steps.plan.outputs.build_amd64 }}
@@ -62,6 +71,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           OWNER_TYPE: ${{ github.repository.owner.type }}
+          SELECTED_RUNNER: ${{ github.event.inputs.runner }}
           SELECTED_PLATFORMS: ${{ github.event.inputs.platforms }}
           INCREMENT: ${{ github.event.inputs.increment }}
           PACKAGE: ${{ env.PACKAGE_NAME }}
@@ -190,12 +200,13 @@ jobs:
           echo "### Publish plan" >> "$GITHUB_STEP_SUMMARY"
           echo "- Package: \`${PACKAGE}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Version: \`${version}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Runner: \`${SELECTED_RUNNER}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Platforms: \`${SELECTED_PLATFORMS}\` (arches: \`${selected_arches_csv}\`)" >> "$GITHUB_STEP_SUMMARY"
 
   build_amd64:
     needs: plan
     if: needs.plan.outputs.build_amd64 == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(github.event.inputs.runner == 'self-hosted' && '["self-hosted","linux","memchentic","amd64","build"]' || '["ubuntu-24.04"]') }}
     timeout-minutes: 120
     concurrency:
       group: publish-app-image-amd64
@@ -237,7 +248,7 @@ jobs:
   build_arm64:
     needs: plan
     if: needs.plan.outputs.build_arm64 == 'true'
-    runs-on: ubuntu-24.04-arm
+    runs-on: ${{ fromJSON(github.event.inputs.runner == 'self-hosted' && '["self-hosted","linux","memchentic","ARM64","build"]' || '["ubuntu-24.04-arm"]') }}
     timeout-minutes: 120
     concurrency:
       group: publish-app-image-arm64
@@ -286,7 +297,7 @@ jobs:
       needs.plan.result == 'success' &&
       (needs.plan.outputs.build_amd64 != 'true' || needs.build_amd64.result == 'success') &&
       (needs.plan.outputs.build_arm64 != 'true' || needs.build_arm64.result == 'success')
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(github.event.inputs.runner == 'self-hosted' && '["self-hosted","linux","memchentic","build"]' || '["ubuntu-24.04"]') }}
     timeout-minutes: 15
     concurrency:
       group: publish-app-image-manifest

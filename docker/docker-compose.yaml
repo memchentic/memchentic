@@ -28,7 +28,6 @@ services:
       - "${API_PORT:-18081}:8080"
       - "${MCP_PORT:-18082}:8080"
     env_file: .env
-    working_dir: /opt/memchentic
     depends_on:
       postgres:
         condition: service_healthy

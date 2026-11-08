@@ -355,3 +355,23 @@ jobs:
           echo "- \`${image_base}:${VERSION}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- \`${image_base}:latest\` (moved to this release)" >> "$GITHUB_STEP_SUMMARY"
           echo "- Arch refs: \`${refs[*]}\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Mirror multi-arch tag to Zot
+        env:
+          ZOT_REGISTRY: registry.memchentic.ai
+          ZOT_USERNAME: ${{ secrets.ZOT_USERNAME }}
+          ZOT_PASSWORD: ${{ secrets.ZOT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${ZOT_PASSWORD}" | docker login "${ZOT_REGISTRY}" --username "${ZOT_USERNAME}" --password-stdin
+
+          owner="$(printf '%s' "${GHCR_NAMESPACE}" | tr '[:upper:]' '[:lower:]')"
+          source_ref="${REGISTRY}/${owner}/${PACKAGE_NAME}:${VERSION}"
+          zot_base="${ZOT_REGISTRY}/${owner}/${PACKAGE_NAME}"
+
+          docker buildx imagetools create \
+            --tag "${zot_base}:${VERSION}" \
+            --tag "${zot_base}:latest" \
+            "${source_ref}"
+
+          echo "- \`${zot_base}:${VERSION}\` (Zot, preferred)" >> "$GITHUB_STEP_SUMMARY"

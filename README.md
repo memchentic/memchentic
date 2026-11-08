@@ -62,7 +62,8 @@ your MCP client at `http://<host>:18080/mcp`.
 
 Import this GitHub repo as a marketplace and install **memchentic**, then keep
 the MCP connected so recall and capture run on their own. Plugin details live
-under `marketplace/`; user docs under `docs/sphinx/`.
+under `marketplace/`; user docs under [`docs/`](https://github.com/memchentic/docs)
+(`docs/sphinx/`).
 
 ## License
 

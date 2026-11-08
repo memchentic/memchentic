@@ -59,11 +59,23 @@ export default function EntryPage() {
       <PageHeader title={editing ? "Revise" : m.title}>
         {editing ? (
           <>
-            <button className="btn" type="button" onClick={() => void save()}>
-              <FontAwesomeIcon icon={faFloppyDisk} /> Save
+            <button
+              className="btn"
+              type="button"
+              title="Save"
+              aria-label="Save"
+              onClick={() => void save()}
+            >
+              <FontAwesomeIcon icon={faFloppyDisk} />
             </button>
-            <button className="btn" type="button" onClick={() => setEditing(false)}>
-              <FontAwesomeIcon icon={faXmark} /> Cancel
+            <button
+              className="btn"
+              type="button"
+              title="Cancel"
+              aria-label="Cancel"
+              onClick={() => setEditing(false)}
+            >
+              <FontAwesomeIcon icon={faXmark} />
             </button>
           </>
         ) : (

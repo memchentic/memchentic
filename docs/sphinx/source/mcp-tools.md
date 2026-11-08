@@ -1,4 +1,4 @@
-# MCP tools
+# MCP Tools
 
 Memchentic exposes **18** native MCP tools. REST routes share the same
 `memchentic.services` layer — no divergent logic. Short verbs, one job per

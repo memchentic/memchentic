@@ -24,11 +24,13 @@ from memchentic.auth.sessions import (
 from memchentic.auth.tokens import ACCESS_TOKEN_SECONDS, issue_access_token
 from memchentic.auth.users import (
     authenticate_internal,
+    delete_user,
     get_user,
     get_user_by_email,
     list_users,
     providers_for,
     register_internal_user,
+    user_delete_eligibility,
 )
 from memchentic.db.session import get_session_factory, set_rls_context
 from memchentic.deps import db_session, get_optional_principal, get_principal
@@ -462,6 +464,11 @@ async def users(
         if principal.is_admin:
             row["providers"] = providers_for(u)
             row["created_at"] = u.created_at.isoformat() if u.created_at else None
+            deletable, reason = await user_delete_eligibility(
+                session, actor_user_id=principal.user_id, target=u
+            )
+            row["deletable"] = deletable
+            row["delete_blocked_reason"] = reason
         out.append(row)
     return out
 
@@ -492,7 +499,36 @@ async def show_user(
     if principal.is_admin:
         out["providers"] = providers_for(user)
         out["created_at"] = user.created_at.isoformat() if user.created_at else None
+        deletable, reason = await user_delete_eligibility(
+            session, actor_user_id=principal.user_id, target=user
+        )
+        out["deletable"] = deletable
+        out["delete_blocked_reason"] = reason
     return out
+
+
+@api_router.delete("/users/{user_id}")
+async def remove_user(
+    user_id: str,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(db_session),
+) -> dict[str, str]:
+    """Admin hard-delete of a directory user (IdP-bound roster members refused)."""
+    if not principal.is_admin:
+        raise HTTPException(403, "Admin required")
+    try:
+        uid = uuid.UUID(user_id)
+    except ValueError as exc:
+        raise HTTPException(404, "Not found") from exc
+    try:
+        await delete_user(
+            session, actor_user_id=principal.user_id, target_user_id=uid
+        )
+    except LookupError as exc:
+        raise HTTPException(404, "Not found") from exc
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    return {"status": "ok"}
 
 
 @api_router.get("/spaces")

@@ -97,7 +97,7 @@ export default function GroupDetailPage() {
             <FontAwesomeIcon icon={faPen} />
           </button>
         )}
-        {group && isOwner && (
+        {group && canManage && (
           <button
             className="btn"
             type="button"

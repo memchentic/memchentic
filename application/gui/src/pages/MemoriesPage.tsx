@@ -2,6 +2,7 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faChevronLeft,
   faChevronRight,
+  faFloppyDisk,
   faMagnifyingGlass,
   faXmark,
 } from "@fortawesome/free-solid-svg-icons";
@@ -166,8 +167,14 @@ export default function MemoriesPage() {
             <FontAwesomeIcon icon={faMagnifyingGlass} />
           </button>
           {searching && (
-            <button className="btn" type="button" onClick={clearSearch}>
-              Clear
+            <button
+              className="btn"
+              type="button"
+              title="Clear"
+              aria-label="Clear"
+              onClick={clearSearch}
+            >
+              <FontAwesomeIcon icon={faXmark} />
             </button>
           )}
           <div className="toolbar-divider" aria-hidden="true" />
@@ -221,18 +228,22 @@ export default function MemoriesPage() {
               <button
                 className="btn"
                 type="button"
+                title="Previous"
+                aria-label="Previous"
                 disabled={offset === 0}
                 onClick={() => setOffset(Math.max(0, offset - PAGE))}
               >
-                <FontAwesomeIcon icon={faChevronLeft} /> Prev
+                <FontAwesomeIcon icon={faChevronLeft} />
               </button>
               <button
                 className="btn"
                 type="button"
+                title="Next"
+                aria-label="Next"
                 disabled={rows.length < PAGE}
                 onClick={() => setOffset(offset + PAGE)}
               >
-                Next <FontAwesomeIcon icon={faChevronRight} />
+                <FontAwesomeIcon icon={faChevronRight} />
               </button>
             </div>
           </div>
@@ -283,8 +294,14 @@ function NewMemory({
     <form className="panel composer mb-6" onSubmit={submit}>
       <div className="composer-header">
         <h3 className="composer-title">New memory</h3>
-        <button className="btn" type="button" onClick={onCancel}>
-          <FontAwesomeIcon icon={faXmark} /> Close
+        <button
+          className="btn"
+          type="button"
+          title="Close"
+          aria-label="Close"
+          onClick={onCancel}
+        >
+          <FontAwesomeIcon icon={faXmark} />
         </button>
       </div>
       <ErrorNote error={error} />
@@ -349,8 +366,13 @@ function NewMemory({
             Save even if a near-duplicate exists
           </label>
         )}
-        <button className="btn btn-primary ml-auto" type="submit">
-          Save
+        <button
+          className="btn btn-primary ml-auto"
+          type="submit"
+          title="Save"
+          aria-label="Save"
+        >
+          <FontAwesomeIcon icon={faFloppyDisk} />
         </button>
       </div>
     </form>

@@ -532,11 +532,37 @@ function AddAuthMembersModal({
           })}
         </ul>
         <div className="flex justify-end gap-2 border-t border-border px-4 py-3">
-          <button className="btn" type="button" onClick={onClose} disabled={busy}>
-            Cancel
+          <button
+            className="btn"
+            type="button"
+            onClick={onClose}
+            disabled={busy}
+            title="Cancel"
+            aria-label="Cancel"
+          >
+            <FontAwesomeIcon icon={faXmark} />
           </button>
-          <button className="btn btn-primary" type="button" onClick={() => void done()} disabled={busy}>
-            {busy ? "Adding…" : selected.size ? `Done (${selected.size})` : "Done"}
+          <button
+            className="btn btn-primary"
+            type="button"
+            onClick={() => void done()}
+            disabled={busy}
+            title={
+              busy
+                ? "Adding…"
+                : selected.size
+                  ? `Done (${selected.size})`
+                  : "Done"
+            }
+            aria-label={
+              busy
+                ? "Adding…"
+                : selected.size
+                  ? `Done (${selected.size})`
+                  : "Done"
+            }
+          >
+            <FontAwesomeIcon icon={faCheck} />
           </button>
         </div>
       </div>

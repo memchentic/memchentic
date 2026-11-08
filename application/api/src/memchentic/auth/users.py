@@ -379,3 +379,74 @@ async def list_users(session: AsyncSession) -> list[User]:
         .order_by(User.created_at.desc())
     )
     return list(result.scalars())
+
+
+async def user_delete_eligibility(
+    session: AsyncSession,
+    *,
+    actor_user_id: uuid.UUID | None,
+    target: User,
+    settings: Settings | None = None,
+) -> tuple[bool, str | None]:
+    """Whether an admin may hard-delete ``target``.
+
+    Args:
+        session: Database session.
+        actor_user_id: Calling admin's user id (self-delete check).
+        target: Directory user under consideration.
+        settings: Optional settings override.
+
+    Returns:
+        ``(deletable, reason)`` — reason is set when not deletable.
+    """
+    from memchentic.services.auth_groups import user_in_idp_bound_roster
+    from memchentic.settings import get_settings
+
+    settings = settings or get_settings()
+    if normalize_email(target.email) == normalize_email(settings.admin_contact_email):
+        return False, "Admin account cannot be deleted"
+    if actor_user_id and target.id == actor_user_id:
+        return False, "Cannot delete your own account"
+    if await user_in_idp_bound_roster(session, target.id):
+        return False, "User is managed by an IdP-bound auth group"
+    return True, None
+
+
+async def delete_user(
+    session: AsyncSession,
+    *,
+    actor_user_id: uuid.UUID | None,
+    target_user_id: uuid.UUID,
+    settings: Settings | None = None,
+) -> None:
+    """Hard-delete a directory user (admin). Removes their personal space first.
+
+    Args:
+        session: Database session.
+        actor_user_id: Calling admin's user id.
+        target_user_id: User to remove.
+        settings: Optional settings override.
+
+    Raises:
+        LookupError: Target user missing.
+        PermissionError: Env admin, self-delete, or IdP-bound roster member.
+    """
+    from memchentic.services.spaces import get_personal_space
+    from memchentic.settings import get_settings
+
+    settings = settings or get_settings()
+    user = await get_user(session, target_user_id)
+    if not user:
+        raise LookupError("User not found")
+    ok, reason = await user_delete_eligibility(
+        session, actor_user_id=actor_user_id, target=user, settings=settings
+    )
+    if not ok:
+        raise PermissionError(reason or "Cannot delete user")
+
+    personal = await get_personal_space(session, user.id)
+    if personal:
+        await session.delete(personal)
+        await session.flush()
+    await session.delete(user)
+    await session.commit()

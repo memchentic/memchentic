@@ -671,13 +671,15 @@ select.input optgroup {
   white-space: nowrap;
 }
 
-.memory-actions-col {
+.memory-actions-col,
+.table-actions-col {
   width: 3rem;
   text-align: right;
   white-space: nowrap;
 }
 
-.memory-row-forget {
+.memory-row-forget,
+.table-row-delete {
   padding: 0.35rem 0.55rem;
 }
 

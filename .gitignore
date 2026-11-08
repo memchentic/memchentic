@@ -54,12 +54,10 @@ docker-compose.override.yml
 node_modules/
 application/gui/dist/
 
-# Keep the README logo under docs/assets/ tracked.
-# Sphinx user site under docs/sphinx/ is tracked; ignore its build output.
-# Block accidental loose markdown at docs/ root (Sphinx is the docs surface).
-docs/*
-!docs/assets/
-!docs/assets/**
-!docs/sphinx/
-!docs/sphinx/**
-docs/sphinx/_build/
+# Nested docs repo (https://github.com/memchentic/docs). Content lives there;
+# this checkout keeps the working tree under docs/ for Compose overlay builds.
+docs/
+
+# Nested website repo (https://github.com/memchentic/website). Pitch site;
+# own git remote — not staged by the parent.
+website/

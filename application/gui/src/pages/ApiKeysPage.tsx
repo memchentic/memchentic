@@ -1,5 +1,5 @@
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faCopy, faRotate } from "@fortawesome/free-solid-svg-icons";
+import { faCheck, faCopy, faRotate } from "@fortawesome/free-solid-svg-icons";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
@@ -131,12 +131,20 @@ export default function ApiKeysPage() {
               <button
                 className="btn"
                 type="button"
+                title="Copy"
+                aria-label="Copy"
                 onClick={() => void navigator.clipboard?.writeText(secret.key)}
               >
-                <FontAwesomeIcon icon={faCopy} /> Copy
+                <FontAwesomeIcon icon={faCopy} />
               </button>
-              <button className="btn" type="button" onClick={() => setSecret(null)}>
-                Done
+              <button
+                className="btn"
+                type="button"
+                title="Done"
+                aria-label="Done"
+                onClick={() => setSecret(null)}
+              >
+                <FontAwesomeIcon icon={faCheck} />
               </button>
             </div>
           </div>
@@ -163,11 +171,12 @@ export default function ApiKeysPage() {
               <button
                 className="btn"
                 type="button"
+                title={ownKey ? "Cycle key" : "Generate key"}
+                aria-label={ownKey ? "Cycle key" : "Generate key"}
                 disabled={!me?.id || busyUserId === me?.id}
                 onClick={() => void cycle()}
               >
                 <FontAwesomeIcon icon={faRotate} />
-                {ownKey ? "Cycle key" : "Generate key"}
               </button>
             </div>
           </section>
@@ -210,11 +219,12 @@ export default function ApiKeysPage() {
                           <button
                             className="btn"
                             type="button"
+                            title={key ? "Cycle" : "Generate"}
+                            aria-label={key ? "Cycle" : "Generate"}
                             disabled={busyUserId === u.id}
                             onClick={() => void cycle(u.id)}
                           >
                             <FontAwesomeIcon icon={faRotate} />
-                            {key ? "Cycle" : "Generate"}
                           </button>
                         </td>
                       </tr>

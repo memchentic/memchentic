@@ -1,7 +1,9 @@
 # memchentic — agent guide
 
-User-facing docs live under `docs/sphinx/`. Original product: do not fork,
-wrap, or copy other memory servers' tool names.
+User-facing docs live under `docs/` (nested git repo
+`memchentic/docs`; Sphinx under `docs/sphinx/`). Product pitch site lives
+under `website/` (nested git repo `memchentic/website`). Original product:
+do not fork, wrap, or copy other memory servers' tool names.
 
 ## Layout
 
@@ -13,7 +15,8 @@ wrap, or copy other memory servers' tool names.
 | `application/mcp/` | FastMCP tools/context (`src/memchentic/mcp/`); image + local overlay merge into API `src/` |
 | `application/gui/` | React + Tailwind (greyscale dark) + Font Awesome |
 | `marketplace/` | In-repo agent plugin (`memchentic`); host catalogs at repo root |
-| `docs/sphinx/` | User-facing Sphinx (MyST) site; optional Compose overlay `docker/docs.yaml` |
+| `docs/` | Nested docs repo (`memchentic/docs`); Sphinx + docs image; Compose overlay `docker/docs.yaml` pulls `DOCS_IMAGE` |
+| `website/` | Nested pitch site (`memchentic/website`); Vite + React + Tailwind; GitHub Pages |
 
 Inside containers the code root is `/opt/memchentic` (API tree; MCP overlaid at
 `src/memchentic/mcp`). Compose project name is `memchentic`; services are
@@ -51,11 +54,13 @@ cd docker && COMPOSE_FILE=docker-compose.yaml docker compose up -d
 Optional Sphinx docs overlay (`docker/docs.yaml`, not in `.env.example`):
 
 ```bash
-cd docker && docker compose up -d --build docs
-# default DOCS_PORT=18099 — nginx serves built HTML
+cd docker && docker compose up -d docs
+# or --build docs while iterating on ../docs
+# default DOCS_PORT=18099 — image ghcr.io/memchentic/docs (override DOCS_IMAGE)
 ```
 
-Author user pages under `docs/sphinx/source/`.
+Author user pages under `docs/sphinx/source/` (commit/push in the nested
+`docs/` git repo; publish via that repo's **Publish Docs Image** workflow).
 
 ## Rules
 

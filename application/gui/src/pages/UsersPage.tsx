@@ -1,6 +1,6 @@
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faXmark } from "@fortawesome/free-solid-svg-icons";
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { faFloppyDisk, faTrash, faXmark } from "@fortawesome/free-solid-svg-icons";
+import { useCallback, useEffect, useState, type FormEvent, type MouseEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
@@ -12,6 +12,8 @@ type User = {
   display_name: string | null;
   providers?: string[];
   created_at?: string | null;
+  deletable?: boolean;
+  delete_blocked_reason?: string | null;
 };
 
 export default function UsersPage() {
@@ -40,6 +42,19 @@ export default function UsersPage() {
       .then((p) => setCanCreate(p.oauth_provider === "internal"))
       .catch(() => setCanCreate(false));
   }, []);
+
+  async function deleteUser(e: MouseEvent, user: User) {
+    e.stopPropagation();
+    const label = user.display_name?.trim() || user.email;
+    if (!confirm(`Delete ${label}? This cannot be undone.`)) return;
+    try {
+      await api(`/api/users/${user.id}`, { method: "DELETE" });
+      await load();
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
 
   return (
     <div>
@@ -75,6 +90,9 @@ export default function UsersPage() {
                   <>
                     <th>Providers</th>
                     <th>Joined</th>
+                    <th className="table-actions-col">
+                      <span className="sr-only">Actions</span>
+                    </th>
                   </>
                 )}
               </tr>
@@ -95,6 +113,30 @@ export default function UsersPage() {
                       </td>
                       <td className="text-faint">
                         {u.created_at ? new Date(u.created_at).toLocaleDateString() : "—"}
+                      </td>
+                      <td className="table-actions-col">
+                        {u.deletable ? (
+                          <button
+                            className="btn table-row-delete"
+                            type="button"
+                            title="Delete"
+                            aria-label={`Delete ${u.display_name?.trim() || u.email}`}
+                            onClick={(e) => void deleteUser(e, u)}
+                          >
+                            <FontAwesomeIcon icon={faTrash} />
+                          </button>
+                        ) : (
+                          <button
+                            className="btn table-row-delete"
+                            type="button"
+                            title={u.delete_blocked_reason || "Cannot delete"}
+                            aria-label={u.delete_blocked_reason || "Cannot delete"}
+                            disabled
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <FontAwesomeIcon icon={faTrash} />
+                          </button>
+                        )}
                       </td>
                     </>
                   )}
@@ -141,8 +183,14 @@ function NewUser({
     <form className="panel composer mb-6" onSubmit={submit}>
       <div className="composer-header">
         <h3 className="composer-title">New user</h3>
-        <button className="btn" type="button" onClick={onCancel}>
-          <FontAwesomeIcon icon={faXmark} /> Close
+        <button
+          className="btn"
+          type="button"
+          title="Close"
+          aria-label="Close"
+          onClick={onCancel}
+        >
+          <FontAwesomeIcon icon={faXmark} />
         </button>
       </div>
       <ErrorNote error={error} />
@@ -182,8 +230,13 @@ function NewUser({
         </label>
       </div>
       <div className="composer-footer">
-        <button className="btn btn-primary ml-auto" type="submit">
-          Save
+        <button
+          className="btn btn-primary ml-auto"
+          type="submit"
+          title="Save"
+          aria-label="Save"
+        >
+          <FontAwesomeIcon icon={faFloppyDisk} />
         </button>
       </div>
     </form>

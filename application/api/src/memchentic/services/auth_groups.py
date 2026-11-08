@@ -72,6 +72,33 @@ def _group_bound(group: AuthGroup) -> bool:
     return bool(group.idp_group_id and group.idp_group_id.strip())
 
 
+async def user_in_idp_bound_roster(
+    session: AsyncSession, user_id: uuid.UUID
+) -> bool:
+    """True when ``user_id`` is a member of any Auth Group with an IdP bind.
+
+    Used to refuse hard-delete of directory users that IdP sync owns.
+
+    Args:
+        session: Database session.
+        user_id: Target user id.
+
+    Returns:
+        Whether the user sits on a currently bound Administrators or Users roster.
+    """
+    result = await session.execute(
+        select(AuthGroup.id)
+        .join(AuthGroupMember, AuthGroupMember.group_id == AuthGroup.id)
+        .where(
+            AuthGroupMember.user_id == user_id,
+            AuthGroup.idp_group_id.is_not(None),
+            AuthGroup.idp_group_id != "",
+        )
+        .limit(1)
+    )
+    return result.scalar_one_or_none() is not None
+
+
 def _bind_matches(group: AuthGroup, idp_groups: Collection[str]) -> bool:
     if not _group_bound(group):
         return False

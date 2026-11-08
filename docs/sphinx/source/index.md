@@ -79,43 +79,33 @@ Enough for a reliable agent loop. Not a zoo of megatools.
 - **Original surface** — its own verbs and model, not a thin wrap of someone
   else's memory product
 
-Ready to try it? Start with {doc}`getting-started` — Compose or Helm for the
-server, then the marketplace plugin for your harness. Deeper pages cover
-{doc}`memory-types`, {doc}`mcp-tools`, deploy options, and the
+Ready to try it? Check {doc}`requirements`, then {doc}`docker` or
+{doc}`helm`, then {doc}`connect-mcp` and {doc}`install-marketplace`. Deeper
+pages cover {doc}`memory-types`, {doc}`groups`, {doc}`mcp-tools`, and the
 {doc}`marketplace` plugin.
 
 ```{toctree}
-:caption: Product
+:caption: Getting Started
 :maxdepth: 1
 :hidden:
 :titlesonly:
 
-getting-started
-```
-
-```{toctree}
-:caption: Deploy
-:maxdepth: 1
-:hidden:
-
-deploy-docker
-deploy-helm
+requirements
+docker
+helm
+environment-variables
+connect-mcp
+install-marketplace
 ```
 
 ```{toctree}
 :caption: Concepts
 :maxdepth: 1
 :hidden:
-
-memory-types
-mcp-tools
-```
-
-```{toctree}
-:caption: Marketplace
-:maxdepth: 1
-:hidden:
 :titlesonly:
 
+memory-types
+groups
+mcp-tools
 marketplace
 ```

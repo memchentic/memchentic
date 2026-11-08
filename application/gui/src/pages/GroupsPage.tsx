@@ -1,6 +1,6 @@
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faXmark } from "@fortawesome/free-solid-svg-icons";
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { faFloppyDisk, faTrash, faXmark } from "@fortawesome/free-solid-svg-icons";
+import { useCallback, useEffect, useState, type FormEvent, type MouseEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
@@ -40,6 +40,18 @@ export default function GroupsPage() {
     try {
       await fn();
       await Promise.all([load(), refresh()]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function deleteGroup(e: MouseEvent, group: SpaceDetail) {
+    e.stopPropagation();
+    if (!confirm(`Delete ${group.name}? This removes the group and its memories.`)) return;
+    try {
+      await api(`/api/spaces/${group.id}`, { method: "DELETE" });
+      await Promise.all([load(), refresh()]);
+      setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -98,17 +110,34 @@ export default function GroupsPage() {
                   <th>Name</th>
                   <th>Members</th>
                   <th>Role</th>
+                  <th className="table-actions-col">
+                    <span className="sr-only">Actions</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {groups.map((t) => {
                   const isCreator = t.created_by === me?.id;
+                  const canDelete = !!me?.is_admin || isCreator;
                   return (
                     <tr key={t.id} className="cursor-pointer" onClick={() => navigate(`/groups/${t.id}`)}>
                       <td className="font-medium text-ink">{t.name}</td>
                       <td className="text-muted">{t.members.length}</td>
                       <td className="text-muted">
                         {me?.is_admin ? "admin" : isCreator ? "creator" : "member"}
+                      </td>
+                      <td className="table-actions-col">
+                        {canDelete && (
+                          <button
+                            className="btn table-row-delete"
+                            type="button"
+                            title="Delete"
+                            aria-label={`Delete ${t.name}`}
+                            onClick={(e) => void deleteGroup(e, t)}
+                          >
+                            <FontAwesomeIcon icon={faTrash} />
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );
@@ -148,8 +177,14 @@ function NewGroup({
     <form className="panel composer mb-6" onSubmit={submit}>
       <div className="composer-header">
         <h3 className="composer-title">New group</h3>
-        <button className="btn" type="button" onClick={onCancel}>
-          <FontAwesomeIcon icon={faXmark} /> Close
+        <button
+          className="btn"
+          type="button"
+          title="Close"
+          aria-label="Close"
+          onClick={onCancel}
+        >
+          <FontAwesomeIcon icon={faXmark} />
         </button>
       </div>
       <ErrorNote error={error} />
@@ -166,8 +201,13 @@ function NewGroup({
         </label>
       </div>
       <div className="composer-footer">
-        <button className="btn btn-primary ml-auto" type="submit">
-          Save
+        <button
+          className="btn btn-primary ml-auto"
+          type="submit"
+          title="Save"
+          aria-label="Save"
+        >
+          <FontAwesomeIcon icon={faFloppyDisk} />
         </button>
       </div>
     </form>

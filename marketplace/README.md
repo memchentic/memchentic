@@ -2,39 +2,39 @@
 
 Single-plugin marketplace for this repo. Plugin content lives under
 `marketplace/plugins/memchentic/`. Host catalogs stay at the **repo root** so
-Cursor / Claude / Copilot / Codex can import `nodadyoushutup/memchentic`
+Cursor / Claude / Copilot / Codex can import `memchentic/memchentic`
 directly (Cursor’s marketplace add has no subdirectory path flag).
 
 ## Install — Cursor
 
 1. Open **Dashboard → Settings → Plugins**.
-2. Import: `https://github.com/nodadyoushutup/memchentic`
+2. Import: `https://github.com/memchentic/memchentic`
 3. Install **memchentic**.
 
 Or from the shell:
 
 ```shell
-agent plugin marketplace add https://github.com/nodadyoushutup/memchentic.git
+agent plugin marketplace add https://github.com/memchentic/memchentic.git
 ```
 
 ## Install — Claude Code
 
 ```shell
-claude plugin marketplace add nodadyoushutup/memchentic
+claude plugin marketplace add memchentic/memchentic
 claude plugin install memchentic@memchentic
 ```
 
 ## Install — GitHub Copilot CLI
 
 ```shell
-copilot plugin marketplace add nodadyoushutup/memchentic
+copilot plugin marketplace add memchentic/memchentic
 copilot plugin install memchentic@memchentic
 ```
 
 ## Install — OpenAI Codex
 
 ```shell
-codex plugin marketplace add nodadyoushutup/memchentic
+codex plugin marketplace add memchentic/memchentic
 ```
 
 Pair with public plugins from

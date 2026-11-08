@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 
 # Hardcoded MiniLM — no env override. Other ONNX widths are out of scope for now.
 EMBEDDING_DIM = 384
+# sentence-transformers all-MiniLM-L6-v2 max seq length (HF tokenizer.json ships at 128).
+MAX_SEQUENCE_LENGTH = 256
 _MODEL_NAME = "all-MiniLM-L6-v2"
 # application/api/models/<name> — parents: embeddings → memchentic → src → api root
 DEFAULT_MODEL_DIR = Path(__file__).resolve().parents[3] / "models" / _MODEL_NAME
@@ -52,6 +54,11 @@ class Embedder:
                 logger.warning("tokenizer.json missing; using hash embeddings")
                 return
             self._tokenizer = Tokenizer.from_file(str(tok_path))
+            # HF tokenizer.json enables Fixed-128 padding; treating those pad
+            # tokens as real (mask=1) collapses short texts toward the pad
+            # centroid. Disable padding and trust attention_mask instead.
+            self._tokenizer.no_padding()
+            self._tokenizer.enable_truncation(max_length=MAX_SEQUENCE_LENGTH)
             self._session = ort.InferenceSession(
                 str(model_file), providers=["CPUExecutionProvider"]
             )
@@ -90,12 +97,10 @@ class Embedder:
     def _embed_onnx(self, text: str) -> list[float]:
         assert self._tokenizer is not None and self._session is not None
         encoded = self._tokenizer.encode(text)
-        ids = encoded.ids[:256]
-        mask = [1] * len(ids)
-        # pad
-        while len(ids) < 8:
-            ids.append(0)
-            mask.append(0)
+        ids = list(encoded.ids)
+        mask = list(encoded.attention_mask)
+        if not ids:
+            return [0.0] * self.dim
         input_ids = np.array([ids], dtype=np.int64)
         attention_mask = np.array([mask], dtype=np.int64)
         feeds = {}

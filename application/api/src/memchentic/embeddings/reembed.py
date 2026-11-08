@@ -1,7 +1,8 @@
 """Recompute every stored embedding with the active embedder backend.
 
 Run after the MiniLM ONNX files are present so hash-fallback vectors are not
-mixed with model vectors::
+mixed with model vectors, and after embedder changes that alter vectors
+(for example attention-mask / padding fixes)::
 
     python -m memchentic.embeddings.reembed
 """

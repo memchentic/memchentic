@@ -1,6 +1,6 @@
 # AGENTS.md — memchentic in-repo marketplace
 
-Single-plugin marketplace embedded in `nodadyoushutup/memchentic`.
+Single-plugin marketplace embedded in `memchentic/memchentic`.
 
 Host catalogs (repo root — required for Cursor GitHub import):
 

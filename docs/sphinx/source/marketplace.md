@@ -1,12 +1,12 @@
-# Marketplace plugin
+# Marketplace Plugin
 
 The **Memchentic** plugin teaches agent harnesses how to use the Memchentic
 MCP: when to recall, when to capture, and which tools fit which jobs. It ships
 inside this repository so hosts can import
-`https://github.com/nodadyoushutup/memchentic` directly.
+`https://github.com/memchentic/memchentic` directly.
 
-The plugin teaches harness craft for the MCP; it does not replace the server.
-User-facing docs are this Sphinx site.
+Install steps by harness: {doc}`install-marketplace`. Wire the MCP endpoint:
+{doc}`connect-mcp`.
 
 ## Concepts
 
@@ -42,49 +42,3 @@ fork them under `memchentic-*`.
 | `.claude-plugin/marketplace.json` | Claude Code catalog |
 | `.github/plugin/marketplace.json` | Copilot catalog |
 | `.agents/plugins/marketplace.json` | Codex catalog |
-
-## Install by harness
-
-### Cursor
-
-1. Dashboard → Settings → Plugins.
-2. Import `https://github.com/nodadyoushutup/memchentic`.
-3. Install **Memchentic**.
-
-Or:
-
-```shell
-agent plugin marketplace add https://github.com/nodadyoushutup/memchentic.git
-```
-
-Cursor wires rules, skills, and commands.
-
-### Claude Code
-
-```shell
-claude plugin marketplace add nodadyoushutup/memchentic
-claude plugin install memchentic@memchentic
-```
-
-Skills + commands (no Cursor-style rules file surface).
-
-### GitHub Copilot CLI
-
-```shell
-copilot plugin marketplace add nodadyoushutup/memchentic
-copilot plugin install memchentic@memchentic
-```
-
-### OpenAI Codex
-
-```shell
-codex plugin marketplace add nodadyoushutup/memchentic
-```
-
-## Connect the MCP
-
-After installing the plugin, configure the host MCP client for Memchentic
-(`http://your-host:18082/mcp` or your edge URL) with a per-user API key or JWT.
-Without a live MCP connection, the plugin's recall/capture gates stay idle.
-
-Getting started end-to-end: {doc}`getting-started`. Tool list: {doc}`mcp-tools`.

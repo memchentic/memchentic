@@ -2,6 +2,7 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faArrowLeft,
   faPlus,
+  faTrash,
   faUserPlus,
   faXmark,
 } from "@fortawesome/free-solid-svg-icons";
@@ -17,6 +18,8 @@ type UserDetail = {
   display_name: string | null;
   providers?: string[];
   created_at?: string | null;
+  deletable?: boolean;
+  delete_blocked_reason?: string | null;
   groups: { id: string; name: string; kind: string }[];
 };
 
@@ -124,12 +127,35 @@ export default function UserDetailPage() {
   const nameFirst = prefersProfileName(user?.providers);
   const canAddToGroup = manageableCount > 0;
 
+  async function deleteThisUser() {
+    if (!user) return;
+    if (!confirm(`Delete ${name}? This cannot be undone.`)) return;
+    try {
+      await api(`/api/users/${user.id}`, { method: "DELETE" });
+      navigate("/users");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   return (
     <div>
       <PageHeader title={name}>
-        <Link to="/users" className="btn">
-          <FontAwesomeIcon icon={faArrowLeft} /> Users
+        <Link to="/users" className="btn" title="Users" aria-label="Users">
+          <FontAwesomeIcon icon={faArrowLeft} />
         </Link>
+        {me?.is_admin && user && (
+          <button
+            className="btn"
+            type="button"
+            title={user.deletable ? "Delete" : user.delete_blocked_reason || "Cannot delete"}
+            aria-label={user.deletable ? "Delete" : user.delete_blocked_reason || "Cannot delete"}
+            disabled={!user.deletable}
+            onClick={() => void deleteThisUser()}
+          >
+            <FontAwesomeIcon icon={faTrash} />
+          </button>
+        )}
       </PageHeader>
       <div className="page-body">
         <ErrorNote error={error} />
@@ -187,8 +213,14 @@ export default function UserDetailPage() {
                 Groups
               </h3>
               {canAddToGroup && (
-                <button className="btn" type="button" onClick={() => setAddOpen(true)}>
-                  <FontAwesomeIcon icon={faUserPlus} /> Add To Group
+                <button
+                  className="btn"
+                  type="button"
+                  title="Add to group"
+                  aria-label="Add to group"
+                  onClick={() => setAddOpen(true)}
+                >
+                  <FontAwesomeIcon icon={faUserPlus} />
                 </button>
               )}
             </div>
@@ -350,8 +382,15 @@ function AddToGroupModal({
           ))}
         </ul>
         <div className="flex justify-end border-t border-border px-4 py-3">
-          <button className="btn" type="button" onClick={onClose} disabled={!!busyId}>
-            Close
+          <button
+            className="btn"
+            type="button"
+            title="Close"
+            aria-label="Close"
+            onClick={onClose}
+            disabled={!!busyId}
+          >
+            <FontAwesomeIcon icon={faXmark} />
           </button>
         </div>
       </div>

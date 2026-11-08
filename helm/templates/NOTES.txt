@@ -1,0 +1,28 @@
+memchentic {{ .Chart.AppVersion }}
+
+Release: {{ .Release.Name }}
+Namespace: {{ .Release.Namespace }}
+Secrets mode: {{ .Values.secrets.mode }}
+Secret name: {{ include "memchentic.secretName" . }}
+
+{{- if eq (.Values.secrets.mode | default "inline") "inline" }}
+Inline secrets are for local/dev only. Use secrets.mode=existing or
+externalSecret for Vault / AWS Secrets Manager / 1Password.
+{{- end }}
+{{- if eq .Values.secrets.mode "externalSecret" }}
+Ensure External Secrets Operator is installed and SecretStore
+"{{ .Values.secrets.externalSecret.secretStoreRef.name }}" is Ready
+before expecting pods to start.
+{{- end }}
+
+Set config.baseUrl and config.corsOrigins to the public URL.
+Admin break-glass secrets must be strong (≥16 chars; not placeholders).
+
+{{- if .Values.ingress.enabled }}
+Ingress host(s):
+{{- range .Values.ingress.hosts }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
+{{- end }}
+{{- else }}
+Service: {{ include "memchentic.fullname" . }}:{{ .Values.service.port }}
+{{- end }}

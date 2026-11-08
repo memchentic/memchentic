@@ -1,0 +1,17 @@
+{{- if .Values.postgres.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "memchentic.fullname" . }}-postgres
+  labels:
+    {{- include "memchentic.postgres.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.postgres.service.port }}
+      targetPort: postgres
+      protocol: TCP
+      name: postgres
+  selector:
+    {{- include "memchentic.postgres.selectorLabels" . | nindent 4 }}
+{{- end }}

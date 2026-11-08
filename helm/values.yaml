@@ -1,0 +1,117 @@
+# Default values for memchentic.
+# Override with -f / --set. Homelab site overrides live outside this repo.
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/memchentic/memchentic
+  tag: "0.0.1"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: false
+  name: ""
+  annotations: {}
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext: {}
+securityContext: {}
+
+service:
+  type: ClusterIP
+  port: 8080
+
+ingress:
+  enabled: false
+  className: nginx
+  annotations: {}
+  hosts:
+    - host: memchentic.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Non-secret application settings (ConfigMap → env).
+config:
+  baseUrl: http://localhost:8080
+  oauthProvider: internal
+  oauthClientId: ""
+  oauthIssuer: ""
+  oauthAudience: ""
+  oauthJwksUri: ""
+  oauthScopes: openid,profile,email
+  adminEmail: admin@example.com
+  adminDisplayName: Admin
+  postgresUser: memchentic
+  postgresDb: memchentic
+  postgresPort: 5432
+  # Used when postgres.enabled=false (external database hostname).
+  postgresHostname: ""
+  nearDupThreshold: "0.92"
+  rrfK: "60"
+  corsOrigins: http://localhost:8080
+  logLevel: INFO
+  sessionRememberDays: "30"
+  sessionBrowserHours: "12"
+  # Leave empty to derive Secure from baseUrl scheme.
+  sessionCookieSecure: ""
+
+# Secret modes (exactly one):
+#   inline          — chart renders a Secret from secrets.inline (dev default)
+#   existing        — use secrets.existingSecret (pre-synced by any tool)
+#   externalSecret  — chart renders ExternalSecret (Vault / AWS SM / 1Password via ESO)
+secrets:
+  mode: inline
+  existingSecret: ""
+  inline:
+    ADMIN_PASSWORD: "change-me-please-16chars"
+    ADMIN_API_KEY: "change-me-admin-api-key-16"
+    POSTGRES_PASSWORD: "memchentic-change-me"
+    OAUTH_CLIENT_SECRET: ""
+  externalSecret:
+    refreshInterval: 1h
+    secretStoreRef:
+      name: ""
+      kind: ClusterSecretStore
+    # Each key → provider remoteRef. Property semantics depend on the backend.
+    data:
+      ADMIN_PASSWORD:
+        key: ""
+        property: ADMIN_PASSWORD
+      ADMIN_API_KEY:
+        key: ""
+        property: ADMIN_API_KEY
+      POSTGRES_PASSWORD:
+        key: ""
+        property: POSTGRES_PASSWORD
+      OAUTH_CLIENT_SECRET:
+        key: ""
+        property: OAUTH_CLIENT_SECRET
+
+postgres:
+  enabled: true
+  image:
+    repository: pgvector/pgvector
+    tag: pg16
+    pullPolicy: IfNotPresent
+  service:
+    port: 5432
+  persistence:
+    enabled: true
+    storageClass: ""
+    size: 10Gi
+  resources: {}

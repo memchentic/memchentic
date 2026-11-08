@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "memchentic.fullname" . }}-config
+  labels:
+    {{- include "memchentic.labels" . | nindent 4 }}
+data:
+  BASE_URL: {{ .Values.config.baseUrl | quote }}
+  OAUTH_PROVIDER: {{ .Values.config.oauthProvider | quote }}
+  OAUTH_CLIENT_ID: {{ .Values.config.oauthClientId | quote }}
+  OAUTH_ISSUER: {{ .Values.config.oauthIssuer | quote }}
+  OAUTH_AUDIENCE: {{ .Values.config.oauthAudience | quote }}
+  OAUTH_JWKS_URI: {{ .Values.config.oauthJwksUri | quote }}
+  OAUTH_SCOPES: {{ .Values.config.oauthScopes | quote }}
+  ADMIN_EMAIL: {{ .Values.config.adminEmail | quote }}
+  ADMIN_DISPLAY_NAME: {{ .Values.config.adminDisplayName | quote }}
+  NEAR_DUP_THRESHOLD: {{ .Values.config.nearDupThreshold | quote }}
+  RRF_K: {{ .Values.config.rrfK | quote }}
+  CORS_ORIGINS: {{ .Values.config.corsOrigins | quote }}
+  LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  SESSION_REMEMBER_DAYS: {{ .Values.config.sessionRememberDays | quote }}
+  SESSION_BROWSER_HOURS: {{ .Values.config.sessionBrowserHours | quote }}
+  {{- if .Values.config.sessionCookieSecure }}
+  SESSION_COOKIE_SECURE: {{ .Values.config.sessionCookieSecure | quote }}
+  {{- end }}

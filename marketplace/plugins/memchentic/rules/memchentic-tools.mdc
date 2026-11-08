@@ -11,38 +11,72 @@ alwaysApply: false
 Gate: if memchentic is not connected/ready, skip all memchentic tools.
 
 Prefer the smallest tool that answers the question. Default coding turns stay
-on recall + capture tools only.
+on recall + capture tools only. Limits default ~20 (search) / ~50 (browse /
+since / by_tag), clamped 1–100.
 
 ## Everyday (default rules already cover)
 
-| Job | Tool |
-| --- | --- |
-| Reusable guides before approach | `guide_find` |
-| Hybrid search → digests | `find` |
-| Full body | `open` |
-| Path-scoped digests | `about_path` |
-| Save durable entry | `remember` |
-| Save / strengthen guide | `guide_write` |
-| Patch entry | `revise` |
+| Job | Tool | Params / gotchas |
+| --- | --- | --- |
+| Reusable guides before approach | `guide_find` | `query`; optional `space_id`, `limit`. **Guides only.** Rank = hybrid × confidence. |
+| Hybrid search → digests | `find` | `query`; optional `type`, `tags` (**AND**), `space_id`, `path_hint`, `repo_hint`, `limit`. **Entries only** — never returns guides. |
+| Full body | `open` | Prefer `id`. Or exact `title` (+ optional `space_id`); first hit across accessible spaces if space omitted. |
+| Path-scoped digests | `about_path` | `path`; optional `repo_hint`, `limit`. Matches `path_hint` **or** body text; all kinds. |
+| Save durable entry | `remember` | Required `title`, `body`. `type` (default `note`), `tags`, `expires_at` ISO, `path_hint`, `repo_hint`, `force`, write target (`space_id` / `group` / `visibility`). Near-dup refuses unless `force`. |
+| Save / strengthen guide | `guide_write` | Required `title`, `body`; optional `tags` + write target. Near-dup **upserts** + confidence += 1. No `force`, type, expiry, or path hints. |
+| Patch entry | `revise` | Required `id`. Optional title/body/type/`tags` (**replaces** list)/`expires_at`/`clear_expiry`/path hints. No near-dup check; cannot change space or kind. |
 
 ## Situational
 
-| Job | Tool |
+| Job | Tool | Params / gotchas |
+| --- | --- | --- |
+| Who am I / spaces | `me` | Subject, `is_admin`, `personal_space_id`, `default_shared_space_id`, memberships. |
+| List spaces | `space_list` | User: memberships. Admin: every unarchived space. |
+| Create a group | `space_create` | `name`. Caller becomes creator (roster manager). Any user principal including admin. No name uniqueness. |
+| Space detail + members | `space_show` | `space_id`. |
+| Paginated list | `browse` | Optional `space_id`, `kind` (`entry`\|`guide`), `type`, `limit`, `offset`. Snippets, newest first; no total count. |
+| Time window | `since` | ISO `since` / `until`; filters **`updated_at`**. Optional `space_id`, `limit`. |
+| Tag filter | `by_tag` | Required `tags`; `mode` `and` (default) / `or`; optional `space_id`, `limit`. |
+| Move memory | `relocate` | Required `id` + destination `space_id` UUID. No `group` / `visibility`. |
+| Delete | `forget` | `id` — entry or guide the principal can access. |
+| Provenance | `trace` | `id` → kind, created_by, created_at, provenance, space_id. MCP writes store empty provenance. |
+| Near-dups / expiry hygiene | `overlap_report` | Optional `space_id`, `limit`. Read-only. Pairs are **same title** (not cosine). `conflicts` may be `[]`. Never auto-delete — merge with `revise` / `forget`. |
+
+## Write target (remember / guide_write)
+
+1. `space_id` → that space.
+2. `group` → exact case-insensitive name among the caller’s unarchived groups.
+3. `visibility="shared"` → default shared group, else sole group; else error.
+4. Else → personal.
+
+`visibility` is `"personal"` or `"shared"`. Default shared group is set via
+REST/GUI (`PATCH /api/me`), **not** MCP. Call `me` when unsure.
+
+Admin key = real `ADMIN_EMAIL` user (personal default; may `space_create`).
+Prefer per-user key/JWT for agents — admin list/search is instance-wide.
+
+## Entry types (closed)
+
+Pass on `remember` / filter on `find`. Classification only. Default write type
+is `note` — pick a better label when one fits (see capture rule).
+
+| Type | Use when |
 | --- | --- |
-| Who am I / spaces | `me`, `space_list`, `space_show` |
-| Create a group | `space_create` (user principal; not admin API key) |
-| Paginated list | `browse` |
-| Time window | `since` |
-| Tag filter | `by_tag` |
-| Move entry | `relocate` |
-| Delete | `forget` |
-| Provenance | `trace` |
-| Near-dups / expiry hygiene | `overlap_report` |
+| `fact` | Stable truth about the world or codebase |
+| `preference` | How someone wants work done |
+| `decision` | A choice and its rationale |
+| `instruction` | Standing directive the agent should follow |
+| `feedback` | Correction after a mistake |
+| `insight` | Learned non-obvious finding |
+| `note` | Catch-all when nothing else fits |
 
-## Entry types (closed v1)
+Guides are not an entry type (`guide_write` / `guide_find`).
 
-`fact` · `preference` · `decision` · `instruction` · `feedback` · `insight` ·
-`note`
+## Not on MCP (do not invent tools)
+
+- Set default shared group, roster add/remove, rename/archive group → REST /
+  GUI.
+- Auth groups, API key management, SSE live events → outside this plugin.
 
 ## Explicitly not in v1
 

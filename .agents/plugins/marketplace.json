@@ -7,7 +7,7 @@
     {
       "name": "memchentic",
       "description": "memchentic MCP craft: gated recall/capture with personal+group spaces, entries vs guides, hybrid find. Pair with public global posture plugins.",
-      "version": "0.1.1",
+      "version": "0.2.0",
       "source": {
         "source": "local",
         "path": "./marketplace/plugins/memchentic"

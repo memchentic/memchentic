@@ -12,11 +12,13 @@ alwaysApply: true
 If memchentic is **not** connected/ready, **skip this entire rule** — no
 memchentic tool calls. Continue with normal investigation.
 
-## Identity (optional once per session)
+## Identity
 
-Call `me` when you need subject, personal space id, or memberships. Principals
-come from the MCP connection (Bearer JWT, per-user API key, or admin key) —
-never invent a user id for ACL.
+Call `me` once when you need subject, personal space id, memberships, or
+`default_shared_space_id` — especially before a shared write. Principals come
+from the MCP connection (Bearer JWT, per-user API key, or admin key) — never
+invent a user id for ACL. Prefer a per-user key/JWT for agent sessions (admin
+search is instance-wide).
 
 ## Default (when connected) — lean aggressive
 
@@ -32,27 +34,34 @@ memchentic over rediscovering the same bug, decision, preference, or guide.
 5. After a failed approach before the next attempt
 6. Before a non-trivial create/update of rules, skills, pipelines, or infra
 
-At those moments run:
+At those moments run this **start bundle** (counts as one recall wave):
 
-1. `guide_find` — query = task + subsystem + error; `limit: 8`
-2. `find` — same query; `limit: 10`; then `open` at most **3** digests that
-   look decisive
+1. `guide_find` — guides only; query = task + subsystem + error; `limit: 8`
+2. `find` — **entries only**; same query; `limit: 10`
+3. `open` at most **3** digests that look decisive
+4. When editing a known tree → also `about_path` (path + optional `repo_hint`)
 
-Also call mid-task when stuck or the domain shifts.
+Also call mid-task when stuck or the domain shifts. Prefer one sharp query
+over synonym spam. Opportunistic extra recalls are fine when the domain
+changes; do not burn the turn on synonym variants of the same query.
 
 **Skip only** for pure rename / typo / comment / trivial config with no
 behavior, architecture, preference, or prior-decision risk.
 
-Cap: about **2–4** recall calls at task start; add opportunistic recalls when
-the domain changes. Prefer one sharp query over synonym spam.
+## Filters (optional, not every turn)
+
+On `find`, pass `type`, `tags` (AND), `path_hint`, `repo_hint`, or `space_id`
+when you already know them. Digests include `type` / `tags` / `space` /
+`kind` — use those to decide what to `open`.
 
 ## Path / time / tag shortcuts
 
-- Editing known paths → also `about_path` (path and optional `repo_hint`)
-- Time-window (“since yesterday”) → `since`
-- Known tags → `by_tag` (`and` / `or`)
-- Paginated listing without a query → `browse`
-- Need full text → `open` by `id` (or stable `title` + `space_id`)
+- Editing known paths → `about_path` (matches `path_hint` **or** body text)
+- Time-window (“since yesterday”) → `since` with ISO `since` / `until`
+  (filters `updated_at`)
+- Known tags → `by_tag` (`mode`: `and` / `or`)
+- Paginated listing without a query → `browse` (`kind`, `type`, `offset`)
+- Need full text → `open` by `id` (prefer id; title match is exact)
 
 ## Safe use
 
@@ -65,5 +74,5 @@ the domain changes. Prefer one sharp query over synonym spam.
 
 ## Out of scope here
 
-Tool routing tables → rule `memchentic-tools` / skill `memchentic-capture` for
-writes.
+Tool routing tables → rule `memchentic-tools`. Writes →
+`memchentic-capture`.

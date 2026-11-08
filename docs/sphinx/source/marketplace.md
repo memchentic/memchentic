@@ -13,7 +13,7 @@ does not replace the server.
 | Piece | Role |
 | --- | --- |
 | **Rules** (Cursor) | Always-on recall and capture gates when the MCP is connected; tools routing on demand |
-| **Skills** | Playbooks: index skill, recall skill, capture skill — same posture on Claude / Codex |
+| **Skills** | Playbooks: index skill, recall skill, capture skill — same posture on Claude / Codex (load the index skill at session start; those hosts do not apply Cursor rules) |
 | **Command** | `/memchentic` — short operator entry for the host |
 
 There is **no** `agents/` directory in this plugin. Portable planners and coding
@@ -23,8 +23,9 @@ fork them under `memchentic-*`.
 
 ### Mental model the plugin teaches
 
-- **Personal vs groups** — omit `space_id` → personal; admin API key must pass
-  `space_id`.
+- **Personal vs groups** — omit `space_id` → personal; shared writes use
+  `group`, `visibility="shared"`, or `space_id`. Admin key is a real user
+  (personal default + can create groups); prefer per-user key/JWT for agents.
 - **Entry vs guide** — durable record vs reusable advice with confidence.
 - **Digests then `open`** — search returns short digests; load full text on
   purpose.

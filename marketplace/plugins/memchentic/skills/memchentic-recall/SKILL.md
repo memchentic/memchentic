@@ -13,28 +13,43 @@ description: >-
 
 Not connected/ready → skip all memchentic tools; investigate normally.
 
+## Identity
+
+Call `me` when you need subject, personal space id, memberships, or
+`default_shared_space_id` — especially before a shared write. Prefer a
+per-user API key/JWT for agent sessions (admin search is instance-wide).
+
 ## Default start (parallel with code tools)
 
 Run on session start, first meaningful turn, debug/architecture/unfamiliar
-code, user correction, new subsystem, and before retrying a failed approach:
+code, user correction, new subsystem, and before retrying a failed approach.
 
-1. `guide_find` — query = task + subsystem + error; `limit: 8`
-2. `find` — same query; `limit: 10`; `open` at most 3 decisive digests
+**Start bundle** (one recall wave):
+
+1. `guide_find` — guides only; query = task + subsystem + error; `limit: 8`
+2. `find` — **entries only**; same query; `limit: 10`
+3. `open` at most 3 decisive digests
+4. Editing a known tree → also `about_path` (path + optional `repo_hint`)
 
 Pure rename/typo/comment/trivial config with no decision risk → skip.
 
-About **2–4** recall calls at task start is fine; add mid-task recalls when
-the domain shifts. One concrete query beats several vague ones.
+Prefer one concrete query over synonym spam. Add mid-task recalls when the
+domain shifts.
+
+## Filters (optional)
+
+On `find`, pass `type`, `tags` (AND), `path_hint`, `repo_hint`, or `space_id`
+when already known.
 
 ## Choose the next tool
 
 | Situation | Call |
 | --- | --- |
-| Editing known paths | `about_path` with path (+ optional `repo_hint`) |
-| Time window | `since` |
-| Known tags | `by_tag` |
-| List without a query | `browse` |
-| Need full text | `open` by id (or title + `space_id`) |
+| Editing known paths | `about_path` (matches hint **or** body) |
+| Time window | `since` with ISO bounds (`updated_at`) |
+| Known tags | `by_tag` (`and` / `or`) |
+| List without a query | `browse` (`kind`, `type`, `offset`) |
+| Need full text | `open` by id (title match is exact) |
 | Who / which spaces | `me` / `space_list` |
 
 ## Safe use

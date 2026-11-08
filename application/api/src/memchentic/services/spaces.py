@@ -349,8 +349,7 @@ async def resolve_write_space(
         The writable target space.
 
     Raises:
-        PermissionError: Unauthenticated, inaccessible space, or admin key
-            without ``space_id``.
+        PermissionError: Unauthenticated or inaccessible ``space_id``.
         ValueError: Group name or shared default cannot be resolved to one group.
     """
     if not principal.user_id:
@@ -388,7 +387,8 @@ async def set_default_shared_space(
         The updated user.
 
     Raises:
-        PermissionError: Admin API key, or the group is not one the caller belongs to.
+        PermissionError: Missing user principal, or the group is not one the
+            caller belongs to.
     """
     if not principal.user_id:
         raise PermissionError("Default shared group needs a user principal")

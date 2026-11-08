@@ -18,7 +18,9 @@ you
 - There is **no** group role ladder (no owner/member/viewer flags beyond
   creator vs everyone else).
 - **Admin** (`ADMIN_API_KEY` / admin login) is break-glass across users and
-  groups. The admin API key must always pass `space_id` on writes.
+  groups. The admin key is a real `ADMIN_EMAIL` user with a personal space
+  (omit-space → personal) and may create groups; prefer a per-user key or JWT
+  for normal agent sessions because admin list/search is instance-wide.
 
 A memory lives in exactly one space. Visibility is that space's roster.
 

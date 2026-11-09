@@ -19,6 +19,15 @@ data:
   SEARCH_DEFAULT_LIMIT: {{ .Values.config.searchDefaultLimit | quote }}
   BROWSE_DEFAULT_LIMIT: {{ .Values.config.browseDefaultLimit | quote }}
   RESULT_MAX_LIMIT: {{ .Values.config.resultMaxLimit | quote }}
+  SEARCH_RECENCY_HALF_LIFE_DAYS: {{ .Values.config.searchRecencyHalfLifeDays | quote }}
+  SEARCH_PATH_BOOST: {{ .Values.config.searchPathBoost | quote }}
+  NEAR_DUP_CANDIDATES: {{ .Values.config.nearDupCandidates | quote }}
+  OVERLAP_SCAN_LIMIT: {{ .Values.config.overlapScanLimit | quote }}
+  MEMORY_USAGE_SCORE_WEIGHT: {{ .Values.config.memoryUsageScoreWeight | quote }}
+  MEMORY_DEFAULT_TTL_DAYS: {{ .Values.config.memoryDefaultTtlDays | quote }}
+  MEMORY_TTL_EXTEND_DAYS: {{ .Values.config.memoryTtlExtendDays | quote }}
+  MEMORY_TTL_TOUCH_DEBOUNCE_HOURS: {{ .Values.config.memoryTtlTouchDebounceHours | quote }}
+  MEMORY_MAX_TTL_DAYS: {{ .Values.config.memoryMaxTtlDays | quote }}
   CORS_ORIGINS: {{ .Values.config.corsOrigins | quote }}
   LOG_LEVEL: {{ .Values.config.logLevel | quote }}
   SESSION_REMEMBER_DAYS: {{ .Values.config.sessionRememberDays | quote }}

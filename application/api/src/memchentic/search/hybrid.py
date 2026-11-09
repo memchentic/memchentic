@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -83,7 +84,7 @@ def rerank_score(
     now: datetime,
     path_hint: str | None = None,
 ) -> float:
-    """Adjust a fused RRF score for recency, path alignment, and guide confidence.
+    """Adjust a fused RRF score for recency, path, guide confidence, and usage.
 
     Args:
         memory: Loaded memory row.
@@ -107,6 +108,8 @@ def rerank_score(
         score *= 1.0 + settings.search_path_boost
     if memory.kind == MemoryKind.guide:
         score *= 1.0 + 0.1 * float(memory.confidence or 1.0)
+    if memory.recall_count:
+        score *= 1.0 + math.log1p(memory.recall_count) * settings.memory_usage_score_weight
     return score
 
 

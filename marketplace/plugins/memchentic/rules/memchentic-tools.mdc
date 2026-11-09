@@ -22,8 +22,8 @@ since / by_tag), clamped 1–100.
 | Hybrid search → digests | `find` | `query`; optional `type`, `tags` (**AND**), `space_id`, `path_hint`, `repo_hint`, `limit`. **Entries only** — never returns guides. |
 | Full body | `open` | Prefer `id`. Or exact `title` (+ optional `space_id`); first hit across accessible spaces if space omitted. |
 | Path-scoped digests | `about_path` | `path`; optional `repo_hint`, `limit`. Matches `path_hint` **or** body text; all kinds. |
-| Save durable entry | `remember` | Required `title`, `body`. `type` (default `note`), `tags`, `expires_at` ISO, `path_hint`, `repo_hint`, `force`, write target (`space_id` / `group` / `visibility`). Near-dup refuses unless `force`. |
-| Save / strengthen guide | `guide_write` | Required `title`, `body`; optional `tags` + write target. Near-dup **upserts** + confidence += 1. No `force`, type, expiry, or path hints. |
+| Save durable entry | `remember` | Required `title`, `body`. `type` (default `note`), `tags`, lifetime (`ttl_days` int, `permanent`, or `expires_at` ISO; omit = server default 90d), `path_hint`, `repo_hint`, `force`, write target (`space_id` / `group` / `visibility`). Near-dup refuses unless `force`. |
+| Save / strengthen guide | `guide_write` | Required `title`, `body`; optional `tags`, `ttl_days` / `permanent`, write target. Near-dup **upserts** + confidence += 1 and renews expiry. No `force`, type, or path hints. |
 | Patch entry | `revise` | Required `id`. Optional title/body/type/`tags` (**replaces** list)/`expires_at`/`clear_expiry`/path hints. No near-dup check; cannot change space or kind. |
 
 ## Situational
@@ -41,7 +41,7 @@ since / by_tag), clamped 1–100.
 | Delete | `forget` | `id` — entry or guide the principal can access. |
 | Provenance | `trace` | `id` → kind, created_by, created_at, provenance, space_id. MCP writes store empty provenance. |
 | Near-dups / expiry hygiene | `overlap_report` | Optional `space_id`, `limit`. Read-only. Scans newest `OVERLAP_SCAN_LIMIT` (default 2000) rows; pairs are `same_title` or cosine `near_dup`. `conflicts` may be `[]`. Never auto-delete — merge with `revise` / `forget`. |
-| Expired rows | recall tools | `find`, `guide_find`, `browse`, `since`, `by_tag`, `about_path` hide past-due `expires_at` by default; pass `include_expired: true` to audit. Hybrid ranking boosts recent, path-tagged, and high-confidence rows. |
+| Expired rows | recall tools | `find`, `guide_find`, `browse`, `since`, `by_tag`, `about_path` hide past-due `expires_at` by default; pass `include_expired: true` to audit. Returned hits and `open` renew a live memory's expiry (sliding TTL) and raise its recall count. Hybrid ranking boosts recent, path-tagged, high-confidence, and often-recalled rows. |
 
 ## Write target (remember / guide_write)
 

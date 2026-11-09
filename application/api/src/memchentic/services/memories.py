@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import numpy as np
-from sqlalchemy import Select, or_, select
+from sqlalchemy import DateTime, Select, and_, case, func, literal, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from memchentic.auth.principal import Principal
@@ -43,6 +43,8 @@ def memory_to_dict(m: Memory, *, full: bool = False) -> dict[str, Any]:
         "repo_hint": m.repo_hint,
         "expires_at": m.expires_at.isoformat() if m.expires_at else None,
         "confidence": m.confidence,
+        "recall_count": m.recall_count or 0,
+        "last_recalled_at": m.last_recalled_at.isoformat() if m.last_recalled_at else None,
         "created_by": str(m.created_by_user_id) if m.created_by_user_id else None,
         "created_at": m.created_at.isoformat() if m.created_at else None,
         "updated_at": m.updated_at.isoformat() if m.updated_at else None,
@@ -54,6 +56,124 @@ def memory_to_dict(m: Memory, *, full: bool = False) -> dict[str, Any]:
         body = m.body or ""
         data["snippet"] = body[:180] + ("…" if len(body) > 180 else "")
     return data
+
+
+def resolve_expiry(
+    *,
+    expires_at: datetime | None,
+    ttl_days: int | None,
+    permanent: bool,
+    now: datetime | None = None,
+) -> datetime | None:
+    """Pick the create-time expiry for a new memory.
+
+    Precedence: explicit ``expires_at``, then ``permanent`` / ``ttl_days=0``
+    (never expires), then positive ``ttl_days``, then ``MEMORY_DEFAULT_TTL_DAYS``.
+
+    Args:
+        expires_at: Absolute expiry supplied by the caller.
+        ttl_days: Relative lifetime in days; ``0`` means permanent.
+        permanent: Caller wants no expiry.
+        now: Reference time; defaults to the current UTC time.
+
+    Returns:
+        Expiry timestamp, or None for a permanent memory.
+
+    Raises:
+        ValueError: When ``ttl_days`` is negative.
+    """
+    if expires_at is not None:
+        return expires_at
+    if ttl_days is not None and ttl_days < 0:
+        raise ValueError("ttl_days must be >= 0")
+    if permanent or ttl_days == 0:
+        return None
+    ref = now or datetime.now(UTC)
+    days = ttl_days if ttl_days is not None else get_settings().memory_default_ttl_days
+    return ref + timedelta(days=days) if days > 0 else None
+
+
+def slide_expiry(
+    current: datetime | None, *, created_at: datetime | None, now: datetime
+) -> datetime | None:
+    """Push ``current`` out to ``now + MEMORY_TTL_EXTEND_DAYS`` without shortening it.
+
+    The extension is capped at ``created_at + MEMORY_MAX_TTL_DAYS`` when that
+    ceiling is enabled. Permanent memories (``None``) stay permanent.
+
+    Args:
+        current: Existing expiry.
+        created_at: Row creation time for the ceiling.
+        now: Reference time.
+
+    Returns:
+        New expiry.
+    """
+    if current is None:
+        return None
+    settings = get_settings()
+    target = now + timedelta(days=settings.memory_ttl_extend_days)
+    if settings.memory_max_ttl_days > 0 and created_at is not None:
+        target = min(target, created_at + timedelta(days=settings.memory_max_ttl_days))
+    return max(current, target)
+
+
+async def touch_memories(
+    session: AsyncSession, principal: Principal, ids: Sequence[str | uuid.UUID]
+) -> None:
+    """Record a recall of ``ids``: bump usage and slide live expiries.
+
+    At most one touch per memory per ``MEMORY_TTL_TOUCH_DEBOUNCE_HOURS``.
+    Past-due memories are counted but not revived. ``updated_at`` is preserved
+    so recall does not reset edit recency.
+
+    Args:
+        session: Database session.
+        principal: Caller (for RLS rebinding on commit).
+        ids: Memory ids that were returned or opened.
+    """
+    uids = [i if isinstance(i, uuid.UUID) else uuid.UUID(str(i)) for i in ids]
+    if not uids:
+        return
+    settings = get_settings()
+    now = datetime.now(UTC)
+    cutoff = now - timedelta(hours=settings.memory_ttl_touch_debounce_hours)
+    target: Any = literal(
+        now + timedelta(days=settings.memory_ttl_extend_days), DateTime(timezone=True)
+    )
+    if settings.memory_max_ttl_days > 0:
+        target = func.least(
+            target, Memory.created_at + timedelta(days=settings.memory_max_ttl_days)
+        )
+    slid = case(
+        (
+            and_(Memory.expires_at.is_not(None), Memory.expires_at > now),
+            func.greatest(Memory.expires_at, target),
+        ),
+        else_=Memory.expires_at,
+    )
+    await session.execute(
+        update(Memory)
+        .where(
+            Memory.id.in_(uids),
+            or_(Memory.last_recalled_at.is_(None), Memory.last_recalled_at < cutoff),
+        )
+        .values(
+            recall_count=Memory.recall_count + 1,
+            last_recalled_at=now,
+            expires_at=slid,
+            updated_at=Memory.updated_at,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
+
+
+async def _touch_digests(
+    session: AsyncSession, principal: Principal, digests: list[Digest]
+) -> list[Digest]:
+    await touch_memories(session, principal, [d.id for d in digests])
+    return digests
 
 
 def digest_to_dict(d: Digest) -> dict[str, Any]:
@@ -224,6 +344,8 @@ async def remember(
     tags: list[str] | None = None,
     space_id: uuid.UUID | None = None,
     expires_at: datetime | None = None,
+    ttl_days: int | None = None,
+    permanent: bool = False,
     path_hint: str | None = None,
     repo_hint: str | None = None,
     force: bool = False,
@@ -235,6 +357,7 @@ async def remember(
         session, principal, space_id, group=group, visibility=visibility
     )
     et = EntryType(entry_type)
+    expiry = resolve_expiry(expires_at=expires_at, ttl_days=ttl_days, permanent=permanent)
     if not force:
         dup = await find_near_duplicate(
             session, space_id=space.id, title=title, body=body, kind=MemoryKind.entry
@@ -256,7 +379,7 @@ async def remember(
         tags=tags or [],
         path_hint=path_hint,
         repo_hint=repo_hint,
-        expires_at=expires_at,
+        expires_at=expiry,
         embedding=embedding,
         provenance=provenance or {},
         created_by_user_id=principal.user_id,
@@ -279,21 +402,35 @@ async def open_memory(
     memory_id: uuid.UUID | None = None,
     title: str | None = None,
     space_id: uuid.UUID | None = None,
+    recall: bool = False,
 ) -> Memory | None:
+    """Load one memory the caller can see.
+
+    Args:
+        session: Database session.
+        principal: Authenticated caller.
+        memory_id: Memory id (preferred).
+        title: Exact title within accessible spaces.
+        space_id: Optional space for title lookup.
+        recall: Record this read as a recall (usage + sliding TTL).
+
+    Returns:
+        Memory, or None when missing or not visible.
+    """
+    memory: Memory | None = None
     if memory_id:
         result = await session.execute(select(Memory).where(Memory.id == memory_id))
         memory = result.scalar_one_or_none()
-        if not memory:
-            return None
-        space = await show_space(session, principal, memory.space_id)
-        return memory if space else None
-
-    if title:
+        if memory and not await show_space(session, principal, memory.space_id):
+            memory = None
+    elif title:
         space_ids = await accessible_space_ids(session, principal, space_id)
         stmt = select(Memory).where(Memory.title == title, Memory.space_id.in_(space_ids))
-        result = await session.execute(stmt.limit(1))
-        return result.scalar_one_or_none()
-    return None
+        memory = (await session.execute(stmt.limit(1))).scalar_one_or_none()
+    if memory and recall:
+        await touch_memories(session, principal, [memory.id])
+        await session.refresh(memory)
+    return memory
 
 
 async def require_memory_manage(
@@ -537,7 +674,7 @@ async def find(
     tokens = resolve_type_tokens(
         types=types, kind="entry" if types is None else None, entry_type=entry_type
     )
-    return await hybrid_search(
+    digests = await hybrid_search(
         session,
         query=query,
         space_ids=space_ids,
@@ -548,6 +685,7 @@ async def find(
         limit=limit,
         include_expired=include_expired,
     )
+    return await _touch_digests(session, principal, digests)
 
 
 async def search(
@@ -571,7 +709,7 @@ async def search(
     if tokens is None and kind is None and entry_type is None:
         # Default REST search historically searched entries only.
         tokens = [e.value for e in EntryType]
-    return await hybrid_search(
+    digests = await hybrid_search(
         session,
         query=query,
         space_ids=space_ids,
@@ -579,6 +717,7 @@ async def search(
         limit=limit,
         include_expired=include_expired,
     )
+    return await _touch_digests(session, principal, digests)
 
 
 async def guide_write(
@@ -591,21 +730,41 @@ async def guide_write(
     space_id: uuid.UUID | None = None,
     group: str | None = None,
     visibility: Visibility | None = None,
+    expires_at: datetime | None = None,
+    ttl_days: int | None = None,
+    permanent: bool = False,
 ) -> Memory:
+    """Create a guide, or reinforce a near-duplicate one.
+
+    Reinforcement raises confidence, counts as a recall, and slides the expiry
+    (an explicit ``expires_at`` / ``ttl_days`` / ``permanent`` replaces it).
+    """
     space = await resolve_write_space(
         session, principal, space_id, group=group, visibility=visibility
     )
+    explicit_ttl = expires_at is not None or ttl_days is not None or permanent
     dup = await find_near_duplicate(
         session, space_id=space.id, title=title, body=body, kind=MemoryKind.guide
     )
     if dup:
+        now = datetime.now(UTC)
         dup.confidence = float(dup.confidence or 1.0) + 1.0
         dup.body = body
         dup.title = title.strip()
         if tags is not None:
             dup.tags = tags
+        if explicit_ttl:
+            dup.expires_at = resolve_expiry(
+                expires_at=expires_at, ttl_days=ttl_days, permanent=permanent, now=now
+            )
+        elif dup.expires_at is not None:
+            dup.expires_at = slide_expiry(
+                max(dup.expires_at, now), created_at=dup.created_at, now=now
+            )
+        dup.recall_count = (dup.recall_count or 0) + 1
+        dup.last_recalled_at = now
         dup.embedding = await get_embedder().aembed_memory_text(dup.title, dup.body)
-        dup.updated_at = datetime.now(UTC)
+        dup.updated_at = now
         await publish_memory_event(session, memory_event_from_row("updated", dup))
         await commit_with_rls(
             session, user_id=principal.user_id, is_admin=principal.is_admin
@@ -622,6 +781,7 @@ async def guide_write(
         body=body,
         tags=tags or [],
         confidence=1.0,
+        expires_at=resolve_expiry(expires_at=expires_at, ttl_days=ttl_days, permanent=permanent),
         embedding=await get_embedder().aembed_memory_text(title, body),
         created_by_user_id=principal.user_id,
         provenance={},
@@ -647,7 +807,7 @@ async def guide_find(
     limit: int | None = None,
     include_expired: bool = False,
 ) -> list[Digest]:
-    return await hybrid_search(
+    digests = await hybrid_search(
         session,
         query=query,
         space_ids=await accessible_space_ids(
@@ -657,6 +817,7 @@ async def guide_find(
         limit=limit,
         include_expired=include_expired,
     )
+    return await _touch_digests(session, principal, digests)
 
 
 async def about_path(
@@ -685,7 +846,7 @@ async def about_path(
         )
     stmt = stmt.order_by(Memory.updated_at.desc()).limit(limit)
     rows = list((await session.execute(stmt)).scalars())
-    return [
+    digests = [
         Digest(
             id=str(m.id),
             title=m.title,
@@ -699,6 +860,7 @@ async def about_path(
         )
         for m in rows
     ]
+    return await _touch_digests(session, principal, digests)
 
 
 async def trace(

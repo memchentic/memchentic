@@ -106,7 +106,8 @@ JWT** for normal agent sessions — admin list/search is instance-wide.
   can find them later (not on `guide_write`).
 - `force` — override near-dup refusal on **`remember` only**. Near-dup on
   `guide_write` upserts; do not invent a `force` flag for guides.
-- `tags`, `expires_at` — optional on `remember`; `revise` can `clear_expiry`.
+- `tags`, `ttl_days` / `permanent` / `expires_at` — optional on `remember`
+  (`ttl_days` / `permanent` also on `guide_write`); `revise` can `clear_expiry`.
 
 ## Refuse
 
@@ -118,6 +119,20 @@ JWT** for normal agent sessions — admin list/search is instance-wide.
   for ACL. Server principals only.
 - Do not paste secret values the user put in chat into `remember` /
   `guide_write`.
+
+## Lifetime (sliding TTL)
+
+New entries and guides expire after the server default (90 days) unless you
+choose otherwise. Every recall (a `find` / `guide_find` hit or an `open`)
+renews a live memory, so memories people keep using stay; unused ones fade
+out of recall.
+
+| Memory | Pass |
+| --- | --- |
+| Session scratch, short-lived workaround | `ttl_days: 7`–`14` |
+| Ordinary fact, insight, decision | omit (default) |
+| Quarter-scoped plan or decision | `ttl_days: 180` |
+| Standing policy / always-true fact | `permanent: true` (prefer a guide for advice) |
 
 ## Hygiene
 

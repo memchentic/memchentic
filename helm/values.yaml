@@ -89,6 +89,16 @@ config:
   searchDefaultLimit: "20"
   browseDefaultLimit: "50"
   resultMaxLimit: "100"
+  searchRecencyHalfLifeDays: "30"
+  searchPathBoost: "0.15"
+  nearDupCandidates: "5"
+  overlapScanLimit: "2000"
+  memoryUsageScoreWeight: "0.05"
+  # Sliding TTL; "0" disables the default lifetime / the max ceiling.
+  memoryDefaultTtlDays: "90"
+  memoryTtlExtendDays: "90"
+  memoryTtlTouchDebounceHours: "6"
+  memoryMaxTtlDays: "730"
   corsOrigins: ""
   logLevel: INFO
   sessionRememberDays: "30"

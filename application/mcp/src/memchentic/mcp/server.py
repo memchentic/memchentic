@@ -101,6 +101,8 @@ async def remember(
     tags: list[str] | None = None,
     space_id: str | None = None,
     expires_at: str | None = None,
+    ttl_days: int | None = None,
+    permanent: bool = False,
     path_hint: str | None = None,
     repo_hint: str | None = None,
     force: bool = False,
@@ -112,6 +114,10 @@ async def remember(
     Target: space_id if given; else group (exact name of one of your groups);
     else visibility="shared" (your default shared group, or your only group);
     else personal. Never guesses among several groups.
+
+    Lifetime: omit for the server default (90 days); ttl_days=N for N days
+    (7-14 scratch, 180 quarterly); permanent=true or ttl_days=0 never expires.
+    Each recall (find hit / open) renews a live memory's window.
     """
     principal = require_principal()
     session = require_session()
@@ -126,6 +132,8 @@ async def remember(
         group=group,
         visibility=visibility,
         expires_at=_parse_dt(expires_at),
+        ttl_days=ttl_days,
+        permanent=permanent,
         path_hint=path_hint,
         repo_hint=repo_hint,
         force=force,
@@ -173,6 +181,7 @@ async def open(id: str | None = None, title: str | None = None, space_id: str | 
         memory_id=_parse_uuid(id),
         title=title,
         space_id=_parse_uuid(space_id),
+        recall=True,
     )
     if not memory:
         raise ValueError("Not found")
@@ -309,11 +318,14 @@ async def guide_write(
     space_id: str | None = None,
     group: str | None = None,
     visibility: Visibility | None = None,
+    ttl_days: int | None = None,
+    permanent: bool = False,
 ) -> dict[str, Any]:
-    """Upsert a guide; duplicate content strengthens confidence.
+    """Upsert a guide; duplicate content strengthens confidence and renews it.
 
     Target resolves like remember: space_id, then group name, then
-    visibility="shared", else personal.
+    visibility="shared", else personal. Lifetime like remember: omit for the
+    server default, ttl_days=N, or permanent=true.
     """
     principal = require_principal()
     session = require_session()
@@ -326,6 +338,8 @@ async def guide_write(
         space_id=_parse_uuid(space_id),
         group=group,
         visibility=visibility,
+        ttl_days=ttl_days,
+        permanent=permanent,
     )
     return memory_service.memory_to_dict(memory, full=True)
 

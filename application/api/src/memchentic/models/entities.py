@@ -13,6 +13,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Index,
+    Integer,
     String,
     Text,
     UniqueConstraint,
@@ -201,6 +202,10 @@ class Memory(Base):
     repo_hint: Mapped[str | None] = mapped_column(String(512), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     confidence: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("1.0"))
+    recall_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    last_recalled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     embedding = mapped_column(Vector(384), nullable=True)
     search_tsv: Mapped[Any] = mapped_column(TSVECTOR, nullable=True)
     provenance: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))

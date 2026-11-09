@@ -75,6 +75,8 @@ class RememberIn(BaseModel):
     group: str | None = None
     visibility: Visibility | None = None
     expires_at: str | None = None
+    ttl_days: int | None = Field(default=None, ge=0)
+    permanent: bool = False
     path_hint: str | None = None
     repo_hint: str | None = None
     force: bool = False
@@ -123,6 +125,9 @@ class GuideIn(BaseModel):
     space_id: str | None = None
     group: str | None = None
     visibility: Visibility | None = None
+    expires_at: str | None = None
+    ttl_days: int | None = Field(default=None, ge=0)
+    permanent: bool = False
 
 
 def _uid(value: str | None) -> uuid.UUID | None:
@@ -813,6 +818,8 @@ async def create_memory(
             group=body.group,
             visibility=body.visibility,
             expires_at=_dt(body.expires_at),
+            ttl_days=body.ttl_days,
+            permanent=body.permanent,
             path_hint=body.path_hint,
             repo_hint=body.repo_hint,
             force=body.force,
@@ -833,7 +840,7 @@ async def get_memory(
     session: AsyncSession = Depends(db_session),
 ) -> dict:
     memory = await memory_service.open_memory(
-        session, principal, memory_id=uuid.UUID(memory_id)
+        session, principal, memory_id=uuid.UUID(memory_id), recall=True
     )
     if not memory:
         raise HTTPException(404, "Not found")
@@ -895,6 +902,9 @@ async def create_guide(
             space_id=_uid(body.space_id),
             group=body.group,
             visibility=body.visibility,
+            expires_at=_dt(body.expires_at),
+            ttl_days=body.ttl_days,
+            permanent=body.permanent,
         )
     except SpaceResolveError as exc:
         raise HTTPException(422, str(exc)) from exc

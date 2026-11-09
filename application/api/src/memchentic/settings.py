@@ -113,6 +113,17 @@ class Settings(BaseSettings):
     )
     search_path_boost: float = Field(default=0.15, ge=0, alias="SEARCH_PATH_BOOST")
 
+    # Sliding TTL: 0 disables the default / ceiling respectively.
+    memory_default_ttl_days: int = Field(default=90, ge=0, alias="MEMORY_DEFAULT_TTL_DAYS")
+    memory_ttl_extend_days: int = Field(default=90, ge=0, alias="MEMORY_TTL_EXTEND_DAYS")
+    memory_ttl_touch_debounce_hours: float = Field(
+        default=6.0, ge=0, alias="MEMORY_TTL_TOUCH_DEBOUNCE_HOURS"
+    )
+    memory_max_ttl_days: int = Field(default=730, ge=0, alias="MEMORY_MAX_TTL_DAYS")
+    memory_usage_score_weight: float = Field(
+        default=0.05, ge=0, alias="MEMORY_USAGE_SCORE_WEIGHT"
+    )
+
     # Default result counts when callers omit ``limit`` (MCP/REST/services).
     search_default_limit: int = Field(default=20, ge=1, alias="SEARCH_DEFAULT_LIMIT")
     browse_default_limit: int = Field(default=50, ge=1, alias="BROWSE_DEFAULT_LIMIT")

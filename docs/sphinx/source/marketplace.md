@@ -7,6 +7,10 @@ when to save them, and how entries differ from guides. Install it from
 Install steps: {doc}`install-marketplace`. Connect the server first:
 {doc}`connect-mcp`.
 
+Install the plugin and connect the server. The agent recalls and captures on
+its own (Cursor rules; Claude Code / Copilot CLI / Codex session-start hook).
+Do not load a skill or run `/memchentic` just to start that habit.
+
 ## What it teaches
 
 - **Personal vs groups** — private memory by default; shared groups when you
@@ -24,9 +28,10 @@ Install steps: {doc}`install-marketplace`. Connect the server first:
 
 | Piece | Role |
 | --- | --- |
-| **Rules** (Cursor) | Remind the agent to recall and capture when Memchentic is connected |
-| **Skills** | Short playbooks for recall and capture (also used on Claude / Codex) |
-| **Command** | `/memchentic` — a quick entry point in the host |
+| **Rules** (Cursor) | Always-on recall and capture when Memchentic is connected |
+| **Hooks** (Claude / Copilot / Codex) | Session-start injection of the same loop |
+| **Skills** | Deeper playbooks for recall and capture |
+| **Command** | `/memchentic` — optional quick entry point in the host |
 
 Other general coding plugins (planners, style guides, and so on) are separate
 installs if you want them — this plugin is only about Memchentic memory.

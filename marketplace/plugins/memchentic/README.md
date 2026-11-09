@@ -12,20 +12,24 @@ demand.
 | `memchentic-capture` | always | Save entries + guides after verified insights |
 | `memchentic-tools` | on demand | Full MCP tool routing by job |
 
-## Skills (Claude / Codex / explicit)
+## Session hook (Claude Code / Copilot CLI / Codex)
+
+`hooks/hooks.json` registers `SessionStart` and `sessionStart` so those hosts
+inject the recall + capture loop automatically. Install the plugin (and for
+Codex, enable hooks + trust this plugin’s hook once). No per-session skill
+load and no `/memchentic` are required to start the habit.
+
+## Skills (deeper playbooks)
 
 | Skill | Purpose |
 | --- | --- |
-| `memchentic` | Index / gate (Claude + Codex + explicit entry) |
+| `memchentic` | Index / gate (explicit entry when unsure which playbook) |
 | `memchentic-recall` | Recall playbook |
 | `memchentic-capture` | Capture playbook (types, write targets, refuse) |
 
-Claude Code and Codex do not load Cursor alwaysApply rules — load the
-**index skill** (`memchentic`) at session start, then recall/capture as needed.
-
 ## Commands
 
-- `/memchentic` → gate, then recall and/or capture
+- `/memchentic` → optional quick entry: gate, then recall and/or capture
 
 ## Mental model
 

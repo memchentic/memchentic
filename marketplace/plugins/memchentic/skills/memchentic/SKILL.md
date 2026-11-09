@@ -3,9 +3,8 @@ name: memchentic
 description: >-
   Gated memchentic MCP index: skip when disconnected; otherwise recall early
   and often, capture verified durable insights into entries and guides, and
-  respect personal+group spaces. Use at session start, on retries/corrections,
-  or when unsure which memchentic skill to load. Deeper playbooks:
-  memchentic-recall, memchentic-capture.
+  respect personal+group spaces. Load when unsure which memchentic playbook
+  to use. Deeper playbooks: memchentic-recall, memchentic-capture.
 ---
 
 # memchentic
@@ -51,6 +50,7 @@ you (me)
 3. Prefer a connected memchentic MCP when ready; do not wrap it in ad-hoc
    REST/CLI side paths for the same job.
 
-Cursor alwaysApply rules `memchentic-recall` and `memchentic-capture` already
-encode the default loop. On **Claude Code** and **Codex**, load this index
-skill at session start — those hosts do not apply Cursor rules.
+Cursor alwaysApply rules `memchentic-recall` and `memchentic-capture` encode
+the default loop. Claude Code, Copilot CLI, and Codex inject the same loop via
+the plugin `SessionStart` / `sessionStart` hook — install the plugin; do not
+rely on loading this index skill to start the habit.

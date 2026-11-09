@@ -14,10 +14,11 @@ demand.
 
 ## Session hook (Claude Code / Copilot CLI / Codex)
 
-`hooks/hooks.json` registers `SessionStart` and `sessionStart` so those hosts
-inject the recall + capture loop automatically. Install the plugin (and for
-Codex, enable hooks + trust this plugin’s hook once). No per-session skill
-load and no `/memchentic` are required to start the habit.
+`hooks/hooks.json` registers `SessionStart` and `sessionStart` for Claude Code
+and Copilot CLI. Codex loads `hooks/codex-hooks.json` (no `version` key) via
+the Codex plugin manifest. Trust the Codex SessionStart hook once via `/hooks`
+or Settings → Hooks; a hook-script change requires trust again. No per-session
+skill load and no `/memchentic` are required to start the habit.
 
 ## Skills (deeper playbooks)
 

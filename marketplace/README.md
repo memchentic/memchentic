@@ -5,10 +5,15 @@ Single-plugin marketplace for this repo. Plugin content lives under
 Cursor / Claude / Copilot / Codex can import `memchentic/memchentic`
 directly (Cursor’s marketplace add has no subdirectory path flag).
 
-Install the plugin and connect the **memchentic** MCP. The agent recalls and
-captures on its own — Cursor via alwaysApply rules; Claude Code, Copilot CLI,
-and Codex via the plugin session-start hook. Do not load a skill or run
-`/memchentic` just to start that habit.
+Install the plugin and connect the **memchentic** MCP. Do not load a skill or
+run `/memchentic` just to start the recall/capture habit.
+
+- **Cursor** — alwaysApply rules inject the loop after install.
+- **Claude Code / Copilot CLI** — the plugin session-start hook injects the
+  loop after install.
+- **Codex** — hooks are on by default for this plugin. Trust this plugin’s
+  SessionStart hook once via `/hooks` or Settings → Hooks; after that, new
+  sessions get the loop. A change to the hook script requires trust again.
 
 ## Install — Cursor
 
@@ -42,8 +47,9 @@ copilot plugin install memchentic@memchentic
 codex plugin marketplace add memchentic/memchentic
 ```
 
-Codex runs plugin hooks only when `[features] hooks = true` is set and you
-have trusted this plugin’s hook (one-time host setup via `/hooks` or Settings).
+Codex loads `hooks/codex-hooks.json` from the plugin manifest. Trust the
+SessionStart hook once (`/hooks` or Settings → Hooks). Re-trust after any
+change to the hook script.
 
 Pair with public plugins from
 [`nodadyoushutup/marketplace`](https://github.com/nodadyoushutup/marketplace)

@@ -128,9 +128,18 @@ export default function GroupDetailPage() {
             onClick={() => {
               const uid = me.id;
               if (!uid) return;
-              if (confirm(`Leave ${group.name}?`)) {
-                void remove(uid).then(() => navigate("/groups"));
-              }
+              if (!confirm(`Leave ${group.name}?`)) return;
+              void (async () => {
+                try {
+                  await api(`/api/spaces/${group.id}/members/${uid}`, {
+                    method: "DELETE",
+                  });
+                  await refresh();
+                  navigate("/groups");
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : String(err));
+                }
+              })();
             }}
           >
             <FontAwesomeIcon icon={faRightFromBracket} />
@@ -187,6 +196,8 @@ export default function GroupDetailPage() {
                           aria-label="Remove"
                           onClick={(e) => {
                             e.stopPropagation();
+                            const label = m.display_name || m.email || m.user_id;
+                            if (!confirm(`Remove ${label} from ${group.name}?`)) return;
                             void remove(m.user_id);
                           }}
                         >

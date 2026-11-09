@@ -58,8 +58,10 @@ function matchesFilters(
   },
 ): boolean {
   if (opts.spaceScope === "personal") {
-    const personal = opts.memberships.find((m) => m.kind === "personal");
-    if (!personal || event.space_id !== personal.id) return false;
+    const personalIds = new Set(
+      opts.memberships.filter((m) => m.kind === "personal").map((m) => m.id),
+    );
+    if (!personalIds.has(event.space_id)) return false;
   } else if (opts.spaceScope === "group") {
     const groupIds = new Set(
       opts.memberships.filter((m) => m.kind === "group").map((m) => m.id),

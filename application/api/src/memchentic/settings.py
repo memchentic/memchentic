@@ -149,6 +149,9 @@ class Settings(BaseSettings):
     session_cookie_secure: bool | None = Field(default=None, alias="SESSION_COOKIE_SECURE")
     register_enabled: bool = Field(default=True, alias="REGISTER_ENABLED")
     enable_api_docs: bool = Field(default=False, alias="ENABLE_API_DOCS")
+    allow_hash_embeddings: bool = Field(
+        default=False, alias="ALLOW_HASH_EMBEDDINGS"
+    )
 
     @field_validator("session_cookie_secure", mode="before")
     @classmethod

@@ -124,6 +124,8 @@ class Digest:
     space_id: str
     kind: str
     created_by: str | None = None
+    updated_at: str | None = None
+    expires_at: str | None = None
 
 
 def _snippet(body: str, limit: int = 180) -> str:
@@ -156,13 +158,17 @@ async def hybrid_search(
     path_hint: str | None = None,
     repo_hint: str | None = None,
     limit: int | None = None,
+    offset: int = 0,
     include_expired: bool = False,
 ) -> list[Digest]:
     settings = get_settings()
+    if not (query or "").strip():
+        return []
     embedder = get_embedder()
     qvec = await embedder.aembed(query)
     limit = settings.resolve_search_limit(limit)
-    fetch_n = max(limit * 3, 30)
+    offset = max(0, int(offset))
+    fetch_n = max((limit + offset) * 3, 30)
     now = datetime.now(UTC)
 
     base_filters = []
@@ -239,7 +245,7 @@ async def hybrid_search(
         ),
         key=lambda pair: pair[1],
         reverse=True,
-    )[:limit]
+    )[offset : offset + limit]
     digests: list[Digest] = []
     for m, score in scored:
         digests.append(
@@ -253,6 +259,8 @@ async def hybrid_search(
                 space_id=str(m.space_id),
                 kind=m.kind.value,
                 created_by=str(m.created_by_user_id) if m.created_by_user_id else None,
+                updated_at=m.updated_at.isoformat() if m.updated_at else None,
+                expires_at=m.expires_at.isoformat() if m.expires_at else None,
             )
         )
     return digests

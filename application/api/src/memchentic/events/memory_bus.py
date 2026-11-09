@@ -98,17 +98,22 @@ def memory_event_from_row(action: Action, memory: Memory) -> MemoryEvent:
     )
 
 
-def _dsn_from_settings() -> str:
-    """Convert the SQLAlchemy async URL into an asyncpg DSN."""
+def _connect_kwargs_from_settings() -> dict[str, Any]:
+    """Parse the SQLAlchemy async URL into asyncpg connect kwargs.
+
+    Passes user/password as discrete kwargs so reserved URL characters in the
+    password (``/``, ``@``, ``:``, ``#``) do not break the listener DSN.
+    """
     url = get_settings().database_url
     # postgresql+asyncpg://user:pass@host:port/db
     parsed = urlparse(url.replace("postgresql+asyncpg://", "postgresql://", 1))
-    user = unquote(parsed.username or "")
-    password = unquote(parsed.password or "")
-    host = parsed.hostname or "localhost"
-    port = parsed.port or 5432
-    db = (parsed.path or "/").lstrip("/") or "memchentic"
-    return f"postgresql://{user}:{password}@{host}:{port}/{db}"
+    return {
+        "user": unquote(parsed.username or ""),
+        "password": unquote(parsed.password or ""),
+        "host": parsed.hostname or "localhost",
+        "port": parsed.port or 5432,
+        "database": (parsed.path or "/").lstrip("/") or "memchentic",
+    }
 
 
 def _fan_out(payload: dict[str, Any]) -> None:
@@ -157,7 +162,10 @@ async def start_memory_listener() -> None:
     async with _lock:
         if _listener_conn is not None:
             return
-        conn = await asyncpg.connect(_dsn_from_settings(), ssl=get_settings().postgres_ssl)
+        conn = await asyncpg.connect(
+            **_connect_kwargs_from_settings(),
+            ssl=get_settings().postgres_ssl,
+        )
         await conn.add_listener(MEMORY_CHANNEL, _on_notify)
         _listener_conn = conn
         logger.info("Listening on Postgres channel %s", MEMORY_CHANNEL)

@@ -60,7 +60,11 @@ export default function MemoriesPage() {
     try {
       const typeFilter = typesQuery(types);
       if (searching) {
-        const qs = new URLSearchParams({ q });
+        const qs = new URLSearchParams({
+          q,
+          limit: String(PAGE),
+          offset: String(offset),
+        });
         if (spaceScope) qs.set("space_scope", spaceScope);
         if (typeFilter) qs.set("types", typeFilter);
         else qs.set("types", MEMORY_TYPE_TOKENS.join(","));
@@ -135,14 +139,14 @@ export default function MemoriesPage() {
     setParams({});
   }
 
-  const rangeStart = searching ? 1 : offset + 1;
-  const rangeEnd = searching ? rows.length : offset + rows.length;
+  const rangeStart = offset + 1;
+  const rangeEnd = offset + rows.length;
 
   const defaultWriteSpace =
     spaceScope === "group"
       ? (me?.memberships.find((s) => s.kind === "group")?.id ?? "")
-      : (me?.memberships.find((s) => s.kind === "personal")?.id ??
-        me?.memberships[0]?.id ??
+      : (me?.personal_space_id ??
+        me?.memberships.find((s) => s.kind === "personal")?.id ??
         "");
 
   return (
@@ -219,35 +223,37 @@ export default function MemoriesPage() {
           onDeleted={(id) => setRows((prev) => prev.filter((row) => row.id !== id))}
         />
 
-        {!searching && (
-          <div className="pager">
-            <span className="text-xs text-faint">
-              {rows.length === 0 ? "No rows" : `${rangeStart}–${rangeEnd}`}
-            </span>
-            <div className="pager-actions">
-              <button
-                className="btn"
-                type="button"
-                title="Previous"
-                aria-label="Previous"
-                disabled={offset === 0}
-                onClick={() => setOffset(Math.max(0, offset - PAGE))}
-              >
-                <FontAwesomeIcon icon={faChevronLeft} />
-              </button>
-              <button
-                className="btn"
-                type="button"
-                title="Next"
-                aria-label="Next"
-                disabled={rows.length < PAGE}
-                onClick={() => setOffset(offset + PAGE)}
-              >
-                <FontAwesomeIcon icon={faChevronRight} />
-              </button>
-            </div>
+        <div className="pager">
+          <span className="text-xs text-faint">
+            {rows.length === 0
+              ? searching
+                ? "No matches"
+                : "No rows"
+              : `${rangeStart}–${rangeEnd}${searching && rows.length >= PAGE ? "+" : ""}`}
+          </span>
+          <div className="pager-actions">
+            <button
+              className="btn"
+              type="button"
+              title="Previous"
+              aria-label="Previous"
+              disabled={offset === 0}
+              onClick={() => setOffset(Math.max(0, offset - PAGE))}
+            >
+              <FontAwesomeIcon icon={faChevronLeft} />
+            </button>
+            <button
+              className="btn"
+              type="button"
+              title="Next"
+              aria-label="Next"
+              disabled={rows.length < PAGE}
+              onClick={() => setOffset(offset + PAGE)}
+            >
+              <FontAwesomeIcon icon={faChevronRight} />
+            </button>
           </div>
-        )}
+        </div>
       </div>
     </div>
   );

@@ -187,6 +187,8 @@ def digest_to_dict(d: Digest) -> dict[str, Any]:
         "space_id": d.space_id,
         "kind": d.kind,
         "created_by": d.created_by,
+        "updated_at": d.updated_at,
+        "expires_at": d.expires_at,
     }
 
 
@@ -295,7 +297,32 @@ async def find_near_duplicate(
     body: str,
     kind: MemoryKind,
 ) -> Memory | None:
+    """Find an active near-duplicate by embedding similarity or exact title.
+
+    Past-due rows are ignored so expired memories do not block ``remember`` or
+    become silent ``guide_write`` upsert targets. Exact title is checked across
+    the whole space (not only the nearest-vector window).
+    """
     settings = get_settings()
+    active = active_memory_clause(include_expired=False)
+    wanted = title.strip().lower()
+
+    title_stmt = (
+        select(Memory)
+        .where(
+            Memory.space_id == space_id,
+            Memory.kind == kind,
+            func.lower(func.trim(Memory.title)) == wanted,
+        )
+        .order_by(Memory.updated_at.desc())
+        .limit(1)
+    )
+    if active is not None:
+        title_stmt = title_stmt.where(active)
+    title_hit = (await session.execute(title_stmt)).scalar_one_or_none()
+    if title_hit is not None:
+        return title_hit
+
     embedder = get_embedder()
     vec = await embedder.aembed_memory_text(title, body)
     distance = Memory.embedding.cosine_distance(vec)
@@ -309,27 +336,12 @@ async def find_near_duplicate(
         .order_by(distance)
         .limit(settings.near_dup_candidates)
     )
+    if active is not None:
+        stmt = stmt.where(active)
     candidates = (await session.execute(stmt)).all()
-    if not candidates:
-        result = await session.execute(
-            select(Memory)
-            .where(
-                Memory.space_id == space_id,
-                Memory.kind == kind,
-                Memory.title == title,
-            )
-            .order_by(Memory.updated_at.desc())
-            .limit(1)
-        )
-        return result.scalar_one_or_none()
-
-    wanted = title.strip().lower()
     for candidate, dist in candidates:
         # pgvector cosine_distance = 1 - cosine_similarity
         if 1.0 - float(dist) >= settings.near_dup_threshold:
-            return candidate
-    for candidate, _ in candidates:
-        if candidate.title.strip().lower() == wanted:
             return candidate
     return None
 
@@ -425,8 +437,24 @@ async def open_memory(
             memory = None
     elif title:
         space_ids = await accessible_space_ids(session, principal, space_id)
-        stmt = select(Memory).where(Memory.title == title, Memory.space_id.in_(space_ids))
-        memory = (await session.execute(stmt.limit(1))).scalar_one_or_none()
+        wanted = title.strip().lower()
+        if not wanted or not space_ids:
+            return None
+        stmt = select(Memory).where(
+            Memory.space_id.in_(space_ids),
+            func.lower(func.trim(Memory.title)) == wanted,
+        )
+        rows = list((await session.execute(stmt)).scalars())
+        if len(rows) > 1:
+            choices = ", ".join(
+                f"{m.id} (space {m.space_id})" for m in rows[:8]
+            )
+            more = "" if len(rows) <= 8 else f" (+{len(rows) - 8} more)"
+            raise ValueError(
+                f"Title {title!r} matches {len(rows)} memories; "
+                f"pass id or space_id. Matches: {choices}{more}"
+            )
+        memory = rows[0] if rows else None
     if memory and recall:
         await touch_memories(session, principal, [memory.id])
         await session.refresh(memory)
@@ -556,6 +584,22 @@ async def browse(
     return list((await session.execute(stmt)).scalars())
 
 
+def _digest_from_memory(m: Memory, *, score: float = 1.0) -> Digest:
+    return Digest(
+        id=str(m.id),
+        title=m.title,
+        score=score,
+        snippet=(m.body or "")[:180],
+        type=m.entry_type.value if m.entry_type else None,
+        tags=list(m.tags or []),
+        space_id=str(m.space_id),
+        kind=m.kind.value,
+        created_by=_creator_id(m),
+        updated_at=m.updated_at.isoformat() if m.updated_at else None,
+        expires_at=m.expires_at.isoformat() if m.expires_at else None,
+    )
+
+
 async def since(
     session: AsyncSession,
     principal: Principal,
@@ -577,20 +621,8 @@ async def since(
         stmt = stmt.where(Memory.updated_at <= until_dt)
     stmt = stmt.order_by(Memory.updated_at.desc()).limit(limit)
     rows = list((await session.execute(stmt)).scalars())
-    return [
-        Digest(
-            id=str(m.id),
-            title=m.title,
-            score=1.0,
-            snippet=(m.body or "")[:180],
-            type=m.entry_type.value if m.entry_type else None,
-            tags=list(m.tags or []),
-            space_id=str(m.space_id),
-            kind=m.kind.value,
-            created_by=_creator_id(m),
-        )
-        for m in rows
-    ]
+    digests = [_digest_from_memory(m) for m in rows]
+    return await _touch_digests(session, principal, digests)
 
 
 async def by_tag(
@@ -608,26 +640,17 @@ async def by_tag(
         return []
     limit = get_settings().resolve_browse_limit(limit)
     stmt = _active_select(space_ids, include_expired)
-    if mode == "or":
+    normalized = (mode or "and").strip().lower()
+    if normalized not in {"and", "or"}:
+        raise ValueError("by_tag mode must be 'and' or 'or'")
+    if normalized == "or":
         stmt = stmt.where(Memory.tags.overlap(tags))
     else:
         stmt = stmt.where(Memory.tags.contains(tags))
     stmt = stmt.order_by(Memory.updated_at.desc()).limit(limit)
     rows = list((await session.execute(stmt)).scalars())
-    return [
-        Digest(
-            id=str(m.id),
-            title=m.title,
-            score=1.0,
-            snippet=(m.body or "")[:180],
-            type=m.entry_type.value if m.entry_type else None,
-            tags=list(m.tags or []),
-            space_id=str(m.space_id),
-            kind=m.kind.value,
-            created_by=_creator_id(m),
-        )
-        for m in rows
-    ]
+    digests = [_digest_from_memory(m) for m in rows]
+    return await _touch_digests(session, principal, digests)
 
 
 async def relocate(
@@ -666,6 +689,7 @@ async def find(
     path_hint: str | None = None,
     repo_hint: str | None = None,
     limit: int | None = None,
+    offset: int = 0,
     include_expired: bool = False,
 ) -> list[Digest]:
     space_ids = await accessible_space_ids(
@@ -683,6 +707,7 @@ async def find(
         path_hint=path_hint,
         repo_hint=repo_hint,
         limit=limit,
+        offset=offset,
         include_expired=include_expired,
     )
     return await _touch_digests(session, principal, digests)
@@ -699,6 +724,7 @@ async def search(
     entry_type: str | None = None,
     types: Sequence[str] | None = None,
     limit: int | None = None,
+    offset: int = 0,
     include_expired: bool = False,
 ) -> list[Digest]:
     """Hybrid search across entries and/or guides for the GUI/REST surface."""
@@ -715,6 +741,7 @@ async def search(
         space_ids=space_ids,
         type_tokens=tokens,
         limit=limit,
+        offset=offset,
         include_expired=include_expired,
     )
     return await _touch_digests(session, principal, digests)
@@ -757,9 +784,11 @@ async def guide_write(
             dup.expires_at = resolve_expiry(
                 expires_at=expires_at, ttl_days=ttl_days, permanent=permanent, now=now
             )
-        elif dup.expires_at is not None:
+        elif dup.expires_at is not None and dup.expires_at > now:
+            # Never revive a past-due guide via slide; find_near_duplicate skips
+            # expired rows, so this branch only extends still-live expiries.
             dup.expires_at = slide_expiry(
-                max(dup.expires_at, now), created_at=dup.created_at, now=now
+                dup.expires_at, created_at=dup.created_at, now=now
             )
         dup.recall_count = (dup.recall_count or 0) + 1
         dup.last_recalled_at = now
@@ -846,20 +875,7 @@ async def about_path(
         )
     stmt = stmt.order_by(Memory.updated_at.desc()).limit(limit)
     rows = list((await session.execute(stmt)).scalars())
-    digests = [
-        Digest(
-            id=str(m.id),
-            title=m.title,
-            score=1.0,
-            snippet=(m.body or "")[:180],
-            type=m.entry_type.value if m.entry_type else None,
-            tags=list(m.tags or []),
-            space_id=str(m.space_id),
-            kind=m.kind.value,
-            created_by=_creator_id(m),
-        )
-        for m in rows
-    ]
+    digests = [_digest_from_memory(m) for m in rows]
     return await _touch_digests(session, principal, digests)
 
 
@@ -952,17 +968,25 @@ async def overlap_report(
     near_duplicates = near_duplicates[:limit]
 
     now = datetime.now(UTC)
+    expiring_stmt = (
+        select(Memory)
+        .where(
+            Memory.space_id.in_(space_ids),
+            Memory.expires_at.is_not(None),
+            Memory.expires_at > now,
+        )
+        .order_by(Memory.expires_at.asc())
+        .limit(limit)
+    )
+    expiring_rows = list((await session.execute(expiring_stmt)).scalars())
     expiring = [
         {
             "id": str(m.id),
             "title": m.title,
             "expires_at": m.expires_at.isoformat() if m.expires_at else None,
         }
-        for m in rows
-        if m.expires_at and m.expires_at > now
-    ][:limit]
-    # soonest first
-    expiring.sort(key=lambda x: x["expires_at"] or "")
+        for m in expiring_rows
+    ]
 
     return {
         "near_duplicates": near_duplicates,

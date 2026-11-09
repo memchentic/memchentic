@@ -32,7 +32,7 @@ If nothing else is specified, new memories go to **personal**.
 
 | Tool | What it does |
 | --- | --- |
-| `remember` | Saves a typed entry |
+| `remember` | Saves a typed entry, with an optional lifetime (`ttl_days` or `permanent`) |
 | `find` | Searches entries and returns short summaries |
 | `open` | Loads the full text of a memory |
 | `revise` | Updates an existing memory |
@@ -42,13 +42,13 @@ If nothing else is specified, new memories go to **personal**.
 | `by_tag` | Finds memories by tags |
 | `relocate` | Moves a memory to another space you can write |
 
-Entry types are covered in {doc}`memory-types`.
+Entry types are covered in {doc}`memory`.
 
 ## Guides
 
 | Tool | What it does |
 | --- | --- |
-| `guide_write` | Saves or reinforces standing advice |
+| `guide_write` | Saves or reinforces standing advice; reinforcing renews its lifetime |
 | `guide_find` | Searches guides (stronger advice ranks higher) |
 
 ## Extra helpers
@@ -66,4 +66,4 @@ harness (Authorize), or with a personal API key from the GUI. The admin API
 key is break-glass only; prefer your own account for everyday use.
 
 How to connect a harness: {doc}`connect-mcp`. What entries and guides mean:
-{doc}`memory-types`.
+{doc}`memory`.

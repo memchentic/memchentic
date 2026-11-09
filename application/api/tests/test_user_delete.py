@@ -154,6 +154,30 @@ async def test_delete_user_removes_personal_space(session: AsyncSession) -> None
     assert left.scalar_one_or_none() is None
 
 
+@pytest.mark.skipif(not ADMIN_KEY, reason="ADMIN_API_KEY unset")
+def test_delete_user_reassigns_owned_groups(client: TestClient) -> None:
+    """Deleting a group owner reassigns created_by to the acting admin."""
+    token, owner_id, _ = _register(client)
+    owner_auth = {"Authorization": f"Bearer {token}"}
+    group = client.post(
+        "/api/spaces",
+        headers=owner_auth,
+        json={"name": f"reassign-{uuid.uuid4().hex[:8]}"},
+    ).json()
+    before = client.get(f"/api/spaces/{group['id']}", headers=owner_auth)
+    assert before.status_code == 200, before.text
+    assert before.json()["created_by"] == owner_id
+
+    admin = {"Authorization": f"Bearer {ADMIN_KEY}"}
+    admin_me = client.get("/api/me", headers=admin).json()
+    deleted = client.delete(f"/api/users/{owner_id}", headers=admin)
+    assert deleted.status_code == 200, deleted.text
+
+    detail = client.get(f"/api/spaces/{group['id']}", headers=admin)
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["created_by"] == admin_me["id"]
+
+
 @pytest.mark.asyncio
 async def test_delete_user_refuses_when_on_bound_roster(session: AsyncSession) -> None:
     user = await register_internal_user(

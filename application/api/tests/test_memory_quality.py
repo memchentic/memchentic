@@ -128,7 +128,15 @@ def test_rerank_path_tag_and_guide_confidence() -> None:
     assert rerank_score(strong, 0.03, now=now) > rerank_score(weak, 0.03, now=now)
 
 
-class _Rows:
+class _TitleResult:
+    def __init__(self, hit: Memory | None) -> None:
+        self._hit = hit
+
+    def scalar_one_or_none(self) -> Memory | None:
+        return self._hit
+
+
+class _VecRows:
     def __init__(self, rows: list[tuple[Memory, float]]) -> None:
         self._rows = rows
 
@@ -137,11 +145,23 @@ class _Rows:
 
 
 class _Session:
-    def __init__(self, rows: list[tuple[Memory, float]]) -> None:
-        self._rows = rows
+    """First execute = title lookup; later executes = vector candidates."""
 
-    async def execute(self, _stmt: Any) -> _Rows:
-        return _Rows(self._rows)
+    def __init__(
+        self,
+        rows: list[tuple[Memory, float]],
+        *,
+        title_hit: Memory | None = None,
+    ) -> None:
+        self._rows = rows
+        self._title_hit = title_hit
+        self._calls = 0
+
+    async def execute(self, _stmt: Any) -> _TitleResult | _VecRows:
+        self._calls += 1
+        if self._calls == 1:
+            return _TitleResult(self._title_hit)
+        return _VecRows(self._rows)
 
 
 class _Embedder:
@@ -151,11 +171,11 @@ class _Embedder:
 
 @pytest.mark.asyncio
 async def test_near_dup_checks_beyond_nearest(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A title twin that is not the nearest vector is still caught."""
+    """Exact title match is found even when outside the nearest-vector window."""
     monkeypatch.setattr(memory_service, "get_embedder", lambda: _Embedder())
     nearest = _memory(title="Different title")
     twin = _memory(title="Deploy Runbook")
-    session = _Session([(nearest, 0.30), (twin, 0.60)])
+    session = _Session([(nearest, 0.30)], title_hit=twin)
     found = await memory_service.find_near_duplicate(
         session,  # type: ignore[arg-type]
         space_id=uuid.uuid4(),
@@ -168,11 +188,11 @@ async def test_near_dup_checks_beyond_nearest(monkeypatch: pytest.MonkeyPatch) -
 
 @pytest.mark.asyncio
 async def test_near_dup_prefers_similarity_hit(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A later candidate above the similarity threshold wins over no match."""
+    """A later candidate above the similarity threshold wins over no title match."""
     monkeypatch.setattr(memory_service, "get_embedder", lambda: _Embedder())
     far = _memory(title="a")
     close = _memory(title="b")
-    session = _Session([(far, 0.5), (close, 0.01)])
+    session = _Session([(far, 0.5), (close, 0.01)], title_hit=None)
     found = await memory_service.find_near_duplicate(
         session,  # type: ignore[arg-type]
         space_id=uuid.uuid4(),

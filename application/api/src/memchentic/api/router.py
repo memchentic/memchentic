@@ -166,7 +166,22 @@ async def _digests_out(session: AsyncSession, digests: list[Any]) -> list[dict]:
 
 @api_router.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok", "service": "memchentic"}
+    from memchentic.embeddings import get_embedder
+    from memchentic.settings import get_settings
+
+    settings = get_settings()
+    try:
+        backend = get_embedder().backend
+        embedder_ok = backend == "onnx" or settings.allow_hash_embeddings
+    except RuntimeError:
+        backend = "unavailable"
+        embedder_ok = False
+    status = "ok" if embedder_ok else "degraded"
+    return {
+        "status": status,
+        "service": "memchentic",
+        "embedder": backend,
+    }
 
 
 _SSE_REAUTH_SECONDS = 10.0
@@ -472,7 +487,11 @@ async def patch_me(
 
 async def _me_payload(session: AsyncSession, principal: Principal) -> dict[str, Any]:
     spaces = await space_service.list_spaces(session, principal)
-    personal = next((s for s in spaces if s.kind.value == "personal"), None)
+    personal = (
+        await space_service.get_personal_space(session, principal.user_id)
+        if principal.user_id
+        else None
+    )
     user = await session.get(User, principal.user_id) if principal.user_id else None
     default_shared = user.default_shared_space_id if user else None
     return {
@@ -778,6 +797,7 @@ async def search_memories(
     types: str | None = None,
     kind: str | None = None,
     limit: int | None = None,
+    offset: int = 0,
     include_expired: bool = False,
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
@@ -793,6 +813,7 @@ async def search_memories(
             entry_type=type,
             types=_parse_types(types),
             limit=limit,
+            offset=offset,
             include_expired=include_expired,
         )
     except ValueError as exc:

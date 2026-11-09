@@ -181,11 +181,12 @@ def create_app() -> FastAPI:
             from memchentic.services.instance_settings import ensure_instance_settings
 
             await set_rls_context(session, user_id=None, is_admin=True)
-            admin = await ensure_admin_user(session, settings)
+            await ensure_admin_user(session, settings)
             await ensure_auth_groups(session, settings)
             await ensure_instance_settings(session, settings)
-            # Attribute orphan memories to the space owner, else the admin user.
-            await session.execute(
+            # Attribute orphan memories to the space owner only (never silently
+            # claim them as the env admin — that hides deleted-owner history).
+            result = await session.execute(
                 text(
                     """
                     UPDATE memories AS m
@@ -197,23 +198,18 @@ def create_app() -> FastAPI:
                     """
                 )
             )
-            result = await session.execute(
-                text(
-                    """
-                    UPDATE memories
-                    SET created_by_user_id = :admin_id
-                    WHERE created_by_user_id IS NULL
-                    """
-                ),
-                {"admin_id": str(admin.id)},
-            )
             await session.commit()
             if result.rowcount:
                 logger.info(
-                    "Backfilled created_by on %s memories to admin user", result.rowcount
+                    "Backfilled created_by on %s memories to space owner",
+                    result.rowcount,
                 )
             if settings.oauth_provider == "internal":
                 await ensure_signing_key(session)
+        from memchentic.embeddings import get_embedder
+
+        # Fail closed before serving if MiniLM is missing (unless hash allowed).
+        get_embedder()
         await start_memory_listener()
         try:
             async with mcp_app.lifespan(app):

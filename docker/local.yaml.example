@@ -6,11 +6,16 @@
 #
 # MiniLM lives under application/api/models/ (baked in the image). When this
 # overlay mounts the API tree, run scripts/fetch_minilm_onnx.sh once on the
-# host so that directory is not empty (otherwise hash fallback).
+# host so that directory is not empty. ALLOW_HASH_EMBEDDINGS lets the app
+# start with hash vectors for quick local boots; do not use that against a
+# MiniLM corpus.
 
 services:
   application:
-    # Local rebuilds only — prod base pulls APPLICATION_IMAGE from GHCR.
+    environment:
+      ALLOW_HASH_EMBEDDINGS: "true"
+    # Local rebuilds only — prod base pulls APPLICATION_IMAGE from
+    # registry.memchentic.ai (Zot); GHCR remains a mirror.
     build:
       context: ..
       dockerfile: docker/Dockerfile

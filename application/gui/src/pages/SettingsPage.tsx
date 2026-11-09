@@ -229,8 +229,10 @@ function AuthGroupsPanel() {
   const active = groups.find((g) => g.slug === slug) ?? null;
   const rosterBound = Boolean(active?.roster_bound);
 
-  async function remove(userId: string) {
+  async function remove(userId: string, label: string) {
     if (!slug || rosterBound) return;
+    const groupLabel = active?.name ?? slug;
+    if (!confirm(`Remove ${label} from ${groupLabel}?`)) return;
     try {
       await api(`/api/auth-groups/${slug}/members/${userId}`, { method: "DELETE" });
       await reload();
@@ -375,7 +377,10 @@ function AuthGroupsPanel() {
                           title="Remove"
                           onClick={(e) => {
                             e.stopPropagation();
-                            void remove(m.user_id);
+                            void remove(
+                              m.user_id,
+                              m.display_name || m.email || m.user_id,
+                            );
                           }}
                         >
                           <FontAwesomeIcon icon={faTrash} />

@@ -43,7 +43,7 @@ shapes on purpose:
 
 Agents get a short digest first, then open the full memory when they need it —
 so context stays useful instead of drowning the chat. Details live on
-{doc}`memory-types`.
+{doc}`memory`.
 
 ## Hybrid retrieval on a real database
 
@@ -108,7 +108,7 @@ tool catalog.
 
 Ready to try it? Check {doc}`requirements`, then {doc}`docker` or
 {doc}`helm`, then {doc}`connect-mcp` and {doc}`install-marketplace`. Deeper
-pages cover {doc}`memory-types`, {doc}`groups`, {doc}`mcp-tools`, and the
+pages cover {doc}`memory`, {doc}`groups`, {doc}`mcp-tools`, and the
 {doc}`marketplace` plugin.
 
 ```{toctree}
@@ -131,7 +131,7 @@ install-marketplace
 :hidden:
 :titlesonly:
 
-memory-types
+memory
 groups
 mcp-tools
 marketplace

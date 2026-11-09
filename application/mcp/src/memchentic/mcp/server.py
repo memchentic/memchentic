@@ -33,7 +33,11 @@ async def me() -> dict[str, Any]:
     principal = require_principal()
     session = require_session()
     spaces = await space_service.list_spaces(session, principal)
-    personal = next((s for s in spaces if s.kind.value == "personal"), None)
+    personal = (
+        await space_service.get_personal_space(session, principal.user_id)
+        if principal.user_id
+        else None
+    )
     user = await session.get(User, principal.user_id) if principal.user_id else None
     default_shared = user.default_shared_space_id if user else None
     return {
@@ -150,9 +154,14 @@ async def find(
     path_hint: str | None = None,
     repo_hint: str | None = None,
     limit: int | None = None,
+    offset: int = 0,
     include_expired: bool = False,
 ) -> list[dict[str, Any]]:
-    """Hybrid search → digests. Past-due expires_at hidden unless include_expired."""
+    """Hybrid search → digests. Past-due expires_at hidden unless include_expired.
+
+    Default ``limit`` is 20 (max 100). Pass ``offset`` to page beyond the first
+    page. Empty/whitespace ``query`` returns no hits.
+    """
     principal = require_principal()
     session = require_session()
     digests = await memory_service.find(
@@ -165,6 +174,7 @@ async def find(
         path_hint=path_hint,
         repo_hint=repo_hint,
         limit=limit,
+        offset=offset,
         include_expired=include_expired,
     )
     return [memory_service.digest_to_dict(d) for d in digests]
@@ -172,7 +182,7 @@ async def find(
 
 @mcp.tool
 async def open(id: str | None = None, title: str | None = None, space_id: str | None = None) -> dict[str, Any]:
-    """Load full entry by id or stable title within a space."""
+    """Load full entry by id or title (case-insensitive). Ambiguous titles error."""
     principal = require_principal()
     session = require_session()
     memory = await memory_service.open_memory(

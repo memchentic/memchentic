@@ -160,7 +160,27 @@ class Embedder:
 
 
 def get_embedder() -> Embedder:
+    """Return the process-wide embedder.
+
+    Raises:
+        RuntimeError: When the backend is hash and ``ALLOW_HASH_EMBEDDINGS`` is
+            false (avoids mixing hash vectors into an ONNX corpus).
+    """
     global _embedder
     if _embedder is None:
         _embedder = Embedder()
+    if _embedder.backend != "onnx":
+        from memchentic.settings import get_settings
+
+        if not get_settings().allow_hash_embeddings:
+            raise RuntimeError(
+                "ONNX embedder unavailable; set ALLOW_HASH_EMBEDDINGS=true for "
+                "local/hash fallback, or run scripts/fetch_minilm_onnx.sh"
+            )
     return _embedder
+
+
+def reset_embedder() -> None:
+    """Clear the cached embedder (tests)."""
+    global _embedder
+    _embedder = None

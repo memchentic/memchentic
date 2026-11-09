@@ -325,7 +325,20 @@ def _group_choices(groups: list[Space]) -> str:
 
 
 async def _member_groups(session: AsyncSession, principal: Principal) -> list[Space]:
-    return [s for s in await list_spaces(session, principal) if s.kind == SpaceKind.group]
+    """Groups the caller belongs to (membership join — not admin instance-wide list)."""
+    if not principal.user_id:
+        return []
+    result = await session.execute(
+        select(Space)
+        .join(SpaceMember, SpaceMember.space_id == Space.id)
+        .where(
+            SpaceMember.user_id == principal.user_id,
+            Space.archived_at.is_(None),
+            Space.kind == SpaceKind.group,
+        )
+        .order_by(Space.name.asc())
+    )
+    return list(result.scalars())
 
 
 async def resolve_group_by_name(

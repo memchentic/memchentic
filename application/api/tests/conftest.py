@@ -94,6 +94,8 @@ def pytest_configure(config: pytest.Config) -> None:
     # Encrypt-at-rest migrations / signing keys need a stable non-weak key.
     if len(os.environ.get("ENCRYPTION_KEY", "")) < 32:
         os.environ["ENCRYPTION_KEY"] = "pytest-memchentic-encryption-key-01"
+    # Tests may run without ONNX files; hash fallback is allowed in pytest only.
+    os.environ.setdefault("ALLOW_HASH_EMBEDDINGS", "true")
     # Strong owner + app role passwords so insecure_secret_names() and RLS role
     # creation succeed under pytest (Compose .env may still be placeholders).
     if len(os.environ.get("POSTGRES_PASSWORD", "")) < 16 or "change-me" in os.environ.get(

@@ -82,8 +82,12 @@ Validate secrets.mode and required fields.
 {{- $required := list "ADMIN_PASSWORD" "ADMIN_API_KEY" "POSTGRES_PASSWORD" "POSTGRES_APP_PASSWORD" "ENCRYPTION_KEY" }}
 {{- range $required }}
 {{- $val := index $.Values.secrets.inline . | default "" }}
-{{- if or (not $val) (contains "change-me" ($val | lower)) (lt (len $val) 16) }}
-{{- fail (printf "secrets.mode=inline requires a strong secrets.inline.%s (16+ chars, no change-me)" .) }}
+{{- $minLen := 16 }}
+{{- if eq . "ENCRYPTION_KEY" }}
+{{- $minLen = 32 }}
+{{- end }}
+{{- if or (not $val) (contains "change-me" ($val | lower)) (lt (len $val) $minLen) }}
+{{- fail (printf "secrets.mode=inline requires a strong secrets.inline.%s (%d+ chars, no change-me)" . $minLen) }}
 {{- end }}
 {{- end }}
 {{- end }}

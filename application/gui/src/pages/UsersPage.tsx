@@ -38,10 +38,14 @@ export default function UsersPage() {
   }, [load]);
 
   useEffect(() => {
+    if (!me?.is_admin) {
+      setCanCreate(false);
+      return;
+    }
     api<{ oauth_provider: string }>("/api/provider")
       .then((p) => setCanCreate(p.oauth_provider === "internal"))
       .catch(() => setCanCreate(false));
-  }, []);
+  }, [me?.is_admin]);
 
   async function deleteUser(e: MouseEvent, user: User) {
     e.stopPropagation();

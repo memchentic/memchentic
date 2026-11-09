@@ -563,6 +563,21 @@ async def delete_user(
     if not ok:
         raise PermissionError(reason or "Cannot delete user")
 
+    # Reassign groups this user owns so remaining members keep a manager.
+    if actor_user_id is not None:
+        owned = list(
+            (
+                await session.execute(
+                    select(Space).where(
+                        Space.kind == SpaceKind.group,
+                        Space.created_by_user_id == user.id,
+                    )
+                )
+            ).scalars()
+        )
+        for space in owned:
+            space.created_by_user_id = actor_user_id
+
     personal = await get_personal_space(session, user.id)
     if personal:
         await session.delete(personal)

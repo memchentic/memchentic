@@ -516,9 +516,14 @@ async def open_memory(
     memory_id: uuid.UUID | None = None,
     title: str | None = None,
     space_id: uuid.UUID | None = None,
+    kind: str | None = None,
     recall: bool = False,
 ) -> Memory | None:
     """Load one memory the caller can see.
+
+    A title lookup prefers live memories. Past-due memories are used only
+    when no live memory has the title, so a title that was remembered again
+    after it expired opens the live row.
 
     Args:
         session: Database session.
@@ -526,14 +531,23 @@ async def open_memory(
         memory_id: Memory id (preferred).
         title: Exact title within accessible spaces.
         space_id: Optional space for title lookup.
+        kind: ``entry`` or ``guide``; narrows a title lookup. Not used with
+            ``memory_id``.
         recall: Record this read as a recall (usage + sliding TTL).
 
     Returns:
         Memory, or None when missing or not visible.
 
     Raises:
-        ValidationError: When ``title`` matches several memories.
+        ValidationError: When ``kind`` is not a memory kind, or when the
+            title matches more than one memory.
     """
+    wanted_kind: MemoryKind | None = None
+    if kind:
+        try:
+            wanted_kind = MemoryKind(kind)
+        except ValueError:
+            raise ValidationError("kind must be 'entry' or 'guide'") from None
     memory: Memory | None = None
     if memory_id:
         result = await session.execute(select(Memory).where(Memory.id == memory_id))
@@ -549,15 +563,25 @@ async def open_memory(
             Memory.space_id.in_(space_ids),
             func.lower(func.trim(Memory.title)) == wanted,
         )
+        if wanted_kind is not None:
+            stmt = stmt.where(Memory.kind == wanted_kind)
+        stmt = stmt.order_by(Memory.updated_at.desc(), Memory.id)
         rows = list((await session.execute(stmt)).scalars())
-        if len(rows) > 1:
-            choices = ", ".join(f"{m.id} (space {m.space_id})" for m in rows[:8])
-            more = "" if len(rows) <= 8 else f" (+{len(rows) - 8} more)"
-            raise ValidationError(
-                f"Title {title!r} matches {len(rows)} memories; "
-                f"pass id or space_id. Matches: {choices}{more}"
+        now = datetime.now(UTC)
+        live = [m for m in rows if m.expires_at is None or m.expires_at > now]
+        # Past-due rows are hidden from every other recall path. They count
+        # here only when no live row has this title.
+        candidates = live or rows
+        if len(candidates) > 1:
+            choices = ", ".join(
+                f"{m.id} ({m.kind.value}, space {m.space_id})" for m in candidates[:8]
             )
-        memory = rows[0] if rows else None
+            more = "" if len(candidates) <= 8 else f" (+{len(candidates) - 8} more)"
+            raise ValidationError(
+                f"Title {title!r} matches {len(candidates)} memories; "
+                f"pass id, space_id or kind. Matches: {choices}{more}"
+            )
+        memory = candidates[0] if candidates else None
     if memory and recall:
         await touch_memories(session, principal, [memory.id])
         await session.refresh(memory)
@@ -692,7 +716,7 @@ async def browse(
     clause = memory_type_clause(tokens)
     if clause is not None:
         stmt = stmt.where(clause)
-    stmt = stmt.order_by(Memory.updated_at.desc()).limit(limit).offset(offset)
+    stmt = stmt.order_by(Memory.updated_at.desc(), Memory.id).limit(limit).offset(offset)
     return list((await session.execute(stmt)).scalars())
 
 
@@ -734,8 +758,8 @@ async def since(
         stmt = stmt.where(Memory.updated_at <= until_dt)
     stmt = stmt.order_by(Memory.updated_at.desc()).limit(limit)
     rows = list((await session.execute(stmt)).scalars())
-    digests = [_digest_from_memory(m) for m in rows]
-    return await _touch_digests(session, principal, digests)
+    # A listing is not a recall: it does not renew TTL or count as usage.
+    return [_digest_from_memory(m) for m in rows]
 
 
 async def by_tag(
@@ -765,8 +789,8 @@ async def by_tag(
         stmt = stmt.where(Memory.tags.contains(tags))
     stmt = stmt.order_by(Memory.updated_at.desc()).limit(limit)
     rows = list((await session.execute(stmt)).scalars())
-    digests = [_digest_from_memory(m) for m in rows]
-    return await _touch_digests(session, principal, digests)
+    # A listing is not a recall: it does not renew TTL or count as usage.
+    return [_digest_from_memory(m) for m in rows]
 
 
 async def relocate(
@@ -845,8 +869,12 @@ async def search(
     limit: int | None = None,
     offset: int = 0,
     include_expired: bool = False,
+    touch: bool = True,
 ) -> list[Digest]:
-    """Hybrid search across entries and/or guides for the GUI/REST surface."""
+    """Hybrid search across entries and/or guides for the GUI/REST surface.
+
+    Hits are renewed (sliding TTL) unless ``touch`` is false.
+    """
     query = check_query(query)
     offset = check_offset(offset)
     space_ids = await accessible_space_ids(session, principal, space_id, space_scope=space_scope)
@@ -863,7 +891,11 @@ async def search(
         offset=offset,
         include_expired=include_expired,
     )
-    return await _touch_digests(session, principal, digests)
+    if touch:
+        # A search the user asked for is a recall. Callers that re-run a
+        # search in the background pass ``touch=False``.
+        return await _touch_digests(session, principal, digests)
+    return digests
 
 
 async def guide_write(
@@ -983,25 +1015,46 @@ async def about_path(
     limit: int | None = None,
     include_expired: bool = False,
 ) -> list[Digest]:
+    """List memories whose ``path_hint`` or body mention ``path``.
+
+    A listing, not a recall: it does not renew TTL or count as usage.
+
+    Args:
+        session: Database session.
+        principal: Caller.
+        path: Substring to look for. Blank means "no path filter".
+        repo_hint: Optional substring of ``repo_hint`` to narrow by.
+        limit: Maximum rows (capped by settings).
+        include_expired: Include past-due rows.
+
+    Returns:
+        Newest-first digests. Empty when ``path`` and ``repo_hint`` are both
+        blank: a blank pattern would otherwise match every memory.
+    """
     path = check_text(path, "path", limits.PATH_HINT_MAX)
     repo_hint = check_optional_text(repo_hint, "repo_hint", limits.REPO_HINT_MAX)
+    needle = (path or "").strip()
+    repo = (repo_hint or "").strip()
+    if not needle and not repo:
+        return []
     space_ids = await accessible_space_ids(session, principal, None)
     if not space_ids:
         return []
     limit = get_settings().resolve_search_limit(limit)
-    path_pat = f"%{escape_ilike(path)}%"
-    stmt = _active_select(space_ids, include_expired).where(
-        or_(
-            Memory.path_hint.ilike(path_pat, escape="\\"),
-            Memory.body.ilike(path_pat, escape="\\"),
-        ),
-    )
-    if repo_hint:
-        stmt = stmt.where(Memory.repo_hint.ilike(f"%{escape_ilike(repo_hint)}%", escape="\\"))
+    stmt = _active_select(space_ids, include_expired)
+    if needle:
+        path_pat = f"%{escape_ilike(needle)}%"
+        stmt = stmt.where(
+            or_(
+                Memory.path_hint.ilike(path_pat, escape="\\"),
+                Memory.body.ilike(path_pat, escape="\\"),
+            ),
+        )
+    if repo:
+        stmt = stmt.where(Memory.repo_hint.ilike(f"%{escape_ilike(repo)}%", escape="\\"))
     stmt = stmt.order_by(Memory.updated_at.desc()).limit(limit)
     rows = list((await session.execute(stmt)).scalars())
-    digests = [_digest_from_memory(m) for m in rows]
-    return await _touch_digests(session, principal, digests)
+    return [_digest_from_memory(m) for m in rows]
 
 
 async def trace(
@@ -1029,23 +1082,55 @@ async def overlap_report(
     *,
     space_id: uuid.UUID | None = None,
     limit: int | None = None,
+    include_expired: bool = False,
 ) -> dict[str, Any]:
+    """Report duplicate candidates and soon-to-expire memories (read-only).
+
+    Args:
+        session: Database session.
+        principal: Authenticated caller.
+        space_id: Limit the report to one space.
+        limit: Most pairs and most expiring memories to return.
+        include_expired: Also compare past-due memories.
+
+    Returns:
+        ``near_duplicates`` (pairs), ``expiring``, ``conflicts`` (always
+        empty; conflict detection is not implemented), ``scanned`` (number
+        of memories compared) and ``truncated`` (True when more memories
+        exist than ``OVERLAP_SCAN_LIMIT``; the oldest were not compared).
+    """
     settings = get_settings()
     limit = settings.resolve_search_limit(limit)
+    note = (
+        "Read-only hygiene report; merge via revise/forget. "
+        "Conflict detection is not implemented; conflicts is always empty."
+    )
     space_ids = await accessible_space_ids(session, principal, space_id)
     if not space_ids:
-        return {"near_duplicates": [], "expiring": [], "conflicts": []}
+        return {
+            "near_duplicates": [],
+            "expiring": [],
+            "conflicts": [],
+            "scanned": 0,
+            "truncated": False,
+            "note": note,
+            "near_dup_threshold": settings.near_dup_threshold,
+        }
 
+    scan_limit = settings.overlap_scan_limit
+    # One row more than the limit shows whether the scan is complete.
     rows = list(
         (
             await session.execute(
-                select(Memory)
-                .where(Memory.space_id.in_(space_ids), Memory.embedding.is_not(None))
-                .order_by(Memory.updated_at.desc())
-                .limit(settings.overlap_scan_limit)
+                _active_select(space_ids, include_expired)
+                .where(Memory.embedding.is_not(None))
+                .order_by(Memory.updated_at.desc(), Memory.id)
+                .limit(scan_limit + 1)
             )
         ).scalars()
     )
+    truncated = len(rows) > scan_limit
+    rows = rows[:scan_limit]
 
     near_duplicates: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
@@ -1120,7 +1205,9 @@ async def overlap_report(
         "near_duplicates": near_duplicates,
         "expiring": expiring,
         "conflicts": [],
-        "note": "Read-only hygiene report; merge via revise/forget.",
+        "scanned": len(rows),
+        "truncated": truncated,
+        "note": note,
         "near_dup_threshold": settings.near_dup_threshold,
     }
 

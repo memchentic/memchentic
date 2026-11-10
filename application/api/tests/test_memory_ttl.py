@@ -103,13 +103,17 @@ def test_mcp_remember_and_guide_write_accept_ttl(client: TestClient) -> None:
 def test_open_slides_expiry_debounces_and_keeps_updated_at(client: TestClient) -> None:
     auth = _user(client)
     created = _create(client, auth, ttl_days=5)
-    opened = client.get(f"/api/memories/{created['id']}", headers=auth).json()
+    opened = client.get(
+        f"/api/memories/{created['id']}", headers=auth, params={"touch": "true"}
+    ).json()
     assert round(_days_from_now(opened["expires_at"])) == 90
     assert opened["recall_count"] == 1
     assert opened["last_recalled_at"] is not None
     assert opened["updated_at"] == created["updated_at"]
 
-    again = client.get(f"/api/memories/{created['id']}", headers=auth).json()
+    again = client.get(
+        f"/api/memories/{created['id']}", headers=auth, params={"touch": "true"}
+    ).json()
     assert again["recall_count"] == 1
 
 
@@ -189,3 +193,61 @@ def test_guide_confidence_is_capped(client: TestClient) -> None:
     assert last is not None
     assert last["confidence"] == 5.0
     assert last["recall_count"] == 7
+
+
+def test_listing_tools_and_rest_detail_do_not_renew(client: TestClient) -> None:
+    """since / by_tag / about_path and a plain REST detail read are not recalls."""
+    auth = _user(client)
+    marker = uuid.uuid4().hex[:12]
+    created = _create(
+        client, auth, ttl_days=5, tags=[f"tag-{marker}"], path_hint=f"src/{marker}.py"
+    )
+    start = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+
+    listed_since = _tool(client, auth, "since", {"since": start})["result"]
+    listed_tag = _tool(client, auth, "by_tag", {"tags": [f"tag-{marker}"]})["result"]
+    listed_path = _tool(client, auth, "about_path", {"path": f"src/{marker}.py"})["result"]
+    for rows in (listed_since, listed_tag, listed_path):
+        assert created["id"] in {r["id"] for r in rows}
+
+    detail = client.get(f"/api/memories/{created['id']}", headers=auth)
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["body"].startswith("sliding ttl")
+
+    row = _listed(client, auth, created["id"])
+    assert row["recall_count"] == 0
+    assert row["last_recalled_at"] is None
+    assert round(_days_from_now(row["expires_at"])) == 5
+
+
+def test_about_path_blank_matches_nothing(client: TestClient) -> None:
+    auth = _user(client)
+    _create(client, auth)
+    _create(client, auth)
+    assert _tool(client, auth, "about_path", {"path": ""})["result"] == []
+    assert _tool(client, auth, "about_path", {"path": "   "})["result"] == []
+
+
+def test_mcp_open_still_renews(client: TestClient) -> None:
+    auth = _user(client)
+    created = _create(client, auth, ttl_days=5)
+    opened = _tool(client, auth, "open", {"id": created["id"]})
+    assert opened["recall_count"] == 1
+    assert round(_days_from_now(opened["expires_at"])) == 90
+
+
+def test_rest_search_renews_unless_touch_is_false(client: TestClient) -> None:
+    auth = _user(client)
+    marker = uuid.uuid4().hex[:12]
+    created = _create(client, auth, title=f"srch {marker}", body=f"search {marker}", ttl_days=5)
+
+    quiet = client.get("/api/memories/search", headers=auth, params={"q": marker, "touch": "false"})
+    assert quiet.status_code == 200, quiet.text
+    assert created["id"] in {r["id"] for r in quiet.json()}
+    assert _listed(client, auth, created["id"])["recall_count"] == 0
+
+    counted = client.get("/api/memories/search", headers=auth, params={"q": marker})
+    assert created["id"] in {r["id"] for r in counted.json()}
+    row = _listed(client, auth, created["id"])
+    assert row["recall_count"] == 1
+    assert round(_days_from_now(row["expires_at"])) == 90

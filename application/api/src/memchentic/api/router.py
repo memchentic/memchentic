@@ -814,6 +814,7 @@ async def search_memories(
     limit: int | None = None,
     offset: int = Query(0, ge=0, le=limits.OFFSET_MAX),
     include_expired: bool = False,
+    touch: bool = True,
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> list[dict]:
@@ -829,6 +830,7 @@ async def search_memories(
         limit=limit,
         offset=offset,
         include_expired=include_expired,
+        touch=touch,
     )
     return await _digests_out(session, digests)
 
@@ -862,10 +864,18 @@ async def create_memory(
 @api_router.get("/memories/{memory_id}")
 async def get_memory(
     memory_id: uuid.UUID,
+    touch: bool = False,
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict:
-    memory = await memory_service.open_memory(session, principal, memory_id=memory_id, recall=True)
+    """Return one memory in full.
+
+    Viewing a memory is not a recall: by default the sliding TTL and the usage
+    counters are left alone, so the GUI detail page can be opened freely. A
+    REST client that reads a memory in order to use it passes ``?touch=true``
+    to get the same renewal as the MCP ``open`` tool.
+    """
+    memory = await memory_service.open_memory(session, principal, memory_id=memory_id, recall=touch)
     if not memory:
         raise HTTPException(404, "Not found")
     return await _memory_out(session, memory, full=True)

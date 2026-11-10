@@ -21,7 +21,9 @@ data:
   BROWSE_DEFAULT_LIMIT: {{ .Values.config.browseDefaultLimit | quote }}
   RESULT_MAX_LIMIT: {{ .Values.config.resultMaxLimit | quote }}
   SEARCH_RECENCY_HALF_LIFE_DAYS: {{ .Values.config.searchRecencyHalfLifeDays | quote }}
+  SEARCH_RECENCY_WEIGHT: {{ .Values.config.searchRecencyWeight | quote }}
   SEARCH_PATH_BOOST: {{ .Values.config.searchPathBoost | quote }}
+  SEARCH_MIN_SIMILARITY: {{ .Values.config.searchMinSimilarity | quote }}
   NEAR_DUP_CANDIDATES: {{ .Values.config.nearDupCandidates | quote }}
   OVERLAP_SCAN_LIMIT: {{ .Values.config.overlapScanLimit | quote }}
   MEMORY_USAGE_SCORE_WEIGHT: {{ .Values.config.memoryUsageScoreWeight | quote }}

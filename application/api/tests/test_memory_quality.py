@@ -29,8 +29,12 @@ def _tool(client: TestClient, auth: dict[str, str], name: str, args: dict[str, A
     resp = client.post(
         "/mcp",
         headers={**auth, "Accept": "application/json, text/event-stream"},
-        json={"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-              "params": {"name": name, "arguments": args}},
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": args},
+        },
     )
     resp.raise_for_status()
     return resp.json()["result"]["structuredContent"]
@@ -76,9 +80,7 @@ def test_expired_hidden_by_default_and_listed_on_request(client: TestClient) -> 
         assert resp.status_code == 200, resp.text
         ids[label] = resp.json()["id"]
 
-    browse = client.get(
-        "/api/memories", headers=auth, params={"space_id": group["id"]}
-    ).json()
+    browse = client.get("/api/memories", headers=auth, params={"space_id": group["id"]}).json()
     assert {m["id"] for m in browse} == {ids["live"], ids["open"]}
     browse_all = client.get(
         "/api/memories",
@@ -101,7 +103,9 @@ def test_expired_hidden_by_default_and_listed_on_request(client: TestClient) -> 
     found = _tool(client, auth, "find", {"query": marker, "space_id": group["id"]})["result"]
     assert ids["expired"] not in {d["id"] for d in found}
     found_all = _tool(
-        client, auth, "find",
+        client,
+        auth,
+        "find",
         {"query": marker, "space_id": group["id"], "include_expired": True},
     )["result"]
     assert ids["expired"] in {d["id"] for d in found_all}
@@ -215,8 +219,13 @@ def test_overlap_report_scans_past_old_window_and_flags_near_dup(client: TestCli
         resp = client.post(
             "/api/memories",
             headers=auth,
-            json={"title": title, "body": body, "type": "insight",
-                  "space_id": group["id"], "force": True},
+            json={
+                "title": title,
+                "body": body,
+                "type": "insight",
+                "space_id": group["id"],
+                "force": True,
+            },
         )
         assert resp.status_code == 200, resp.text
         made.append(resp.json()["id"])

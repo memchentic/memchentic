@@ -30,7 +30,9 @@ dependencies = [
 dev = [
   "pytest>=8.3.0",
   "pytest-asyncio>=0.24.0",
-  "ruff>=0.8.0",
+  "pytest-cov>=7.1.0",
+  "mypy>=2.4.1",
+  "ruff>=0.17.4,<0.18",
 ]
 
 [project.scripts]
@@ -48,9 +50,82 @@ where = ["src"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+xfail_strict = true
+
+[tool.coverage.run]
+source = ["src/memchentic"]
+branch = true
+concurrency = ["greenlet", "thread"]
+
+[tool.coverage.report]
+fail_under = 73
+show_missing = true
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src"]
+warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+# These two packages ship no type information.
+module = ["asyncpg", "onnxruntime"]
+ignore_missing_imports = true
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# Applied migrations must never be edited, so they are not linted or formatted.
+extend-exclude = ["alembic/versions"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "lf"
+
+[tool.ruff.lint]
+select = [
+  "E",    # pycodestyle errors (includes E501 line length)
+  "W",    # pycodestyle warnings
+  "F",    # pyflakes
+  "I",    # import order
+  "B",    # bugbear
+  "UP",   # pyupgrade
+  "C4",   # comprehensions
+  "SIM",  # simplify
+  "RUF",  # ruff-specific
+  "BLE",  # blind except
+  "T20",  # print
+  "PT",   # pytest style
+  "A",    # builtin shadowing
+  "ARG",  # unused arguments
+  "S",    # bandit
+  "D",    # docstrings (Google convention)
+]
+ignore = [
+  # 133 public modules, classes and functions in src have no docstring.
+  # Writing them is not mechanical; SLOP-030 tracks it.
+  "D100", "D101", "D102", "D103", "D104", "D107",
+  # One docstring in search/hybrid.py documents backslash escapes on purpose.
+  "D301",
+  # (str, Enum) -> StrEnum changes str() and format() of three model enums.
+  "UP042",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests use assert, fixed test credentials, unused fixture arguments, and need no docstrings.
+"tests/**" = ["S101", "S105", "S106", "D", "ARG001"]
+# MCP tool names, parameter names and tool docstrings are the public tool contract (WP-11).
+"server.py" = ["A001", "A002", "RUF002"]
+# REST query parameter names "type" and "range" are part of the API.
+"router.py" = ["A002"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.isort]
+known-first-party = ["memchentic"]
 
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Form", "fastapi.Header"]

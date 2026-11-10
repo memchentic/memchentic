@@ -109,7 +109,10 @@ class McpAuthMiddleware:
                     }
                 )
                 await send(
-                    {"type": "http.response.body", "body": json.dumps({"error": "unauthorized"}).encode()}
+                    {
+                        "type": "http.response.body",
+                        "body": json.dumps({"error": "unauthorized"}).encode(),
+                    }
                 )
                 return
 
@@ -174,7 +177,7 @@ def create_app() -> FastAPI:
         await asyncio.to_thread(_run_migrations, settings.migration_database_url)
         logger.info("Migrations applied")
         async with get_session_factory()() as session:
-            from sqlalchemy import text
+            from sqlalchemy import CursorResult, text
 
             from memchentic.auth.users import ensure_admin_user
             from memchentic.services.auth_groups import ensure_auth_groups
@@ -199,11 +202,9 @@ def create_app() -> FastAPI:
                 )
             )
             await session.commit()
-            if result.rowcount:
-                logger.info(
-                    "Backfilled created_by on %s memories to space owner",
-                    result.rowcount,
-                )
+            backfilled = result.rowcount if isinstance(result, CursorResult) else 0
+            if backfilled:
+                logger.info("Backfilled created_by on %s memories to space owner", backfilled)
             if settings.oauth_provider == "internal":
                 await ensure_signing_key(session)
         from memchentic.embeddings import get_embedder
@@ -325,4 +326,5 @@ def run() -> None:
     """Run the development server with autoreload."""
     import uvicorn
 
-    uvicorn.run("memchentic.main:app", host="0.0.0.0", port=8080, reload=True)
+    # Development entry point; inside the container the server must listen on all interfaces.
+    uvicorn.run("memchentic.main:app", host="0.0.0.0", port=8080, reload=True)  # noqa: S104

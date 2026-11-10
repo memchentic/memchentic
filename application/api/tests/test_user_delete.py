@@ -32,9 +32,9 @@ def _register(client: TestClient) -> tuple[str, str, str]:
     )
     assert reg.status_code == 200, reg.text
     user_id = reg.json()["id"]
-    token = client.post(
-        "/api/auth/login", json={"email": email, "password": password}
-    ).json()["access_token"]
+    token = client.post("/api/auth/login", json={"email": email, "password": password}).json()[
+        "access_token"
+    ]
     return token, user_id, email
 
 

@@ -7,7 +7,7 @@ from collections import Counter
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
-from sqlalchemy import func, select
+from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from memchentic.auth.principal import Principal
@@ -96,9 +96,7 @@ async def memory_metrics(
         ValueError: Invalid ``range_key`` or ``space_scope``.
     """
     range_token = _parse_range(range_key)
-    space_ids = await accessible_space_ids(
-        session, principal, space_id, space_scope=space_scope
-    )
+    space_ids = await accessible_space_ids(session, principal, space_id, space_scope=space_scope)
     if not space_ids:
         return _empty_payload(range_token)
 
@@ -135,7 +133,9 @@ async def memory_metrics(
             .order_by(func.count().desc())
         )
     ).all()
-    by_kind = [{"kind": k.value if hasattr(k, "value") else str(k), "count": int(c)} for k, c in kind_rows]
+    by_kind = [
+        {"kind": k.value if hasattr(k, "value") else str(k), "count": int(c)} for k, c in kind_rows
+    ]
 
     type_rows = (
         await session.execute(
@@ -145,9 +145,7 @@ async def memory_metrics(
             .order_by(func.count().desc())
         )
     ).all()
-    by_type = [
-        {"type": t.value if hasattr(t, "value") else str(t), "count": int(c)} for t, c in type_rows
-    ]
+    by_type = [{"type": t.value, "count": int(c)} for t, c in type_rows if t is not None]
 
     space_rows = (
         await session.execute(
@@ -169,10 +167,10 @@ async def memory_metrics(
         by_space.append({"space_id": None, "name": "Other", "count": other})
 
     tag_lists = (
-        await session.execute(
-            select(Memory.tags).where(base, func.cardinality(Memory.tags) > 0)
-        )
-    ).scalars().all()
+        (await session.execute(select(Memory.tags).where(base, func.cardinality(Memory.tags) > 0)))
+        .scalars()
+        .all()
+    )
     tag_counts: Counter[str] = Counter()
     for tags in tag_lists:
         for tag in tags or []:
@@ -207,7 +205,7 @@ async def memory_metrics(
 
     days = _RANGE_DAYS[range_token]
     day_expr = func.date_trunc("day", Memory.created_at)
-    day_filters = [base]
+    day_filters: list[ColumnElement[bool]] = [base]
     window_start: datetime | None = None
     if days is not None:
         window_start = (now - timedelta(days=days - 1)).replace(

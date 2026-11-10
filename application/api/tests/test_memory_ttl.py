@@ -27,8 +27,12 @@ def _tool(client: TestClient, auth: dict[str, str], name: str, args: dict[str, A
     resp = client.post(
         "/mcp",
         headers={**auth, "Accept": "application/json, text/event-stream"},
-        json={"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-              "params": {"name": name, "arguments": args}},
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": args},
+        },
     )
     resp.raise_for_status()
     return resp.json()["result"]["structuredContent"]
@@ -42,8 +46,13 @@ def _days_from_now(iso: str | None) -> float | None:
 
 def _create(client: TestClient, auth: dict[str, str], **extra: Any) -> dict[str, Any]:
     marker = uuid.uuid4().hex[:12]
-    payload = {"title": f"ttl {marker}", "body": f"sliding ttl {marker}", "type": "fact",
-               "force": True, **extra}
+    payload = {
+        "title": f"ttl {marker}",
+        "body": f"sliding ttl {marker}",
+        "type": "fact",
+        "force": True,
+        **extra,
+    }
     resp = client.post("/api/memories", headers=auth, json=payload)
     assert resp.status_code == 200, resp.text
     return resp.json()
@@ -66,7 +75,8 @@ def test_create_defaults_to_90_days_and_honors_overrides(client: TestClient) -> 
     explicit = (datetime.now(UTC) + timedelta(days=3)).isoformat()
     assert round(_days_from_now(_create(client, auth, expires_at=explicit)["expires_at"])) == 3
     bad = client.post(
-        "/api/memories", headers=auth,
+        "/api/memories",
+        headers=auth,
         json={"title": "neg", "body": "neg", "ttl_days": -1, "force": True},
     )
     assert bad.status_code == 422
@@ -75,14 +85,18 @@ def test_create_defaults_to_90_days_and_honors_overrides(client: TestClient) -> 
 def test_mcp_remember_and_guide_write_accept_ttl(client: TestClient) -> None:
     auth = _user(client)
     marker = uuid.uuid4().hex[:12]
-    entry = _tool(client, auth, "remember",
-                  {"title": f"m {marker}", "body": f"mcp {marker}", "ttl_days": 14})
+    entry = _tool(
+        client, auth, "remember", {"title": f"m {marker}", "body": f"mcp {marker}", "ttl_days": 14}
+    )
     assert round(_days_from_now(entry["expires_at"])) == 14
     guide = _tool(client, auth, "guide_write", {"title": f"g {marker}", "body": f"when {marker}"})
     assert round(_days_from_now(guide["expires_at"])) == 90
-    standing = _tool(client, auth, "guide_write",
-                     {"title": f"p {marker}", "body": f"always {uuid.uuid4().hex}",
-                      "permanent": True})
+    standing = _tool(
+        client,
+        auth,
+        "guide_write",
+        {"title": f"p {marker}", "body": f"always {uuid.uuid4().hex}", "permanent": True},
+    )
     assert standing["expires_at"] is None
 
 
@@ -104,8 +118,7 @@ def test_find_hits_renew_but_expired_rows_stay_expired(client: TestClient) -> No
     marker = uuid.uuid4().hex[:12]
     live = _create(client, auth, title=f"live {marker}", body=f"renew {marker}", ttl_days=2)
     past = (datetime.now(UTC) - timedelta(days=1)).isoformat()
-    dead = _create(client, auth, title=f"dead {marker}", body=f"renew {marker}",
-                   expires_at=past)
+    dead = _create(client, auth, title=f"dead {marker}", body=f"renew {marker}", expires_at=past)
 
     hits = _tool(client, auth, "find", {"query": marker, "include_expired": True})["result"]
     assert {live["id"], dead["id"]} <= {h["id"] for h in hits}
@@ -123,8 +136,7 @@ def test_guide_reinforcement_renews_and_counts(client: TestClient) -> None:
     marker = uuid.uuid4().hex[:12]
     args = {"title": f"g {marker}", "body": f"reinforce {marker}", "ttl_days": 3}
     first = _tool(client, auth, "guide_write", args)
-    second = _tool(client, auth, "guide_write",
-                   {"title": args["title"], "body": args["body"]})
+    second = _tool(client, auth, "guide_write", {"title": args["title"], "body": args["body"]})
     assert second["id"] == first["id"]
     assert second["confidence"] == 2.0
     assert second["recall_count"] == 1
@@ -150,9 +162,16 @@ def test_resolve_and_slide_expiry_rules() -> None:
 def test_rerank_rewards_recall_count() -> None:
     now = datetime.now(UTC)
     base: dict[str, Any] = {
-        "id": uuid.uuid4(), "space_id": uuid.uuid4(), "kind": MemoryKind.entry,
-        "entry_type": EntryType.fact, "title": "t", "body": "b", "tags": [],
-        "confidence": 1.0, "created_at": now, "updated_at": now,
+        "id": uuid.uuid4(),
+        "space_id": uuid.uuid4(),
+        "kind": MemoryKind.entry,
+        "entry_type": EntryType.fact,
+        "title": "t",
+        "body": "b",
+        "tags": [],
+        "confidence": 1.0,
+        "created_at": now,
+        "updated_at": now,
     }
     cold = Memory(**base, recall_count=0)
     hot = Memory(**{**base, "id": uuid.uuid4()}, recall_count=20)

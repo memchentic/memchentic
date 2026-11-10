@@ -25,9 +25,7 @@ def _parse_bool(raw: str) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
-async def ensure_instance_settings(
-    session: AsyncSession, settings: Settings | None = None
-) -> None:
+async def ensure_instance_settings(session: AsyncSession, settings: Settings | None = None) -> None:
     """Sync ``REGISTER_ENABLED`` from env into the DB on every boot.
 
     Compose/Helm env is the deploy source of truth. Admins can still flip the
@@ -64,9 +62,7 @@ async def get_register_enabled(session: AsyncSession) -> bool:
     return _parse_bool(row.value)
 
 
-async def set_register_enabled(
-    session: AsyncSession, principal: Principal, enabled: bool
-) -> bool:
+async def set_register_enabled(session: AsyncSession, principal: Principal, enabled: bool) -> bool:
     """Admin-only update for public self-registration.
 
     Args:

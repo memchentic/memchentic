@@ -100,9 +100,7 @@ def _set_session_cookie(response: Response, raw: str, persistent: bool, settings
     response.set_cookie(
         SESSION_COOKIE,
         raw,
-        max_age=(
-            int(session_lifetime(True, settings).total_seconds()) if persistent else None
-        ),
+        max_age=(int(session_lifetime(True, settings).total_seconds()) if persistent else None),
         path=SESSION_COOKIE_PATH,
         secure=settings.cookie_secure,
         httponly=True,

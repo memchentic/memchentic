@@ -27,9 +27,7 @@ async def ensure_personal_space(session: AsyncSession, user: User) -> Space:
     # inserts the membership row in the same privileged statement (avoids the
     # INSERT…RETURNING + SELECT-policy race under FORCE RLS).
     await session.execute(
-        text(
-            "SELECT app_insert_space(:id, CAST(:kind AS space_kind), :name, :created_by)"
-        ),
+        text("SELECT app_insert_space(:id, CAST(:kind AS space_kind), :name, :created_by)"),
         {
             "id": space_id,
             "kind": SpaceKind.personal.value,
@@ -76,17 +74,13 @@ async def list_spaces(session: AsyncSession, principal: Principal) -> list[Space
     return list(result.scalars())
 
 
-async def create_group(
-    session: AsyncSession, principal: Principal, *, name: str
-) -> Space:
+async def create_group(session: AsyncSession, principal: Principal, *, name: str) -> Space:
     if not principal.user_id:
         raise PermissionError("Authentication required")
     owner_id = principal.user_id
     space_id = uuid.uuid4()
     await session.execute(
-        text(
-            "SELECT app_insert_space(:id, CAST(:kind AS space_kind), :name, :created_by)"
-        ),
+        text("SELECT app_insert_space(:id, CAST(:kind AS space_kind), :name, :created_by)"),
         {
             "id": space_id,
             "kind": SpaceKind.group.value,
@@ -98,9 +92,7 @@ async def create_group(
     space = await session.get(Space, space_id)
     if space is None:
         raise RuntimeError("group space insert failed")
-    await commit_with_rls(
-        session, user_id=principal.user_id, is_admin=principal.is_admin
-    )
+    await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
     await session.refresh(space)
     return space
 
@@ -229,9 +221,7 @@ async def add_member(
         return member
     member = SpaceMember(space_id=space_id, user_id=user_id)
     session.add(member)
-    await commit_with_rls(
-        session, user_id=principal.user_id, is_admin=principal.is_admin
-    )
+    await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
     return member
 
 
@@ -255,9 +245,7 @@ async def remove_member(
     member = result.scalar_one_or_none()
     if member:
         await session.delete(member)
-        await commit_with_rls(
-            session, user_id=principal.user_id, is_admin=principal.is_admin
-        )
+        await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
 
 
 async def rename_space(
@@ -273,9 +261,7 @@ async def rename_space(
     ):
         raise PermissionError("Cannot rename another user's personal space")
     space.name = name.strip()
-    await commit_with_rls(
-        session, user_id=principal.user_id, is_admin=principal.is_admin
-    )
+    await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
     await session.refresh(space)
     return space
 
@@ -289,9 +275,7 @@ def can_delete_group(space: Space, principal: Principal) -> bool:
     return bool(principal.is_admin)
 
 
-async def delete_space(
-    session: AsyncSession, principal: Principal, space_id: uuid.UUID
-) -> None:
+async def delete_space(session: AsyncSession, principal: Principal, space_id: uuid.UUID) -> None:
     """Hard-delete a group the principal owns (memories and members cascade).
 
     Args:
@@ -308,9 +292,7 @@ async def delete_space(
     if not can_delete_group(space, principal):
         raise PermissionError("Only the group owner can delete")
     await session.delete(space)
-    await commit_with_rls(
-        session, user_id=principal.user_id, is_admin=principal.is_admin
-    )
+    await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
 
 
 Visibility = Literal["personal", "shared"]
@@ -341,9 +323,7 @@ async def _member_groups(session: AsyncSession, principal: Principal) -> list[Sp
     return list(result.scalars())
 
 
-async def resolve_group_by_name(
-    session: AsyncSession, principal: Principal, group: str
-) -> Space:
+async def resolve_group_by_name(session: AsyncSession, principal: Principal, group: str) -> Space:
     """Resolve a group name to exactly one unarchived group the caller belongs to.
 
     Args:
@@ -371,9 +351,7 @@ async def resolve_group_by_name(
     )
 
 
-async def _resolve_shared_default(
-    session: AsyncSession, principal: Principal
-) -> Space:
+async def _resolve_shared_default(session: AsyncSession, principal: Principal) -> Space:
     groups = await _member_groups(session, principal)
     user = await session.get(User, principal.user_id)
     default_id = user.default_shared_space_id if user else None
@@ -436,9 +414,7 @@ async def resolve_write_space(
         if not user:
             raise PermissionError("User not found")
         space = await ensure_personal_space(session, user)
-        await commit_with_rls(
-            session, user_id=principal.user_id, is_admin=principal.is_admin
-        )
+        await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
     return space
 
 
@@ -469,8 +445,6 @@ async def set_default_shared_space(
         if space_id not in {g.id for g in groups}:
             raise PermissionError("Default shared group must be an active group you belong to")
     user.default_shared_space_id = space_id
-    await commit_with_rls(
-        session, user_id=principal.user_id, is_admin=principal.is_admin
-    )
+    await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
     await session.refresh(user)
     return user

@@ -86,9 +86,10 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
+# ``path`` is bound by the "/{path:path}" route variant and is not used.
 @router.get("/.well-known/oauth-protected-resource")
 @router.get("/.well-known/oauth-protected-resource/{path:path}")
-async def prm(path: str = "") -> dict:
+async def prm(path: str = "") -> dict:  # noqa: ARG001
     return protected_resource_metadata(get_settings())
 
 
@@ -139,9 +140,7 @@ _PKCE_CHALLENGE = re.compile(r"^[A-Za-z0-9_-]{43,128}$")
 _FRAME_DENY = {"X-Frame-Options": "DENY", "Content-Security-Policy": "frame-ancestors 'none'"}
 
 
-def _authorize_page(
-    client: OAuthClient, fields: dict[str, str], error: str | None = None
-) -> str:
+def _authorize_page(client: OAuthClient, fields: dict[str, str], error: str | None = None) -> str:
     """Render the internal sign-in page naming the requesting client and redirect host.
 
     Args:
@@ -205,11 +204,7 @@ def _authorize_html(
     )
     # Prefer the request scheme so http://testserver round-trips; otherwise
     # follow cookie_secure (https BASE_URL / explicit SESSION_COOKIE_SECURE).
-    secure = (
-        request.url.scheme == "https"
-        if request is not None
-        else settings.cookie_secure
-    )
+    secure = request.url.scheme == "https" if request is not None else settings.cookie_secure
     response.set_cookie(
         _OAUTH_CSRF_COOKIE,
         csrf,
@@ -307,11 +302,7 @@ async def authorize_post(
     _require_internal_provider()
     check_rate_limit(f"authorize:{_client_ip(request)}", limit=20, window_seconds=60)
     cookie_csrf = request.cookies.get(_OAUTH_CSRF_COOKIE, "")
-    if (
-        not csrf_token
-        or not cookie_csrf
-        or not secrets.compare_digest(csrf_token, cookie_csrf)
-    ):
+    if not csrf_token or not cookie_csrf or not secrets.compare_digest(csrf_token, cookie_csrf):
         raise HTTPException(400, "Invalid CSRF token")
 
     settings = get_settings()
@@ -489,9 +480,10 @@ async def token_endpoint(
 
         # Atomic consume: only one concurrent refresh wins the row.
         consumed = (
-            await session.execute(
-                text(
-                    """
+            (
+                await session.execute(
+                    text(
+                        """
                     UPDATE auth_refresh_tokens
                     SET revoked_at = now()
                     WHERE token_hash = :h
@@ -500,10 +492,13 @@ async def token_endpoint(
                       AND client_id = :cid
                     RETURNING id, family_id, user_id, scope
                     """
-                ),
-                {"h": token_h, "cid": client_id},
+                    ),
+                    {"h": token_h, "cid": client_id},
+                )
             )
-        ).mappings().first()
+            .mappings()
+            .first()
+        )
         if not consumed or consumed["user_id"] is None:
             await session.rollback()
             raise HTTPException(400, "Invalid refresh token")

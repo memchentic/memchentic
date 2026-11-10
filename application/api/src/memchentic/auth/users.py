@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import functools
 import uuid
 from collections.abc import Collection
 from typing import TYPE_CHECKING
 
+import bcrypt
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
-from memchentic.auth.passwords import hash_password, verify_password
+from memchentic.auth import passwords
+from memchentic.auth.passwords import hash_password, password_needs_rehash, verify_password
 from memchentic.db.session import set_rls_context
 from memchentic.models.entities import Space, SpaceKind, SpaceMember, User, UserIdentity
 from memchentic.services.spaces import ensure_personal_space
@@ -17,10 +20,16 @@ if TYPE_CHECKING:
     from memchentic.auth.principal import Principal
     from memchentic.settings import Settings
 
-# Fixed bcrypt hash so missing-user auth still pays verify cost (timing pad).
-_MISSING_USER_DUMMY_HASH = (
-    "$2b$12$ZXqUKsbftiNtBvL4M9MFUeYf3mnv8n4FqIquSwBfi0224L2Mg55/m"
-)
+
+@functools.cache
+def _dummy_hash(rounds: int) -> str:
+    """Return a throwaway hash at ``rounds`` so missing-user auth pays the same verify cost."""
+    return bcrypt.hashpw(b"memchentic-missing-user", bcrypt.gensalt(rounds=rounds)).decode()
+
+
+def _missing_user_dummy_hash() -> str:
+    """Return the timing-pad hash for the current work factor."""
+    return _dummy_hash(passwords.BCRYPT_ROUNDS)
 
 
 def normalize_email(email: str) -> str:
@@ -205,9 +214,7 @@ async def register_internal_user(
     return user
 
 
-async def authenticate_internal(
-    session: AsyncSession, *, email: str, password: str
-) -> User | None:
+async def authenticate_internal(session: AsyncSession, *, email: str, password: str) -> User | None:
     """Authenticate an internal user by email and password.
 
     Args:
@@ -221,11 +228,11 @@ async def authenticate_internal(
     try:
         email_n = normalize_email(email)
     except ValueError:
-        verify_password(password, _MISSING_USER_DUMMY_HASH)
+        verify_password(password, _missing_user_dummy_hash())
         return None
     user = await get_user_by_email(session, email_n)
     if not user or not user.password_hash:
-        verify_password(password, _MISSING_USER_DUMMY_HASH)
+        verify_password(password, _missing_user_dummy_hash())
         return None
     if not verify_password(password, user.password_hash):
         return None
@@ -364,8 +371,10 @@ async def ensure_admin_user(
         session.add(user)
         await session.flush()
     else:
-        if not user.password_hash or not verify_password(
-            settings.admin_password, user.password_hash
+        if (
+            not user.password_hash
+            or password_needs_rehash(user.password_hash)
+            or not verify_password(settings.admin_password, user.password_hash)
         ):
             user.password_hash = hash_password(settings.admin_password)
         if user.display_name != display:
@@ -386,9 +395,7 @@ async def list_users(session: AsyncSession) -> list[User]:
         All users ordered by created_at descending, with identities loaded.
     """
     result = await session.execute(
-        select(User)
-        .options(selectinload(User.identities))
-        .order_by(User.created_at.desc())
+        select(User).options(selectinload(User.identities)).order_by(User.created_at.desc())
     )
     return list(result.scalars())
 
@@ -423,9 +430,7 @@ async def directory_user_visible(
     return hit.scalar_one_or_none() is not None
 
 
-async def list_directory_users(
-    session: AsyncSession, principal: Principal
-) -> list[User]:
+async def list_directory_users(session: AsyncSession, principal: Principal) -> list[User]:
     """List users visible in the authenticated directory.
 
     Admins see everyone. Other callers only see users who share at least one

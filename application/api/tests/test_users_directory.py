@@ -51,7 +51,8 @@ def test_non_admin_directory_excludes_unshared_users(client: TestClient) -> None
 
     shared = client.get("/api/users", headers=auth_a).json()
     by_id = {r["id"]: r for r in shared}
-    assert user_a in by_id and user_b in by_id
+    assert user_a in by_id
+    assert user_b in by_id
     assert user_c not in by_id
     assert by_id[user_b]["email"] == email_b
     assert "providers" not in by_id[user_b]
@@ -59,7 +60,8 @@ def test_non_admin_directory_excludes_unshared_users(client: TestClient) -> None
 
     # B sees A (shared group) but not C.
     from_b = {r["id"] for r in client.get("/api/users", headers=auth_b).json()}
-    assert user_a in from_b and user_b in from_b
+    assert user_a in from_b
+    assert user_b in from_b
     assert user_c not in from_b
 
     if ADMIN_KEY:
@@ -67,7 +69,9 @@ def test_non_admin_directory_excludes_unshared_users(client: TestClient) -> None
             "/api/users", headers={"Authorization": f"Bearer {ADMIN_KEY}"}
         ).json()
         admin_ids = {r["id"] for r in admin_rows}
-        assert user_a in admin_ids and user_b in admin_ids and user_c in admin_ids
+        assert user_a in admin_ids
+        assert user_b in admin_ids
+        assert user_c in admin_ids
         sample = next(r for r in admin_rows if r["id"] == user_b)
         assert sample["providers"] == ["internal"]
         assert "created_at" in sample
@@ -116,15 +120,9 @@ def test_lookup_email_for_manager_not_random_user(client: TestClient) -> None:
     assert upper.json()["id"] == _user_c
 
     # Member B (not manager) looking up stranger C → 404.
-    assert (
-        client.get(f"/api/users/lookup?email={email_c}", headers=auth_b).status_code
-        == 404
-    )
+    assert client.get(f"/api/users/lookup?email={email_c}", headers=auth_b).status_code == 404
     # Random user C looking up B → 404.
-    assert (
-        client.get(f"/api/users/lookup?email={email_b}", headers=auth_c).status_code
-        == 404
-    )
+    assert client.get(f"/api/users/lookup?email={email_b}", headers=auth_c).status_code == 404
     # Miss and unauthorized share the same 404.
     assert (
         client.get(

@@ -12,9 +12,7 @@ from memchentic.db.session import commit_with_rls
 from memchentic.models.entities import ApiKey
 
 
-def _require_target(
-    principal: Principal, user_id: uuid.UUID | None
-) -> uuid.UUID:
+def _require_target(principal: Principal, user_id: uuid.UUID | None) -> uuid.UUID:
     """Resolve the user whose keys are being managed.
 
     Args:
@@ -64,9 +62,7 @@ async def create_api_key(
         key_hash=hash_api_key(raw),
     )
     session.add(key)
-    await commit_with_rls(
-        session, user_id=principal.user_id, is_admin=principal.is_admin
-    )
+    await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
     await session.refresh(key)
     return key, raw
 
@@ -149,16 +145,12 @@ async def cycle_api_key(
         key_hash=hash_api_key(raw),
     )
     session.add(key)
-    await commit_with_rls(
-        session, user_id=principal.user_id, is_admin=principal.is_admin
-    )
+    await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
     await session.refresh(key)
     return key, raw
 
 
-async def revoke_api_key(
-    session: AsyncSession, principal: Principal, key_id: uuid.UUID
-) -> None:
+async def revoke_api_key(session: AsyncSession, principal: Principal, key_id: uuid.UUID) -> None:
     """Revoke one API key.
 
     Args:
@@ -176,6 +168,4 @@ async def revoke_api_key(
     if not principal.is_admin and key.user_id != principal.user_id:
         raise PermissionError("Cannot revoke other users' keys")
     key.revoked_at = datetime.now(UTC)
-    await commit_with_rls(
-        session, user_id=principal.user_id, is_admin=principal.is_admin
-    )
+    await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)

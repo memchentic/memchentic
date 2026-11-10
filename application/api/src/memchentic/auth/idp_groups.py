@@ -221,7 +221,8 @@ async def _list_okta(settings: Settings) -> list[IdPGroupOption]:
                 if not isinstance(row, dict):
                     continue
                 gid = str(row.get("id") or "").strip()
-                profile = row.get("profile") if isinstance(row.get("profile"), dict) else {}
+                raw_profile = row.get("profile")
+                profile: dict[str, Any] = raw_profile if isinstance(raw_profile, dict) else {}
                 name = str(profile.get("name") or gid).strip()
                 if gid:
                     groups.append(IdPGroupOption(id=gid, name=name or gid))

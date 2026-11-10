@@ -49,9 +49,7 @@ async def me() -> dict[str, Any]:
         "provider": principal.provider,
         "is_admin": principal.is_admin,
         "personal_space_id": str(personal.id) if personal else None,
-        "memberships": [
-            {"id": str(s.id), "name": s.name, "kind": s.kind.value} for s in spaces
-        ],
+        "memberships": [{"id": str(s.id), "name": s.name, "kind": s.kind.value} for s in spaces],
     }
 
 
@@ -181,7 +179,9 @@ async def find(
 
 
 @mcp.tool
-async def open(id: str | None = None, title: str | None = None, space_id: str | None = None) -> dict[str, Any]:
+async def open(
+    id: str | None = None, title: str | None = None, space_id: str | None = None
+) -> dict[str, Any]:
     """Load full entry by id or title (case-insensitive). Ambiguous titles error."""
     principal = require_principal()
     session = require_session()
@@ -314,9 +314,7 @@ async def relocate(id: str, space_id: str) -> dict[str, Any]:
     """Move an entry to another space I can write."""
     principal = require_principal()
     session = require_session()
-    memory = await memory_service.relocate(
-        session, principal, uuid.UUID(id), uuid.UUID(space_id)
-    )
+    memory = await memory_service.relocate(session, principal, uuid.UUID(id), uuid.UUID(space_id))
     return memory_service.memory_to_dict(memory, full=True)
 
 
@@ -405,9 +403,7 @@ async def trace(id: str) -> dict[str, Any]:
 
 
 @mcp.tool
-async def overlap_report(
-    space_id: str | None = None, limit: int | None = None
-) -> dict[str, Any]:
+async def overlap_report(space_id: str | None = None, limit: int | None = None) -> dict[str, Any]:
     """Read-only: near-duplicate pairs, conflicts, soon-to-expire."""
     principal = require_principal()
     session = require_session()

@@ -11,6 +11,8 @@ from urllib.parse import urlencode, urlparse
 
 import httpx
 import jwt
+from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePublicKey
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 from jwt.algorithms import ECAlgorithm, RSAAlgorithm
 
 from memchentic.settings import Settings
@@ -79,8 +81,12 @@ PRESETS: dict[str, ProviderPreset] = {
         label="GitLab",
         notes="GitLab OAuth/OIDC",
     ),
-    "generic": ProviderPreset(name="generic", label="SSO", notes="Raw OIDC via issuer + client env"),
-    "internal": ProviderPreset(name="internal", label="Internal", notes="Built-in email/password AS"),
+    "generic": ProviderPreset(
+        name="generic", label="SSO", notes="Raw OIDC via issuer + client env"
+    ),
+    "internal": ProviderPreset(
+        name="internal", label="Internal", notes="Built-in email/password AS"
+    ),
 }
 
 
@@ -192,10 +198,17 @@ async def fetch_jwks_and_decode(token: str, settings: Settings) -> dict:
         raise ValueError("No matching JWKS key")
 
     kty = key.get("kty")
+    crypto_key: RSAPublicKey | EllipticCurvePublicKey
     if kty == "RSA":
-        crypto_key = RSAAlgorithm.from_jwk(json.dumps(key))
+        rsa_key = RSAAlgorithm.from_jwk(json.dumps(key))
+        if not isinstance(rsa_key, RSAPublicKey):
+            raise ValueError("JWKS RSA key is not a public key")
+        crypto_key = rsa_key
     elif kty == "EC":
-        crypto_key = ECAlgorithm.from_jwk(json.dumps(key))
+        ec_key = ECAlgorithm.from_jwk(json.dumps(key))
+        if not isinstance(ec_key, EllipticCurvePublicKey):
+            raise ValueError("JWKS EC key is not a public key")
+        crypto_key = ec_key
     else:
         raise ValueError(f"Unsupported JWKS kty: {kty}")
 
@@ -241,7 +254,11 @@ def authorization_server_metadata(settings: Settings) -> dict:
 
 
 def protected_resource_metadata(settings: Settings) -> dict:
-    issuer = resolve_issuer(settings) if settings.oauth_provider != "internal" else settings.session_issuer
+    issuer = (
+        resolve_issuer(settings)
+        if settings.oauth_provider != "internal"
+        else settings.session_issuer
+    )
     scopes = [s.strip() for s in resolve_scopes(settings).split(",") if s.strip()]
     return {
         "resource": settings.mcp_resource_url,
@@ -372,9 +389,7 @@ async def exchange_code_for_profile(
     """
     if settings.oauth_provider == "github":
         return await _github_exchange(settings, code=code, code_verifier=code_verifier)
-    return await _oidc_exchange(
-        settings, code=code, code_verifier=code_verifier, nonce=nonce
-    )
+    return await _oidc_exchange(settings, code=code, code_verifier=code_verifier, nonce=nonce)
 
 
 async def _token_post(
@@ -442,9 +457,7 @@ async def _oidc_exchange(
     return _profile_from_claims(claims)
 
 
-async def _github_exchange(
-    settings: Settings, *, code: str, code_verifier: str
-) -> OAuthProfile:
+async def _github_exchange(settings: Settings, *, code: str, code_verifier: str) -> OAuthProfile:
     endpoints = await resolve_oidc_endpoints(settings)
     token_payload = await _token_post(
         settings,
@@ -483,11 +496,7 @@ async def _github_exchange(
             None,
         )
         any_verified = next(
-            (
-                e
-                for e in emails
-                if isinstance(e, dict) and e.get("verified") and e.get("email")
-            ),
+            (e for e in emails if isinstance(e, dict) and e.get("verified") and e.get("email")),
             None,
         )
         chosen = primary_verified or any_verified

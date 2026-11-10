@@ -12,7 +12,7 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import asdict, dataclass
 from typing import Any, Literal
 from urllib.parse import unquote, urlparse
@@ -126,10 +126,8 @@ def _fan_out(payload: dict[str, Any]) -> None:
         try:
             queue.put_nowait(payload)
         except asyncio.QueueFull:
-            try:
+            with suppress(asyncio.QueueEmpty):
                 queue.get_nowait()
-            except asyncio.QueueEmpty:
-                pass
             try:
                 queue.put_nowait(payload)
             except asyncio.QueueFull:
@@ -142,7 +140,7 @@ def _on_notify(
     channel: str,
     payload: str,
 ) -> None:
-    """asyncpg notification callback (runs on the listener connection)."""
+    """Handle one asyncpg notification (runs on the listener connection)."""
     if channel != MEMORY_CHANNEL:
         return
     try:

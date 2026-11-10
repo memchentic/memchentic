@@ -148,9 +148,7 @@ async def test_kid_mismatch_rejected(
     private_key, jwk = rsa_material
     _seed_jwks(monkeypatch, jwk)
     claims = _base_claims()
-    token = jwt.encode(
-        claims, private_key, algorithm="RS256", headers={"kid": "other-kid"}
-    )
+    token = jwt.encode(claims, private_key, algorithm="RS256", headers={"kid": "other-kid"})
     with pytest.raises(ValueError, match="No matching JWKS key"):
         await fetch_jwks_and_decode(token, idp_settings)
 

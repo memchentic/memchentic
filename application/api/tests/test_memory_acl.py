@@ -141,9 +141,7 @@ def test_member_cannot_relocate_another_members_memory(client: TestClient) -> No
         == 200
     )
 
-    refused = _tool(
-        client, token_b, "relocate", {"id": memory_id, "space_id": other["id"]}
-    )
+    refused = _tool(client, token_b, "relocate", {"id": memory_id, "space_id": other["id"]})
     assert refused.get("isError") is True
     opened = _tool(client, token_a, "open", {"id": memory_id})
     assert opened["structuredContent"]["space_id"] == group_id
@@ -180,19 +178,17 @@ def test_creator_and_manager_can_relocate(client: TestClient) -> None:
         client,
         token_b,
         "remember",
-        {"title": f"b-entry {marker}", "body": marker, "space_id": group_id},
+        {"title": f"b-entry {marker}", "body": marker, "space_id": group_id, "force": True},
     )["structuredContent"]["id"]
     by_c = _tool(
         client,
         token_c,
         "remember",
-        {"title": f"c-entry {marker}", "body": marker, "space_id": group_id},
+        {"title": f"c-entry {marker}", "body": marker, "space_id": group_id, "force": True},
     )["structuredContent"]["id"]
 
     assert (
-        _tool(client, token_c, "relocate", {"id": by_b, "space_id": dest["id"]}).get(
-            "isError"
-        )
+        _tool(client, token_c, "relocate", {"id": by_b, "space_id": dest["id"]}).get("isError")
         is True
     )
     moved = _tool(client, token_b, "relocate", {"id": by_b, "space_id": dest["id"]})

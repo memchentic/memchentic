@@ -20,9 +20,9 @@ def _user(client: TestClient) -> dict[str, str]:
     email = f"obv-{uuid.uuid4().hex[:10]}@example.com"
     password = f"pw-{uuid.uuid4().hex}"
     client.post("/api/auth/register", json={"email": email, "password": password})
-    token = client.post(
-        "/api/auth/login", json={"email": email, "password": password}
-    ).json()["access_token"]
+    token = client.post("/api/auth/login", json={"email": email, "password": password}).json()[
+        "access_token"
+    ]
     return {"Authorization": f"Bearer {token}"}
 
 

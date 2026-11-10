@@ -21,6 +21,7 @@ from sqlalchemy import text
 from sqlalchemy.engine.url import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from memchentic.auth import passwords
 from memchentic.auth.rate_limit import reset_rate_limits
 from memchentic.db.session import reset_engine, set_rls_context
 from memchentic.settings import get_settings
@@ -78,6 +79,8 @@ def pytest_configure(config: pytest.Config) -> None:
         config: Pytest config (unused; hook exists for env side effects).
     """
     del config
+    # Production cost (12) takes ~250 ms per hash or verify and dominates suite time.
+    passwords.BCRYPT_ROUNDS = 4
     if os.environ.get("MEMCHENTIC_TEST_URL") and os.environ.get("MEMCHENTIC_ALLOW_LIVE_DB") != "1":
         raise RuntimeError(
             "MEMCHENTIC_TEST_URL would hit the running app's live database. "
@@ -98,21 +101,25 @@ def pytest_configure(config: pytest.Config) -> None:
     os.environ.setdefault("ALLOW_HASH_EMBEDDINGS", "true")
     # Strong owner + app role passwords so insecure_secret_names() and RLS role
     # creation succeed under pytest (Compose .env may still be placeholders).
-    if len(os.environ.get("POSTGRES_PASSWORD", "")) < 16 or "change-me" in os.environ.get(
-        "POSTGRES_PASSWORD", ""
-    ).casefold() or os.environ.get("POSTGRES_PASSWORD") == "memchentic":
+    if (
+        len(os.environ.get("POSTGRES_PASSWORD", "")) < 16
+        or "change-me" in os.environ.get("POSTGRES_PASSWORD", "").casefold()
+        or os.environ.get("POSTGRES_PASSWORD") == "memchentic"
+    ):
         os.environ["POSTGRES_PASSWORD"] = "pytest-postgres-owner-pw-01"
     if len(os.environ.get("POSTGRES_APP_PASSWORD", "")) < 16:
         os.environ["POSTGRES_APP_PASSWORD"] = "pytest-postgres-app-pw-01"
     if not os.environ.get("POSTGRES_APP_USER"):
         os.environ["POSTGRES_APP_USER"] = "memchentic_app"
-    if len(os.environ.get("ADMIN_PASSWORD", "")) < 16 or "change-me" in os.environ.get(
-        "ADMIN_PASSWORD", ""
-    ).casefold():
+    if (
+        len(os.environ.get("ADMIN_PASSWORD", "")) < 16
+        or "change-me" in os.environ.get("ADMIN_PASSWORD", "").casefold()
+    ):
         os.environ["ADMIN_PASSWORD"] = "pytest-admin-password-01"
-    if len(os.environ.get("ADMIN_API_KEY", "")) < 16 or "change-me" in os.environ.get(
-        "ADMIN_API_KEY", ""
-    ).casefold():
+    if (
+        len(os.environ.get("ADMIN_API_KEY", "")) < 16
+        or "change-me" in os.environ.get("ADMIN_API_KEY", "").casefold()
+    ):
         os.environ["ADMIN_API_KEY"] = "pytest-admin-api-key-01"
     get_settings.cache_clear()
     test_url = get_settings().migration_database_url

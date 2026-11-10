@@ -67,7 +67,7 @@ def test_create_memory_fans_out_local_subscribers(client: TestClient) -> None:
 
 
 def test_personal_memory_event_space_not_readable_by_peer(client: TestClient) -> None:
-    """Bus may carry peer personal events; SSE ACL uses space list — peer must not see that space."""
+    """The bus carries a peer's personal event; the peer's space list excludes that space."""
     token_a = _register_and_token(client)
     token_b = _register_and_token(client)
     queue: asyncio.Queue = asyncio.Queue(maxsize=8)
@@ -89,9 +89,7 @@ def test_personal_memory_event_space_not_readable_by_peer(client: TestClient) ->
         assert found is not None
         assert found["space_id"] == payload["space_id"]
 
-        spaces_a = client.get(
-            "/api/spaces", headers={"Authorization": f"Bearer {token_a}"}
-        ).json()
+        spaces_a = client.get("/api/spaces", headers={"Authorization": f"Bearer {token_a}"}).json()
         readable = {s["id"] for s in spaces_a}
         assert payload["space_id"] not in readable
     finally:

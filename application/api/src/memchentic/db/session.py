@@ -118,6 +118,23 @@ async def commit_with_rls(
     await set_rls_context(session, user_id=user_id, is_admin=is_admin)
 
 
+async def advisory_xact_lock(session: AsyncSession, key: str) -> None:
+    """Take a transaction-scoped Postgres advisory lock named by ``key``.
+
+    Blocks until no other transaction holds the same key. Postgres releases
+    the lock when this transaction commits or rolls back, so there is no
+    unlock call. Use it to serialise a check-then-write sequence.
+
+    Args:
+        session: Database session; the lock belongs to its current transaction.
+        key: Stable lock name, for example ``memchentic:dedup:<space id>:guide``.
+    """
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(CAST(:key AS text), 0))"),
+        {"key": key},
+    )
+
+
 async def _reconcile_app_role_password(conn: AsyncConnection, *, role: str, password: str) -> None:
     """Make the app role's password match ``POSTGRES_APP_PASSWORD``.
 

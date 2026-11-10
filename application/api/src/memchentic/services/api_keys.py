@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from memchentic.auth.principal import Principal, hash_api_key
-from memchentic.db.session import commit_with_rls
+from memchentic.db.session import advisory_xact_lock, commit_with_rls
 from memchentic.models.entities import ApiKey
 from memchentic.services import limits
 from memchentic.services.errors import ForbiddenError, NotFoundError
@@ -37,6 +37,11 @@ def _require_target(principal: Principal, user_id: uuid.UUID | None) -> uuid.UUI
     return principal.user_id
 
 
+def _key_lock(user_id: uuid.UUID) -> str:
+    """Advisory-lock name that serialises key issue/cycle for one user."""
+    return f"memchentic:api-keys:{user_id}"
+
+
 async def create_api_key(
     session: AsyncSession,
     principal: Principal,
@@ -57,6 +62,9 @@ async def create_api_key(
     """
     name = check_text(name.strip(), "name", limits.API_KEY_NAME_MAX)
     target = _require_target(principal, user_id)
+    # Same lock as cycle_api_key, so a create never lands between a cycle's
+    # "select active keys" and its commit.
+    await advisory_xact_lock(session, _key_lock(target))
     raw = f"mc_{secrets.token_urlsafe(32)}"
     key = ApiKey(
         id=uuid.uuid4(),
@@ -134,6 +142,9 @@ async def cycle_api_key(
     """
     name = check_text(name.strip(), "name", limits.API_KEY_NAME_MAX)
     target = _require_target(principal, user_id)
+    # Serialise cycles (and creates) for this user: the SELECT below then sees
+    # every key an earlier overlapping call committed, and revokes it.
+    await advisory_xact_lock(session, _key_lock(target))
     now = datetime.now(UTC)
     result = await session.execute(
         select(ApiKey).where(ApiKey.user_id == target, ApiKey.revoked_at.is_(None))

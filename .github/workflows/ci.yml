@@ -102,9 +102,7 @@ jobs:
 
       - name: alembic check
         # Compares the models with memchentic_test, which the pytest step
-        # migrated to head. Fails today: models and migrations disagree.
-        # Remove continue-on-error when PERF-002 is fixed.
-        continue-on-error: true
+        # migrated to head.
         run: |
           docker run --rm --network ci \
             --env POSTGRES_HOSTNAME=postgres \

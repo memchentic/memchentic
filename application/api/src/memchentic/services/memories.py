@@ -22,7 +22,7 @@ from sqlalchemy import (
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from memchentic.auth.principal import Principal
-from memchentic.db.session import commit_with_rls, set_rls_context
+from memchentic.db.session import advisory_xact_lock, commit_with_rls, set_rls_context
 from memchentic.embeddings import get_embedder
 from memchentic.events import memory_event_from_row, publish_memory_event
 from memchentic.models.entities import EntryType, Memory, MemoryKind, User
@@ -33,6 +33,7 @@ from memchentic.search.hybrid import (
     escape_ilike,
     hybrid_search,
     memory_type_clause,
+    prepare_filtered_vector_scan,
 )
 from memchentic.services import limits
 from memchentic.services.errors import (
@@ -44,9 +45,9 @@ from memchentic.services.errors import (
 from memchentic.services.spaces import (
     Visibility,
     can_manage_group,
+    get_readable_space,
     list_spaces,
     resolve_write_space,
-    show_space,
 )
 from memchentic.services.validation import (
     check_body,
@@ -320,7 +321,7 @@ async def accessible_space_ids(
         Zero or more space UUIDs.
     """
     if space_id:
-        space = await show_space(session, principal, space_id)
+        space = await get_readable_space(session, principal, space_id)
         return [space.id] if space else []
     spaces = await list_spaces(session, principal)
     if space_scope:
@@ -367,6 +368,11 @@ def _active_select(space_ids: list[uuid.UUID], include_expired: bool) -> Select[
     if active is not None:
         stmt = stmt.where(active)
     return stmt
+
+
+def _dedup_lock_key(space_id: uuid.UUID, kind: MemoryKind) -> str:
+    """Advisory-lock name that serialises near-duplicate check + write per space and kind."""
+    return f"memchentic:dedup:{space_id}:{kind.value}"
 
 
 async def find_near_duplicate(
@@ -436,6 +442,7 @@ async def find_near_duplicate(
         stmt = stmt.where(Memory.created_by_user_id == created_by)
     if active is not None:
         stmt = stmt.where(active)
+    await prepare_filtered_vector_scan(session)
     candidates = (await session.execute(stmt)).all()
     for candidate, dist in candidates:
         # pgvector cosine_distance = 1 - cosine_similarity
@@ -474,6 +481,9 @@ async def remember(
     et = _parse_entry_type(entry_type)
     expiry = resolve_expiry(expires_at=expires_at, ttl_days=ttl_days, permanent=permanent)
     if not force:
+        # Serialise check-then-insert for entries in this space (released at
+        # commit or rollback). ``force=True`` skips the check and the lock.
+        await advisory_xact_lock(session, _dedup_lock_key(space.id, MemoryKind.entry))
         dup = await find_near_duplicate(
             session, space_id=space.id, title=title, body=body, kind=MemoryKind.entry
         )
@@ -552,7 +562,7 @@ async def open_memory(
     if memory_id:
         result = await session.execute(select(Memory).where(Memory.id == memory_id))
         memory = result.scalar_one_or_none()
-        if memory and not await show_space(session, principal, memory.space_id):
+        if memory and not await get_readable_space(session, principal, memory.space_id):
             memory = None
     elif title:
         space_ids = await accessible_space_ids(session, principal, space_id)
@@ -614,7 +624,7 @@ async def require_memory_manage(
         and memory.created_by_user_id == principal.user_id
     ):
         return
-    space = await show_space(session, principal, memory.space_id)
+    space = await get_readable_space(session, principal, memory.space_id)
     if space is not None and can_manage_group(space, principal):
         return
     raise ForbiddenError("Not allowed to manage this memory")
@@ -928,6 +938,10 @@ async def guide_write(
         session, principal, space_id, group=group, visibility=visibility
     )
     explicit_ttl = expires_at is not None or ttl_days is not None or permanent
+    # Serialise check-then-write for guides in this space. Postgres releases
+    # the lock at the commit below (or at rollback), so overlapping identical
+    # writes run one after another and each later one sees the earlier row.
+    await advisory_xact_lock(session, _dedup_lock_key(space.id, MemoryKind.guide))
     dup = await find_near_duplicate(
         session,
         space_id=space.id,

@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import os
 import uuid
+from typing import Any
 
 from fastapi.testclient import TestClient
+from sqlalchemy import event
+
+from memchentic.db.session import get_engine
 
 ADMIN_KEY = os.environ.get("ADMIN_API_KEY", "")
 
@@ -145,3 +149,37 @@ def test_add_member_response_is_uniform_for_known_and_unknown_targets(
     assert {m["user_id"] for m in roster} == {user_a}
     invites = client.get("/api/me", headers=auth_b).json()["pending_invites"]
     assert [i["id"] for i in invites] == [group["id"]]
+
+
+def test_admin_user_list_statement_count_does_not_grow_per_user(client: TestClient) -> None:
+    """GET /api/users for an administrator does not add a statement per user."""
+    token, user_id, _ = _user(client)
+    promoted = client.post(
+        "/api/auth-groups/administrators/members",
+        headers={"Authorization": f"Bearer {ADMIN_KEY}"},
+        json={"user_id": user_id},
+    )
+    assert promoted.status_code == 200, promoted.text
+    auth = {"Authorization": f"Bearer {token}"}
+
+    def count_statements() -> int:
+        statements: list[str] = []
+
+        def before(*args: Any) -> None:
+            statements.append(args[2])
+
+        engine = get_engine().sync_engine
+        event.listen(engine, "before_cursor_execute", before)
+        try:
+            resp = client.get("/api/users", headers=auth)
+        finally:
+            event.remove(engine, "before_cursor_execute", before)
+        assert resp.status_code == 200, resp.text
+        assert any(row["id"] == user_id and "deletable" in row for row in resp.json())
+        return len(statements)
+
+    first = count_statements()
+    for _ in range(5):
+        _user(client)
+    second = count_statements()
+    assert second - first <= 2

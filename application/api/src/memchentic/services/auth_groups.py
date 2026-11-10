@@ -116,6 +116,30 @@ async def user_in_idp_bound_roster(session: AsyncSession, user_id: uuid.UUID) ->
     return result.scalar_one_or_none() is not None
 
 
+async def idp_bound_user_ids(session: AsyncSession) -> set[uuid.UUID]:
+    """Ids of all users that IdP sync placed on a currently bound auth group.
+
+    Set-based form of ``user_in_idp_bound_roster`` for list endpoints.
+
+    Args:
+        session: Database session.
+
+    Returns:
+        User ids with an IdP-sourced row on a bound Administrators or Users roster.
+    """
+    result = await session.execute(
+        select(AuthGroupMember.user_id)
+        .join(AuthGroup, AuthGroup.id == AuthGroupMember.group_id)
+        .where(
+            AuthGroupMember.source == SOURCE_IDP,
+            AuthGroup.idp_group_id.is_not(None),
+            AuthGroup.idp_group_id != "",
+        )
+        .distinct()
+    )
+    return set(result.scalars())
+
+
 def _bind_matches(group: AuthGroup, idp_groups: Collection[str]) -> bool:
     if not _group_bound(group):
         return False

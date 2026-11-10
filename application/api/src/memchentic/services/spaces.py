@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from sqlalchemy import select, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
@@ -163,6 +164,35 @@ def visible_members(space: Space, principal: Principal) -> list[SpaceMember]:
     return [m for m in space.members if m.accepted_at is not None]
 
 
+async def get_readable_space(
+    session: AsyncSession, principal: Principal, space_id: uuid.UUID
+) -> Space | None:
+    """Return the space when the principal may read it, without its roster.
+
+    Same access rule as ``show_space``: administrators may read every space,
+    other callers must be an accepted member (a pending invite grants
+    nothing). ``Space.members`` is not loaded; use ``show_space`` when the
+    roster is needed.
+
+    Args:
+        session: Database session.
+        principal: Authenticated caller.
+        space_id: Space id.
+
+    Returns:
+        The space, or None when it does not exist or is not readable.
+    """
+    stmt = select(Space).where(Space.id == space_id)
+    if not principal.is_admin:
+        if not principal.user_id:
+            return None
+        stmt = stmt.join(SpaceMember, SpaceMember.space_id == Space.id).where(
+            SpaceMember.user_id == principal.user_id,
+            SpaceMember.accepted_at.is_not(None),
+        )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
 async def list_visible_groups_for_user(
     session: AsyncSession, principal: Principal, target_user_id: uuid.UUID
 ) -> list[Space]:
@@ -264,22 +294,28 @@ async def add_member(
 
     Returns:
         The membership row (pending or accepted).
+
+    Raises:
+        NotFoundError: When no user has ``user_id``.
     """
     await require_roster_manager(session, principal, space_id)
     if await session.get(User, user_id) is None:
         raise NotFoundError("User not found")
-    existing = await session.execute(
+    # One statement instead of select-then-insert: an overlapping identical
+    # add waits on the primary key and is then skipped, not raised.
+    await session.execute(
+        pg_insert(SpaceMember)
+        .values(
+            space_id=space_id,
+            user_id=user_id,
+            accepted_at=datetime.now(UTC) if user_id == principal.user_id else None,
+        )
+        .on_conflict_do_nothing(index_elements=["space_id", "user_id"])
+    )
+    result = await session.execute(
         select(SpaceMember).where(SpaceMember.space_id == space_id, SpaceMember.user_id == user_id)
     )
-    member = existing.scalar_one_or_none()
-    if member:
-        return member
-    member = SpaceMember(
-        space_id=space_id,
-        user_id=user_id,
-        accepted_at=datetime.now(UTC) if user_id == principal.user_id else None,
-    )
-    session.add(member)
+    member = result.scalar_one()
     await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
     return member
 
@@ -567,7 +603,7 @@ async def resolve_write_space(
     if not principal.user_id:
         raise ForbiddenError("Authentication required")
     if space_id is not None:
-        space = await show_space(session, principal, space_id)
+        space = await get_readable_space(session, principal, space_id)
         if not space:
             raise NotFoundError("Space not found or not accessible")
         return space

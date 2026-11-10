@@ -57,7 +57,14 @@ class User(Base):
     provider_subject: Mapped[str] = mapped_column(String(255), nullable=False)
     display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     default_shared_space_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("spaces.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=True),
+        ForeignKey(
+            "spaces.id",
+            ondelete="SET NULL",
+            name="fk_users_default_shared_space",
+            use_alter=True,
+        ),
+        nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -120,6 +127,7 @@ class AuthGroup(Base):
 
 class AuthGroupMember(Base):
     __tablename__ = "auth_group_members"
+    __table_args__ = (Index("ix_auth_group_members_user_id", "user_id"),)
 
     group_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("auth_groups.id", ondelete="CASCADE"), primary_key=True
@@ -152,6 +160,14 @@ class ApiKey(Base):
 
 class Space(Base):
     __tablename__ = "spaces"
+    __table_args__ = (
+        Index(
+            "uq_spaces_personal_owner",
+            "created_by_user_id",
+            unique=True,
+            postgresql_where=text("kind = 'personal'"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     kind: Mapped[SpaceKind] = mapped_column(Enum(SpaceKind, name="space_kind"), nullable=False)
@@ -172,6 +188,7 @@ class Space(Base):
 
 class SpaceMember(Base):
     __tablename__ = "space_members"
+    __table_args__ = (Index("ix_space_members_user_id", "user_id"),)
 
     space_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("spaces.id", ondelete="CASCADE"), primary_key=True
@@ -193,6 +210,14 @@ class Memory(Base):
         Index("ix_memories_space_updated", "space_id", "updated_at"),
         Index("ix_memories_tags", "tags", postgresql_using="gin"),
         Index("ix_memories_search_tsv", "search_tsv", postgresql_using="gin"),
+        Index(
+            "ix_memories_embedding",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+        Index("ix_memories_space_lower_title", "space_id", text("lower(btrim(title))")),
+        Index("ix_memories_created_by_user_id", "created_by_user_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -287,6 +312,7 @@ class GuiSession(Base):
     """Browser sign-in session backing the HttpOnly session cookie."""
 
     __tablename__ = "gui_sessions"
+    __table_args__ = (Index("ix_gui_sessions_user_id", "user_id"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     token_hash: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)

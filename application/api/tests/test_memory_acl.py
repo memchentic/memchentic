@@ -6,6 +6,15 @@ import uuid
 from typing import Any
 
 from fastapi.testclient import TestClient
+from sqlalchemy import event
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from memchentic.auth.principal import Principal
+from memchentic.auth.users import register_internal_user
+from memchentic.db.session import set_rls_context
+from memchentic.models.entities import EntryType, Memory, MemoryKind
+from memchentic.services import memories as memory_service
+from memchentic.services.spaces import get_personal_space
 
 
 def _user(client: TestClient) -> tuple[str, str, str]:
@@ -291,3 +300,49 @@ def test_edits_record_the_editor(client: TestClient) -> None:
     rest = client.get(f"/api/memories/{created['id']}", headers=auth_a).json()
     assert rest["updated_by"] == user_a
     assert rest["updated_by_email"] == email_a
+
+
+async def test_open_memory_checks_membership_without_loading_roster(
+    session: AsyncSession,
+) -> None:
+    """Open by id costs two statements and still hides the row from strangers."""
+    user = await register_internal_user(
+        session,
+        email=f"roster-{uuid.uuid4().hex[:10]}@example.com",
+        password="password-ok-12",
+    )
+    # register_internal_user binds the RLS context to the new user.
+    await set_rls_context(session, user_id=None, is_admin=True)
+    personal = await get_personal_space(session, user.id)
+    assert personal is not None
+    memory = Memory(
+        space_id=personal.id,
+        kind=MemoryKind.entry,
+        entry_type=EntryType.note,
+        title=f"roster {uuid.uuid4().hex[:8]}",
+        body="x",
+        created_by_user_id=user.id,
+    )
+    session.add(memory)
+    await session.flush()
+    memory_id = memory.id
+    member = Principal(user_id=user.id)
+    stranger = Principal(user_id=uuid.uuid4())
+    statements: list[str] = []
+
+    def before(*args: Any) -> None:
+        statements.append(args[2])
+
+    engine = session.get_bind().engine
+    event.listen(engine, "before_cursor_execute", before)
+    try:
+        found = await memory_service.open_memory(session, member, memory_id=memory_id)
+        found_id = found.id if found else None
+        member_statements = len(statements)
+        hidden = await memory_service.open_memory(session, stranger, memory_id=memory_id)
+    finally:
+        event.remove(engine, "before_cursor_execute", before)
+        await session.rollback()
+    assert found_id == memory_id
+    assert hidden is None
+    assert member_statements == 2

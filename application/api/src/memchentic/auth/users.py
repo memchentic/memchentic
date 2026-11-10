@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 import bcrypt
 from sqlalchemy import func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
@@ -228,8 +229,15 @@ async def register_internal_user(
         provider_subject=email_n,
         display_name=display_name or email_n.split("@")[0],
     )
-    session.add(user)
-    await session.flush()
+    try:
+        # Savepoint: an overlapping registration of the same email loses on the
+        # unique index here. Rolling back only the savepoint keeps the
+        # transaction, and the RLS settings bound to it, usable.
+        async with session.begin_nested():
+            session.add(user)
+            await session.flush()
+    except IntegrityError as exc:
+        raise ValueError("Email already registered") from exc
     # App-role RLS: space insert/membership checks need this principal set.
     await set_rls_context(session, user_id=user.id, is_admin=False)
     await _ensure_identity(session, user, provider="internal", subject=email_n)
@@ -576,6 +584,7 @@ async def user_delete_eligibility(
     actor_user_id: uuid.UUID | None,
     target: User,
     settings: Settings | None = None,
+    bound_user_ids: Collection[uuid.UUID] | None = None,
 ) -> tuple[bool, str | None]:
     """Whether an admin may hard-delete ``target``.
 
@@ -584,6 +593,8 @@ async def user_delete_eligibility(
         actor_user_id: Calling admin's user id (self-delete check).
         target: Directory user under consideration.
         settings: Optional settings override.
+        bound_user_ids: Optional precomputed ids of users on an IdP-bound
+            auth group roster. When given, no roster query runs.
 
     Returns:
         ``(deletable, reason)`` — reason is set when not deletable.
@@ -596,7 +607,11 @@ async def user_delete_eligibility(
         return False, "Admin account cannot be deleted"
     if actor_user_id and target.id == actor_user_id:
         return False, "Cannot delete your own account"
-    if await user_in_idp_bound_roster(session, target.id):
+    if bound_user_ids is not None:
+        on_bound_roster = target.id in bound_user_ids
+    else:
+        on_bound_roster = await user_in_idp_bound_roster(session, target.id)
+    if on_bound_roster:
         return False, "User is managed by an IdP-bound auth group"
     return True, None
 

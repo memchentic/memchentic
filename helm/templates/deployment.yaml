@@ -31,6 +31,36 @@ spec:
       securityContext:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if .Values.migrations.initContainer.enabled }}
+      initContainers:
+        - name: migrate
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["python", "-m", "memchentic.migrate"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          envFrom:
+            - configMapRef:
+                name: {{ include "memchentic.fullname" . }}-config
+            - secretRef:
+                name: {{ include "memchentic.secretName" . }}
+          env:
+            - name: POSTGRES_HOSTNAME
+              value: {{ include "memchentic.postgresHostname" . | quote }}
+            - name: POSTGRES_PORT
+              value: {{ .Values.config.postgresPort | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.config.postgresUser | quote }}
+            - name: POSTGRES_APP_USER
+              value: {{ .Values.config.postgresAppUser | default "memchentic_app" | quote }}
+            - name: POSTGRES_DB
+              value: {{ .Values.config.postgresDb | quote }}
+      {{- end }}
       containers:
         - name: application
           {{- with .Values.securityContext }}
@@ -62,6 +92,12 @@ spec:
               value: {{ .Values.config.postgresAppUser | default "memchentic_app" | quote }}
             - name: POSTGRES_DB
               value: {{ .Values.config.postgresDb | quote }}
+            {{- if .Values.migrations.initContainer.enabled }}
+            - name: RUN_MIGRATIONS_ON_BOOT
+              value: "false"
+            - name: POSTGRES_PASSWORD
+              value: ""
+            {{- end }}
           startupProbe:
             httpGet:
               path: /api/health

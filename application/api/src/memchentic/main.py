@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from alembic import command
+from memchentic import __version__
 from memchentic.api.oauth import router as oauth_router
 from memchentic.api.router import api_router
 from memchentic.api.security_headers import SecurityHeadersMiddleware
@@ -240,9 +241,12 @@ def create_app() -> FastAPI:
             details = "; ".join(f"{name} {reason}" for name, reason in problems.items())
             raise RuntimeError(f"Refusing to start: {details}")
         require_bcrypt_length(settings.admin_password, "ADMIN_PASSWORD")
-        await init_db()
-        await asyncio.to_thread(_run_migrations)
-        logger.info("Migrations applied")
+        if settings.run_migrations_on_boot:
+            await init_db()
+            await asyncio.to_thread(_run_migrations)
+            logger.info("Migrations applied")
+        else:
+            logger.info("RUN_MIGRATIONS_ON_BOOT=false: extensions and migrations are skipped")
         async with get_session_factory()() as session:
             from memchentic.auth.users import ensure_admin_user
             from memchentic.services.auth_groups import ensure_auth_groups
@@ -280,7 +284,7 @@ def create_app() -> FastAPI:
     docs_on = settings.enable_api_docs
     app = FastAPI(
         title="memchentic",
-        version="0.1.0",
+        version=__version__,
         lifespan=lifespan,
         docs_url="/docs" if docs_on else None,
         redoc_url="/redoc" if docs_on else None,

@@ -59,6 +59,8 @@ docker compose up -d --build
 
 Open the UI on port `18080` (default), sign in, and create an API key. Point
 your MCP client at `http://<host>:18080/mcp`.
+The port is published on `127.0.0.1` only by default; set `BIND_ADDRESS=0.0.0.0`
+in `docker/.env` to reach it from another machine without a reverse proxy.
 
 Import this GitHub repo as a marketplace and install **memchentic**, then keep
 the MCP connected so recall and capture run on their own. Plugin details live

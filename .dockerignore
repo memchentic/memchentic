@@ -1,14 +1,18 @@
-.git
-.env
-.env.*
-!.env.example
+**/.git
+**/.env
+**/.env.*
+!**/.env.example
+**/*.pem
+**/*.key
+**/.secrets
+docker/local.yaml
 **/__pycache__
 **/.pytest_cache
 **/.ruff_cache
+**/.mypy_cache
 **/node_modules
 application/gui/dist
-application/gui/node_modules
-models
+application/api/models
 # Keep product-truth markdown out of image contexts; allow Sphinx sources.
 docs/*
 !docs/sphinx/

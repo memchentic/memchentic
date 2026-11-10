@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     postgres_db: str = Field(default="memchentic", alias="POSTGRES_DB")
     postgres_sslmode: PostgresSslMode = Field(default="prefer", alias="POSTGRES_SSLMODE")
     postgres_sslrootcert: str = Field(default="", alias="POSTGRES_SSLROOTCERT")
+    # False when a separate one-shot process (python -m memchentic.migrate)
+    # applies migrations; the application then needs no owner-role password.
+    run_migrations_on_boot: bool = Field(default=True, alias="RUN_MIGRATIONS_ON_BOOT")
 
     # Encrypts secrets the app itself stores in Postgres (internal JWT signing keys).
     # Changing it makes existing signing keys unreadable; rotate by re-keying the rows.
@@ -210,8 +213,12 @@ class Settings(BaseSettings):
         host = (urlparse(self.base_url).hostname or "").casefold()
         return host not in {"localhost", "127.0.0.1", "::1"}
 
-    def insecure_secret_problems(self) -> dict[str, str]:
+    def insecure_secret_problems(self, *, for_migration: bool = False) -> dict[str, str]:
         """Explain which break-glass secrets are unusable and why.
+
+        Args:
+            for_migration: True for the one-shot migration process, which
+                always needs the owner-role password.
 
         Returns:
             Mapping of env var name to a short requirement text, for every
@@ -226,6 +233,9 @@ class Settings(BaseSettings):
             "POSTGRES_PASSWORD": (self.postgres_password, 16),
             "POSTGRES_APP_PASSWORD": (self.postgres_app_password, 16),
         }
+        # Only the process that migrates needs the owner-role password.
+        if not (self.run_migrations_on_boot or for_migration):
+            del checks["POSTGRES_PASSWORD"]
         problems: dict[str, str] = {}
         for name, (value, min_len) in checks.items():
             if value == "":
@@ -236,13 +246,16 @@ class Settings(BaseSettings):
                 problems[name] = f"is too short; needs {min_len}+ characters"
         return problems
 
-    def insecure_secret_names(self) -> list[str]:
+    def insecure_secret_names(self, *, for_migration: bool = False) -> list[str]:
         """Name break-glass secrets that are empty, placeholders, or too short.
 
+        Args:
+            for_migration: Passed on to ``insecure_secret_problems``.
+
         Returns:
-            Env var names that must be changed before the API may start.
+            Env var names that must be changed before the process may start.
         """
-        return list(self.insecure_secret_problems())
+        return list(self.insecure_secret_problems(for_migration=for_migration))
 
     @property
     def cors_origin_list(self) -> list[str]:

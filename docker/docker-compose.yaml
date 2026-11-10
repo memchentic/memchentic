@@ -2,10 +2,11 @@ name: memchentic
 
 services:
   postgres:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:0.8.7-pg16
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-memchentic}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-memchentic}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in docker/.env (16+ characters)}
       POSTGRES_DB: ${POSTGRES_DB:-memchentic}
     volumes:
       - postgres-data:/var/lib/postgresql/data
@@ -21,19 +22,26 @@ services:
 
   application:
     image: ${APPLICATION_IMAGE:-registry.memchentic.ai/memchentic/memchentic:latest}
+    restart: unless-stopped
+    mem_limit: ${APPLICATION_MEMORY_LIMIT:-2g}
     ports:
-      - "${GUI_PORT:-18080}:8080"
-      - "${API_PORT:-18081}:8080"
-      - "${MCP_PORT:-18082}:8080"
+      - "${BIND_ADDRESS:-127.0.0.1}:${GUI_PORT:-18080}:8080"
     env_file: .env
     depends_on:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/api/health || exit 1"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request as u; u.urlopen('http://127.0.0.1:8080/api/health', timeout=3)",
+        ]
       interval: 10s
       timeout: 5s
-      retries: 12
+      retries: 6
+      start_period: 60s
 
 volumes:
   postgres-data:

@@ -41,9 +41,9 @@ docker compose exec application mypy
 docker compose exec application pytest -q --cov --cov-report=term-missing
 ```
 
-Host publishes come from `docker/.env`: `GUI_PORT` (18080), `API_PORT`
-(18081), `MCP_PORT` (18082) — all map to the same uvicorn `:8080` (path-routed
-`/`, `/api`, `/mcp`). Rebuild the application image when
+The host publish comes from `docker/.env`: `BIND_ADDRESS` (default `127.0.0.1`)
+and `GUI_PORT` (18080) map to uvicorn `:8080` (path-routed `/`, `/api`, `/mcp`).
+Set `BIND_ADDRESS=0.0.0.0` to reach the port from another machine. Rebuild the application image when
 `application/api/pyproject.toml`, system packages, or `application/gui/`
 change; with `local.yaml`, API + MCP source and `application/gui/dist` are
 bind-mounted.

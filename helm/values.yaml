@@ -164,6 +164,15 @@ secrets:
         key: ""
         property: OAUTH_CLIENT_SECRET
 
+# Schema migrations. Default: the application applies them on boot and so holds
+# the owner-role password (POSTGRES_PASSWORD) for its whole lifetime.
+# initContainer.enabled=true runs `python -m memchentic.migrate` in an init
+# container and starts the application with RUN_MIGRATIONS_ON_BOOT=false and an
+# empty POSTGRES_PASSWORD.
+migrations:
+  initContainer:
+    enabled: false
+
 postgres:
   enabled: true
   image:

@@ -12,16 +12,11 @@ from fastapi.testclient import TestClient
 
 import memchentic.events.memory_bus as memory_bus
 from memchentic.settings import get_settings
+from support import register_user
 
 
 def _token(client: TestClient) -> str:
-    email = f"bus{uuid.uuid4().hex[:10]}@example.com"
-    password = f"pw-{uuid.uuid4().hex}"
-    client.post("/api/auth/register", json={"email": email, "password": password})
-    token: str = client.post("/api/auth/login", json={"email": email, "password": password}).json()[
-        "access_token"
-    ]
-    return token
+    return register_user(client).token
 
 
 def _terminate_backend(pid: int) -> bool:

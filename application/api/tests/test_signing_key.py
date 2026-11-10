@@ -27,7 +27,6 @@ def test_decrypt_with_wrong_key_is_a_runtime_error() -> None:
         decrypt_private_key(pem, wrong)
 
 
-@pytest.mark.asyncio
 async def test_verify_signing_key_detects_a_wrong_encryption_key(session: AsyncSession) -> None:
     """The boot check passes with the real key and fails with another key."""
     settings = get_settings()

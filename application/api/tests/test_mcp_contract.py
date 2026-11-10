@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from memchentic.mcp.server import SERVER_INSTRUCTIONS, _tool_error
 from memchentic.search.hybrid import make_snippet
 from memchentic.services.errors import NotFoundError
+from support import register_user
 
 _PROTOCOL_VERSION = "2025-03-26"
 
@@ -181,14 +182,8 @@ def _user(client: TestClient) -> tuple[str, str, str]:
     Returns:
         Tuple of (access token, user id, email).
     """
-    email = f"t{uuid.uuid4().hex[:10]}@example.com"
-    password = f"pw-{uuid.uuid4().hex}"
-    client.post("/api/auth/register", json={"email": email, "password": password})
-    token = client.post("/api/auth/login", json={"email": email, "password": password}).json()[
-        "access_token"
-    ]
-    user_id = client.get("/api/me", headers={"Authorization": f"Bearer {token}"}).json()["id"]
-    return token, user_id, email
+    user = register_user(client)
+    return user.token, user.user_id, user.email
 
 
 def _rpc(

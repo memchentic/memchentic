@@ -20,8 +20,6 @@ ADMIN_KEY = os.environ.get("ADMIN_API_KEY", "")
 
 
 def _admin_auth() -> dict[str, str]:
-    if not ADMIN_KEY:
-        pytest.skip("ADMIN_API_KEY not set")
     return {"Authorization": f"Bearer {ADMIN_KEY}"}
 
 

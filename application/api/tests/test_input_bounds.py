@@ -17,38 +17,19 @@ from memchentic.services.validation import (
     check_title,
     check_ttl_days,
 )
+from support import call_tool, register_user
 
 PREFIX = "ib"
 
 
 def _user(client: TestClient) -> dict[str, str]:
     """Register and sign in a fresh user; return the auth headers."""
-    email = f"{PREFIX}{uuid.uuid4().hex[:10]}@example.com"
-    password = f"pw-{uuid.uuid4().hex}"
-    assert (
-        client.post("/api/auth/register", json={"email": email, "password": password}).status_code
-        == 200
-    )
-    token = client.post("/api/auth/login", json={"email": email, "password": password}).json()[
-        "access_token"
-    ]
-    return {"Authorization": f"Bearer {token}"}
+    return register_user(client).headers
 
 
 def _tool(client: TestClient, auth: dict[str, str], name: str, args: dict[str, Any]) -> dict:
     """Call an MCP tool; return the JSON-RPC ``result`` object."""
-    resp = client.post(
-        "/mcp",
-        headers={**auth, "Accept": "application/json, text/event-stream"},
-        json={
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "tools/call",
-            "params": {"name": name, "arguments": args},
-        },
-    )
-    resp.raise_for_status()
-    return resp.json()["result"]
+    return call_tool(client, auth, name, args)
 
 
 def _memory(**extra: Any) -> dict[str, Any]:

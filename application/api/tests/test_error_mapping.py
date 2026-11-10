@@ -18,38 +18,20 @@ from memchentic.services.errors import (
     http_error,
     tool_error_text,
 )
+from support import call_tool, register_user
 
 PREFIX = "em"
 
 
 def _user(client: TestClient) -> tuple[dict[str, str], str]:
     """Register and sign in a fresh user; return (auth headers, email)."""
-    email = f"{PREFIX}{uuid.uuid4().hex[:10]}@example.com"
-    password = f"pw-{uuid.uuid4().hex}"
-    assert (
-        client.post("/api/auth/register", json={"email": email, "password": password}).status_code
-        == 200
-    )
-    token = client.post("/api/auth/login", json={"email": email, "password": password}).json()[
-        "access_token"
-    ]
-    return {"Authorization": f"Bearer {token}"}, email
+    user = register_user(client)
+    return user.headers, user.email
 
 
 def _tool(client: TestClient, auth: dict[str, str], name: str, args: dict[str, Any]) -> dict:
     """Call an MCP tool; return the JSON-RPC ``result`` object."""
-    resp = client.post(
-        "/mcp",
-        headers={**auth, "Accept": "application/json, text/event-stream"},
-        json={
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "tools/call",
-            "params": {"name": name, "arguments": args},
-        },
-    )
-    resp.raise_for_status()
-    return resp.json()["result"]
+    return call_tool(client, auth, name, args)
 
 
 def _error_text(result: dict) -> str:

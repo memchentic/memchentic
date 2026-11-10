@@ -25,7 +25,6 @@ def test_normalize_email_requires_value() -> None:
     assert normalize_email("Ada@Example.COM") == "ada@example.com"
 
 
-@pytest.mark.asyncio
 async def test_upsert_oauth_requires_verified_email(session: AsyncSession) -> None:
     """Unverified IdP emails are refused so accounts cannot be claimed blindly."""
     with pytest.raises(ValueError, match="verified"):
@@ -38,7 +37,6 @@ async def test_upsert_oauth_requires_verified_email(session: AsyncSession) -> No
         )
 
 
-@pytest.mark.asyncio
 async def test_upsert_oauth_meshes_providers_under_email(session: AsyncSession) -> None:
     """Changing OAuth provider keeps the same user and accumulates bindings."""
     suffix = uuid.uuid4().hex[:10]
@@ -135,7 +133,6 @@ async def test_internal_then_oauth_link_revokes_unverified_credentials(
         assert live == 0, model.__name__
 
 
-@pytest.mark.asyncio
 async def test_ensure_admin_user_is_real_user_with_personal_space(
     session: AsyncSession,
 ) -> None:

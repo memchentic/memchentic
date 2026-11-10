@@ -7,35 +7,20 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
+from support import call_tool, register_user
+
 EXPIRED = "2000-01-01T00:00:00+00:00"
 
 
 def _user(client: TestClient) -> dict[str, str]:
-    email = f"open{uuid.uuid4().hex[:10]}@example.com"
-    password = f"pw-{uuid.uuid4().hex}"
-    client.post("/api/auth/register", json={"email": email, "password": password})
-    token = client.post("/api/auth/login", json={"email": email, "password": password}).json()[
-        "access_token"
-    ]
-    return {"Authorization": f"Bearer {token}"}
+    return register_user(client).headers
 
 
 def _tool(
     client: TestClient, auth: dict[str, str], name: str, args: dict[str, Any]
 ) -> dict[str, Any]:
     """Call an MCP tool and return the JSON-RPC ``result`` (may carry ``isError``)."""
-    resp = client.post(
-        "/mcp",
-        headers={**auth, "Accept": "application/json, text/event-stream"},
-        json={
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "tools/call",
-            "params": {"name": name, "arguments": args},
-        },
-    )
-    resp.raise_for_status()
-    return resp.json()["result"]
+    return call_tool(client, auth, name, args)
 
 
 def _entry(client: TestClient, auth: dict[str, str], title: str, **fields: Any) -> str:

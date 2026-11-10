@@ -16,17 +16,12 @@ from memchentic.models.entities import EntryType, Memory, MemoryKind
 from memchentic.services.metrics import memory_metrics
 from memchentic.services.spaces import get_personal_space
 from memchentic.services.users import register_internal_user
+from support import register_user
 
 
 def _user(client: TestClient) -> tuple[str, dict]:
-    email = f"t{uuid.uuid4().hex[:10]}@example.com"
-    password = f"pw-{uuid.uuid4().hex}"
-    client.post("/api/auth/register", json={"email": email, "password": password})
-    token = client.post("/api/auth/login", json={"email": email, "password": password}).json()[
-        "access_token"
-    ]
-    me = client.get("/api/me", headers={"Authorization": f"Bearer {token}"}).json()
-    return token, me
+    user = register_user(client)
+    return user.token, client.get("/api/me", headers=user.headers).json()
 
 
 def test_metrics_counts_and_acl(client: TestClient) -> None:

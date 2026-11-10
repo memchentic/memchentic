@@ -11,16 +11,11 @@ from fastapi.testclient import TestClient
 from memchentic.db.session import reset_engine
 from memchentic.embeddings.reembed import reembed_all
 from memchentic.settings import get_settings
+from support import register_user
 
 
 def _user(client: TestClient) -> dict[str, str]:
-    email = f"reembed{uuid.uuid4().hex[:10]}@example.com"
-    password = f"pw-{uuid.uuid4().hex}"
-    client.post("/api/auth/register", json={"email": email, "password": password})
-    token = client.post("/api/auth/login", json={"email": email, "password": password}).json()[
-        "access_token"
-    ]
-    return {"Authorization": f"Bearer {token}"}
+    return register_user(client).headers
 
 
 def test_reembed_all_covers_every_batch_and_keeps_updated_at(client: TestClient) -> None:

@@ -3,22 +3,18 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from typing import Any, get_args
 
 import pytest
 from fastapi.testclient import TestClient
 
+from support import RegisteredUser, register_user, tool_rows
+
 
 def _user(client: TestClient) -> tuple[str, dict]:
-    email = f"t{uuid.uuid4().hex[:10]}@example.com"
-    password = f"pw-{uuid.uuid4().hex}"
-    client.post("/api/auth/register", json={"email": email, "password": password})
-    token = client.post("/api/auth/login", json={"email": email, "password": password}).json()[
-        "access_token"
-    ]
-    auth = {"Authorization": f"Bearer {token}"}
-    me = client.get("/api/me", headers=auth).json()
-    return token, me
+    user = register_user(client)
+    return user.token, client.get("/api/me", headers=user.headers).json()
 
 
 def test_browse_space_scope_and_types(client: TestClient) -> None:
@@ -232,3 +228,83 @@ def test_type_and_kind_names_match_the_enums() -> None:
 
     assert set(get_args(EntryTypeName)) == {e.value for e in EntryType}
     assert set(get_args(MemoryKindName)) == {k.value for k in MemoryKind}
+
+
+def _auth(client: TestClient) -> dict[str, str]:
+    return register_user(client).headers
+
+
+def test_blank_search_returns_empty_without_error(client: TestClient) -> None:
+    auth = _auth(client)
+    resp = client.get("/api/memories/search", headers=auth, params={"q": "   "})
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == []
+
+
+def test_by_tag_mode_or_case_insensitive(client: TestClient) -> None:
+    auth = _auth(client)
+    marker = uuid.uuid4().hex[:10]
+    client.post(
+        "/api/memories",
+        headers=auth,
+        json={
+            "title": f"tagged {marker}",
+            "body": "x",
+            "type": "fact",
+            "tags": [f"a-{marker}", f"b-{marker}"],
+            "force": True,
+        },
+    )
+    mcp = client.post(
+        "/mcp",
+        headers={**auth, "Accept": "application/json, text/event-stream"},
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "by_tag",
+                "arguments": {"tags": [f"a-{marker}"], "mode": "OR"},
+            },
+        },
+    )
+    assert mcp.status_code == 200, mcp.text
+    content = mcp.json()["result"]["structuredContent"]
+    rows = content if isinstance(content, list) else content.get("result", content)
+    assert any(d["title"] == f"tagged {marker}" for d in rows)
+
+
+def test_by_tag_and_requires_all_or_requires_any(
+    client: TestClient,
+    make_user: Callable[..., RegisteredUser],
+    mcp_tool: Callable[[dict[str, str], str, dict[str, Any]], dict[str, Any]],
+) -> None:
+    user = make_user()
+    marker = uuid.uuid4().hex[:10]
+    tag_a = f"a-{marker}"
+    tag_b = f"b-{marker}"
+
+    def create(tags: list[str]) -> str:
+        resp = client.post(
+            "/api/memories",
+            headers=user.headers,
+            json={
+                "title": f"tagged {uuid.uuid4().hex[:8]}",
+                "body": "x",
+                "type": "fact",
+                "tags": tags,
+                "force": True,
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        return resp.json()["id"]
+
+    both = create([tag_a, tag_b])
+    only_a = create([tag_a])
+
+    def ids(mode: str) -> set[str]:
+        result = mcp_tool(user.headers, "by_tag", {"tags": [tag_a, tag_b], "mode": mode})
+        return {row["id"] for row in tool_rows(result)}
+
+    assert ids("and") == {both}
+    assert ids("or") == {both, only_a}

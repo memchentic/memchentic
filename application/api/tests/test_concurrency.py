@@ -11,6 +11,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 from fastapi.testclient import TestClient
 
+from support import register_user
+
 
 def _user(client: TestClient) -> tuple[dict[str, str], str]:
     """Register and log in a fresh internal user.
@@ -21,14 +23,8 @@ def _user(client: TestClient) -> tuple[dict[str, str], str]:
     Returns:
         Tuple of (Authorization header, user id).
     """
-    email = f"c{uuid.uuid4().hex[:10]}@example.com"
-    password = f"pw-{uuid.uuid4().hex}"
-    client.post("/api/auth/register", json={"email": email, "password": password})
-    token = client.post("/api/auth/login", json={"email": email, "password": password}).json()[
-        "access_token"
-    ]
-    auth = {"Authorization": f"Bearer {token}"}
-    return auth, client.get("/api/me", headers=auth).json()["id"]
+    user = register_user(client)
+    return user.headers, user.user_id
 
 
 def test_concurrent_identical_guide_writes_make_one_guide(client: TestClient) -> None:

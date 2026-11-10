@@ -15,6 +15,7 @@ from memchentic.models.entities import EntryType, Memory, MemoryKind
 from memchentic.services import memories as memory_service
 from memchentic.services.spaces import get_personal_space
 from memchentic.services.users import register_internal_user
+from support import call_tool, register_user
 
 
 def _user(client: TestClient) -> tuple[str, str, str]:
@@ -23,14 +24,8 @@ def _user(client: TestClient) -> tuple[str, str, str]:
     Returns:
         Tuple of (access token, user id, email).
     """
-    email = f"t{uuid.uuid4().hex[:10]}@example.com"
-    password = f"pw-{uuid.uuid4().hex}"
-    client.post("/api/auth/register", json={"email": email, "password": password})
-    token = client.post("/api/auth/login", json={"email": email, "password": password}).json()[
-        "access_token"
-    ]
-    user_id = client.get("/api/me", headers={"Authorization": f"Bearer {token}"}).json()["id"]
-    return token, user_id, email
+    user = register_user(client)
+    return user.token, user.user_id, user.email
 
 
 def _join(
@@ -49,21 +44,7 @@ def _join(
 
 def _tool(client: TestClient, token: str, name: str, args: dict[str, Any]) -> dict[str, Any]:
     """Call an MCP tool over streamable HTTP."""
-    resp = client.post(
-        "/mcp",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/json, text/event-stream",
-        },
-        json={
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "tools/call",
-            "params": {"name": name, "arguments": args},
-        },
-    )
-    resp.raise_for_status()
-    return resp.json()["result"]
+    return call_tool(client, {"Authorization": f"Bearer {token}"}, name, args)
 
 
 def _shared_group(

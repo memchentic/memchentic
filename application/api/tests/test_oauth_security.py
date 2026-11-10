@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import base64
-import hashlib
+import os
 import re
-import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlparse
@@ -20,14 +18,13 @@ from memchentic.auth.tokens import ACCESS_TOKEN_SECONDS
 from memchentic.models.entities import AuthRefreshToken, OAuthClient
 from memchentic.services.users import register_internal_user
 from memchentic.settings import get_settings
+from support import pkce_pair
 
 _CSRF_RE = re.compile(r'name="csrf_token" value="([^"]+)"')
 
 
 def _pkce_pair() -> tuple[str, str]:
-    verifier = secrets.token_urlsafe(48)
-    digest = hashlib.sha256(verifier.encode()).digest()
-    return verifier, base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
+    return pkce_pair()
 
 
 def _csrf_from_page(html: str) -> str:
@@ -531,3 +528,141 @@ def test_as_metadata_advertises_only_public_clients(client: TestClient) -> None:
     """The internal AS supports public clients only, so only ``none`` is advertised."""
     meta = client.get("/.well-known/oauth-authorization-server").json()
     assert meta["token_endpoint_auth_methods_supported"] == ["none"]
+
+
+def _oauth_csrf(html: str) -> str:
+    match = _CSRF_RE.search(html)
+    assert match, "csrf_token missing from authorize page"
+    return match.group(1)
+
+
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "").strip() or "admin@example.com"
+
+
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
+
+
+def test_authorize_requires_registered_redirect_and_pkce(client: TestClient) -> None:
+    """Authorize rejects unregistered redirects and missing PKCE; tokens need the verifier."""
+    password = "pw-oauth-" + uuid.uuid4().hex
+    email = f"o{uuid.uuid4().hex[:10]}@example.com"
+    client.post("/api/auth/register", json={"email": email, "password": password})
+    redirect = "http://127.0.0.1:9/cb"
+    client_id = client.post(
+        "/oauth/register", json={"client_name": "Test Harness", "redirect_uris": [redirect]}
+    ).json()["client_id"]
+    verifier, challenge = _pkce_pair()
+    base = {
+        "client_id": client_id,
+        "redirect_uri": redirect,
+        "response_type": "code",
+        "code_challenge_method": "S256",
+    }
+
+    assert client.get("/oauth/authorize", params={**base, "code_challenge": ""}).status_code == 400
+    assert (
+        client.get(
+            "/oauth/authorize",
+            params={
+                **base,
+                "code_challenge": challenge,
+                "redirect_uri": "http://evil.example/cb",
+            },
+        ).status_code
+        == 400
+    )
+    page = client.get("/oauth/authorize", params={**base, "code_challenge": challenge})
+    assert page.status_code == 200
+    assert "Test Harness" in page.text
+    assert "127.0.0.1:9" in page.text
+    assert page.headers["x-frame-options"] == "DENY"
+
+    form = {
+        "email": email,
+        "password": password,
+        "client_id": client_id,
+        "redirect_uri": redirect,
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
+        "csrf_token": _oauth_csrf(page.text),
+    }
+    redirected = client.post("/oauth/authorize", data=form, follow_redirects=False)
+    assert redirected.status_code == 302
+    code = parse_qs(urlparse(redirected.headers["location"]).query)["code"][0]
+
+    grant = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "client_id": client_id,
+        "redirect_uri": redirect,
+    }
+    assert client.post("/oauth/token", data={**grant, "code_verifier": "x" * 50}).status_code == 400
+    missing_redirect = {k: v for k, v in grant.items() if k != "redirect_uri"}
+    assert (
+        client.post(
+            "/oauth/token", data={**missing_redirect, "code_verifier": verifier}
+        ).status_code
+        == 400
+    )
+    assert client.post("/oauth/token", data={**grant, "code_verifier": verifier}).status_code == 200
+    assert client.post("/oauth/token", data={**grant, "code_verifier": verifier}).status_code == 400
+
+
+def test_authorize_accepts_admin_email(client: TestClient) -> None:
+    """Break-glass admin can Authorize with ADMIN_EMAIL + password.
+
+    When a DB user already exists for that email with the same password, the
+    DB user wins (see prefer-user tests). This harness only asserts the
+    authorize form is email-typed and credentials are accepted.
+    """
+    redirect = "http://127.0.0.1:9/cb"
+    client_id = client.post(
+        "/oauth/register",
+        json={"client_name": "Admin Harness", "redirect_uris": [redirect]},
+    ).json()["client_id"]
+    verifier, challenge = _pkce_pair()
+    page = client.get(
+        "/oauth/authorize",
+        params={
+            "client_id": client_id,
+            "redirect_uri": redirect,
+            "response_type": "code",
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+        },
+    )
+    assert page.status_code == 200
+    assert "<label>Email</label>" in page.text
+    assert 'type="email"' in page.text
+
+    form = {
+        "email": ADMIN_EMAIL,
+        "password": ADMIN_PASSWORD,
+        "client_id": client_id,
+        "redirect_uri": redirect,
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
+        "csrf_token": _oauth_csrf(page.text),
+    }
+    redirected = client.post("/oauth/authorize", data=form, follow_redirects=False)
+    assert redirected.status_code == 302
+    code = parse_qs(urlparse(redirected.headers["location"]).query)["code"][0]
+    token = client.post(
+        "/oauth/token",
+        data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "client_id": client_id,
+            "redirect_uri": redirect,
+            "code_verifier": verifier,
+        },
+    )
+    assert token.status_code == 200
+    access = token.json()["access_token"]
+    me = client.get("/api/me", headers={"Authorization": f"Bearer {access}"})
+    assert me.status_code == 200
+    # Admin email resolves to the real admin user (is_admin + durable id).
+    body = me.json()
+    assert body.get("email", "").casefold() == ADMIN_EMAIL.casefold()
+    assert body.get("is_admin") is True
+    assert body.get("id")

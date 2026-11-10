@@ -12,6 +12,7 @@ import memchentic.search.hybrid as hybrid_module
 from memchentic.services import guides as guide_service
 from memchentic.services import memories as memory_service
 from memchentic.services import memory_hygiene
+from support import call_tool, register_user
 
 
 class _OneAxisEmbedder:
@@ -45,28 +46,11 @@ def one_axis_embedder(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _user(client: TestClient) -> dict[str, str]:
-    email = f"path{uuid.uuid4().hex[:10]}@example.com"
-    password = f"pw-{uuid.uuid4().hex}"
-    client.post("/api/auth/register", json={"email": email, "password": password})
-    token = client.post("/api/auth/login", json={"email": email, "password": password}).json()[
-        "access_token"
-    ]
-    return {"Authorization": f"Bearer {token}"}
+    return register_user(client).headers
 
 
 def _tool(client: TestClient, auth: dict[str, str], name: str, args: dict[str, Any]) -> Any:
-    resp = client.post(
-        "/mcp",
-        headers={**auth, "Accept": "application/json, text/event-stream"},
-        json={
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "tools/call",
-            "params": {"name": name, "arguments": args},
-        },
-    )
-    resp.raise_for_status()
-    return resp.json()["result"]["structuredContent"]
+    return call_tool(client, auth, name, args)["structuredContent"]
 
 
 def _create(client: TestClient, auth: dict[str, str], **fields: Any) -> str:

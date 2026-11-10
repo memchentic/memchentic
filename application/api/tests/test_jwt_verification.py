@@ -83,7 +83,6 @@ def _seed_jwks(monkeypatch: pytest.MonkeyPatch, jwk: dict[str, Any]) -> None:
     )
 
 
-@pytest.mark.asyncio
 async def test_alg_none_rejected(
     monkeypatch: pytest.MonkeyPatch,
     rsa_material: tuple[Any, dict[str, Any]],
@@ -98,7 +97,6 @@ async def test_alg_none_rejected(
         await fetch_jwks_and_decode(token, idp_settings)
 
 
-@pytest.mark.asyncio
 async def test_hs256_with_rsa_jwk_rejected(
     monkeypatch: pytest.MonkeyPatch,
     rsa_material: tuple[Any, dict[str, Any]],
@@ -117,7 +115,6 @@ async def test_hs256_with_rsa_jwk_rejected(
         await fetch_jwks_and_decode(token, idp_settings)
 
 
-@pytest.mark.asyncio
 async def test_missing_exp_rejected(
     monkeypatch: pytest.MonkeyPatch,
     rsa_material: tuple[Any, dict[str, Any]],
@@ -132,7 +129,6 @@ async def test_missing_exp_rejected(
         await fetch_jwks_and_decode(token, idp_settings)
 
 
-@pytest.mark.asyncio
 async def test_missing_aud_rejected(
     monkeypatch: pytest.MonkeyPatch,
     rsa_material: tuple[Any, dict[str, Any]],
@@ -147,7 +143,6 @@ async def test_missing_aud_rejected(
         await fetch_jwks_and_decode(token, idp_settings)
 
 
-@pytest.mark.asyncio
 async def test_kid_mismatch_rejected(
     monkeypatch: pytest.MonkeyPatch,
     rsa_material: tuple[Any, dict[str, Any]],
@@ -161,7 +156,6 @@ async def test_kid_mismatch_rejected(
         await fetch_jwks_and_decode(token, idp_settings)
 
 
-@pytest.mark.asyncio
 async def test_missing_kid_rejected(
     monkeypatch: pytest.MonkeyPatch,
     rsa_material: tuple[Any, dict[str, Any]],
@@ -175,7 +169,6 @@ async def test_missing_kid_rejected(
         await fetch_jwks_and_decode(token, idp_settings)
 
 
-@pytest.mark.asyncio
 async def test_valid_rs256_accepted(
     monkeypatch: pytest.MonkeyPatch,
     rsa_material: tuple[Any, dict[str, Any]],
@@ -190,7 +183,6 @@ async def test_valid_rs256_accepted(
     assert decoded["aud"] == AUDIENCE
 
 
-@pytest.mark.asyncio
 async def test_jwks_outage_is_not_401(
     monkeypatch: pytest.MonkeyPatch,
     rsa_material: tuple[Any, dict[str, Any]],
@@ -209,7 +201,6 @@ async def test_jwks_outage_is_not_401(
         await resolve_bearer(session, token, idp_settings)
 
 
-@pytest.mark.asyncio
 async def test_non_jwt_bearer_is_rejected_without_jwks_fetch(
     monkeypatch: pytest.MonkeyPatch,
     idp_settings: Any,
@@ -227,7 +218,6 @@ async def test_non_jwt_bearer_is_rejected_without_jwks_fetch(
     assert calls == []
 
 
-@pytest.mark.asyncio
 async def test_fetch_jwks_reports_bad_body_as_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -248,7 +238,6 @@ async def test_fetch_jwks_reports_bad_body_as_unavailable(
     clear_jwks_cache()
 
 
-@pytest.mark.asyncio
 async def test_kid_with_nul_is_a_bad_token_not_a_database_error(
     monkeypatch: pytest.MonkeyPatch,
     rsa_material: tuple[Any, dict[str, Any]],

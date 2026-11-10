@@ -1,11 +1,15 @@
-"""HTTP session tests (remember me) against the in-process app / memchentic_test."""
+"""Browser session tests (remember me, refresh, logout) against the in-process app."""
 
 from __future__ import annotations
 
 import os
 import uuid
+from datetime import datetime
 
 from fastapi.testclient import TestClient
+
+from memchentic.auth.tokens import hash_token
+from support import run_owner_sql
 
 ADMIN_KEY = os.environ.get("ADMIN_API_KEY", "")
 GUI = {"X-Memchentic-Client": "gui"}
@@ -128,3 +132,42 @@ def test_admin_revoke_credentials_ends_sessions_and_keys(client: TestClient) -> 
     again = client.post("/api/auth/login", json={"email": email, "password": password})
     assert again.status_code == 200
     client.cookies.clear()
+
+
+def _expires_at(cookie: str) -> datetime:
+    rows = run_owner_sql(
+        "SELECT expires_at FROM gui_sessions WHERE token_hash = :hash",
+        {"hash": hash_token(cookie)},
+    )
+    return rows[0][0]
+
+
+def test_expired_session_is_rejected_and_cookie_cleared(client: TestClient) -> None:
+    _, cookie = _login(client, remember=True)
+    client.cookies.clear()
+    run_owner_sql(
+        "UPDATE gui_sessions SET expires_at = now() - interval '1 minute' WHERE token_hash = :hash",
+        {"hash": hash_token(cookie)},
+    )
+
+    res = _refresh(client, cookie)
+    assert res.status_code == 401
+    cleared = res.headers["set-cookie"].lower()
+    assert "memchentic_session=" in cleared
+    assert "max-age=0" in cleared
+
+
+def test_browser_session_does_not_slide_but_remembered_session_does(client: TestClient) -> None:
+    _, browser = _login(client, remember=False)
+    _, remembered = _login(client, remember=True)
+    client.cookies.clear()
+    browser_before = _expires_at(browser)
+    remembered_before = _expires_at(remembered)
+
+    assert _refresh(client, browser).status_code == 200
+    client.cookies.clear()
+    assert _refresh(client, remembered).status_code == 200
+    client.cookies.clear()
+
+    assert _expires_at(browser) == browser_before
+    assert _expires_at(remembered) > remembered_before

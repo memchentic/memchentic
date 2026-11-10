@@ -10,20 +10,15 @@ from fastapi.testclient import TestClient
 from sqlalchemy import event
 
 from memchentic.db.session import get_engine
+from support import register_user
 
 ADMIN_KEY = os.environ.get("ADMIN_API_KEY", "")
 
 
 def _user(client: TestClient) -> tuple[str, str, str]:
     """Register and log in a fresh internal user."""
-    email = f"t{uuid.uuid4().hex[:10]}@example.com"
-    password = f"pw-{uuid.uuid4().hex}"
-    client.post("/api/auth/register", json={"email": email, "password": password})
-    token = client.post("/api/auth/login", json={"email": email, "password": password}).json()[
-        "access_token"
-    ]
-    user_id = client.get("/api/me", headers={"Authorization": f"Bearer {token}"}).json()["id"]
-    return token, user_id, email
+    user = register_user(client)
+    return user.token, user.user_id, user.email
 
 
 def _join(
@@ -75,17 +70,14 @@ def test_non_admin_directory_excludes_unshared_users(client: TestClient) -> None
     assert user_b in from_b
     assert user_c not in from_b
 
-    if ADMIN_KEY:
-        admin_rows = client.get(
-            "/api/users", headers={"Authorization": f"Bearer {ADMIN_KEY}"}
-        ).json()
-        admin_ids = {r["id"] for r in admin_rows}
-        assert user_a in admin_ids
-        assert user_b in admin_ids
-        assert user_c in admin_ids
-        sample = next(r for r in admin_rows if r["id"] == user_b)
-        assert sample["providers"] == ["internal"]
-        assert "created_at" in sample
+    admin_rows = client.get("/api/users", headers={"Authorization": f"Bearer {ADMIN_KEY}"}).json()
+    admin_ids = {r["id"] for r in admin_rows}
+    assert user_a in admin_ids
+    assert user_b in admin_ids
+    assert user_c in admin_ids
+    sample = next(r for r in admin_rows if r["id"] == user_b)
+    assert sample["providers"] == ["internal"]
+    assert "created_at" in sample
 
 
 def test_lookup_email_is_admin_only(client: TestClient) -> None:
@@ -183,3 +175,110 @@ def test_admin_user_list_statement_count_does_not_grow_per_user(client: TestClie
         _user(client)
     second = count_statements()
     assert second - first <= 2
+
+
+def test_authenticated_user_directory_omits_admin_fields(client: TestClient) -> None:
+    """Non-admins see shared-group peers without providers/created_at."""
+    token_a, user_a, _ = _user(client)
+    token_b, user_b, email_b = _user(client)
+    auth_a = {"Authorization": f"Bearer {token_a}"}
+    group = client.post(
+        "/api/spaces", headers=auth_a, json={"name": f"dir-{uuid.uuid4().hex[:8]}"}
+    ).json()
+    _join(client, token_a, token_b, user_b, group["id"])
+    rows = client.get("/api/users", headers=auth_a).json()
+    assert isinstance(rows, list)
+    by_id = {r["id"]: r for r in rows}
+    assert user_a in by_id
+    assert user_b in by_id
+    assert by_id[user_b]["email"] == email_b
+    assert "providers" not in by_id[user_b]
+    assert "created_at" not in by_id[user_b]
+    admin_rows = client.get("/api/users", headers={"Authorization": f"Bearer {ADMIN_KEY}"}).json()
+    sample = next(r for r in admin_rows if r["id"] == user_b)
+    assert sample["providers"] == ["internal"]
+    assert "created_at" in sample
+
+
+def test_user_detail_groups_are_acl_scoped(client: TestClient) -> None:
+    """User detail lists only groups the viewer may see; personal is omitted."""
+    token_a, user_a, _ = _user(client)
+    token_b, user_b, email_b = _user(client)
+    token_c, _, _ = _user(client)
+    auth_a = {"Authorization": f"Bearer {token_a}"}
+    auth_b = {"Authorization": f"Bearer {token_b}"}
+    auth_c = {"Authorization": f"Bearer {token_c}"}
+
+    shared = client.post(
+        "/api/spaces", headers=auth_a, json={"name": f"shared-{uuid.uuid4().hex[:8]}"}
+    ).json()
+    private = client.post(
+        "/api/spaces", headers=auth_a, json={"name": f"private-{uuid.uuid4().hex[:8]}"}
+    ).json()
+    _join(client, token_a, token_b, user_b, shared["id"])
+
+    detail_b = client.get(f"/api/users/{user_b}", headers=auth_a).json()
+    assert detail_b["id"] == user_b
+    assert detail_b["email"] == email_b
+    assert detail_b["display_name"]
+    assert "providers" not in detail_b
+    assert "created_at" not in detail_b
+    group_ids = {t["id"] for t in detail_b["groups"]}
+    assert shared["id"] in group_ids
+    assert private["id"] not in group_ids
+    assert all(t["kind"] == "group" for t in detail_b["groups"])
+
+    outsider = client.get(f"/api/users/{user_a}", headers=auth_c)
+    assert outsider.status_code == 404
+
+    as_b = client.get(f"/api/users/{user_a}", headers=auth_b).json()
+    assert {t["id"] for t in as_b["groups"]} == {shared["id"]}
+
+    missing = client.get(f"/api/users/{uuid.uuid4()}", headers=auth_a)
+    assert missing.status_code == 404
+
+    admin = client.get(
+        f"/api/users/{user_a}", headers={"Authorization": f"Bearer {ADMIN_KEY}"}
+    ).json()
+    assert admin["providers"] == ["internal"]
+    assert "created_at" in admin
+    admin_ids = {t["id"] for t in admin["groups"]}
+    assert shared["id"] in admin_ids
+    assert private["id"] in admin_ids
+
+
+def test_user_detail_acl_edges(client: TestClient) -> None:
+    """User detail requires auth, rejects bad ids, and hides deleted groups."""
+    ghost = uuid.uuid4()
+    assert client.get(f"/api/users/{ghost}").status_code == 401
+
+    token_a, user_a, _ = _user(client)
+    token_b, user_b, _ = _user(client)
+    auth_a = {"Authorization": f"Bearer {token_a}"}
+    auth_b = {"Authorization": f"Bearer {token_b}"}
+
+    assert client.get("/api/users/not-a-uuid", headers=auth_a).status_code == 422
+    assert client.get(f"/api/users/{ghost}", headers=auth_a).status_code == 404
+
+    both = client.post(
+        "/api/spaces", headers=auth_a, json={"name": f"both-{uuid.uuid4().hex[:6]}"}
+    ).json()
+    solo = client.post(
+        "/api/spaces", headers=auth_a, json={"name": f"solo-{uuid.uuid4().hex[:6]}"}
+    ).json()
+    _join(client, token_a, token_b, user_b, both["id"])
+
+    mutual = client.get(f"/api/users/{user_b}", headers=auth_a).json()
+    assert {t["id"] for t in mutual["groups"]} == {both["id"]}
+
+    self_b = client.get(f"/api/users/{user_b}", headers=auth_b).json()
+    assert {t["id"] for t in self_b["groups"]} == {both["id"]}
+
+    self_a = client.get(f"/api/users/{user_a}", headers=auth_a).json()
+    assert {both["id"], solo["id"]} <= {t["id"] for t in self_a["groups"]}
+
+    # Non-owner cannot delete; owner can. After the shared group is gone,
+    # neither peer remains visible in the other's directory detail.
+    assert client.delete(f"/api/spaces/{both['id']}", headers=auth_b).status_code == 403
+    assert client.delete(f"/api/spaces/{both['id']}", headers=auth_a).status_code == 200
+    assert client.get(f"/api/users/{user_b}", headers=auth_a).status_code == 404

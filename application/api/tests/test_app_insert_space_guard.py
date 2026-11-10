@@ -12,6 +12,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
 from memchentic.settings import get_settings
+from support import register_user
 
 _CALL = text("SELECT app_insert_space(:id, CAST('group' AS space_kind), :name, :created_by)")
 _SET_CONTEXT = text(
@@ -23,14 +24,7 @@ _MEMBER_CHECK = "app_is_space_member(uuid)"
 
 
 def _new_user_id(client: TestClient) -> uuid.UUID:
-    email = f"guard-{uuid.uuid4().hex[:10]}@example.com"
-    password = f"pw-{uuid.uuid4().hex}"
-    reg = client.post("/api/auth/register", json={"email": email, "password": password})
-    assert reg.status_code == 200, reg.text
-    login = client.post("/api/auth/login", json={"email": email, "password": password})
-    assert login.status_code == 200, login.text
-    auth = {"Authorization": f"Bearer {login.json()['access_token']}"}
-    return uuid.UUID(client.get("/api/me", headers=auth).json()["id"])
+    return uuid.UUID(register_user(client).user_id)
 
 
 async def _call(conn: AsyncConnection, space_id: uuid.UUID, created_by: uuid.UUID) -> None:

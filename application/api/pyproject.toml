@@ -57,7 +57,7 @@ branch = true
 concurrency = ["greenlet", "thread"]
 
 [tool.coverage.report]
-fail_under = 73
+fail_under = 87
 show_missing = true
 
 [tool.mypy]
@@ -123,7 +123,7 @@ ignore = [
 convention = "google"
 
 [tool.ruff.lint.isort]
-known-first-party = ["memchentic"]
+known-first-party = ["memchentic", "support"]
 
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Form", "fastapi.Header"]

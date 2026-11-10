@@ -1,33 +1,48 @@
 from __future__ import annotations
 
-import uuid
-from datetime import datetime
+import functools
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError
 
 from memchentic.mcp.context import require_principal, require_session
 from memchentic.models.entities import User
 from memchentic.services import memories as memory_service
 from memchentic.services import spaces as space_service
+from memchentic.services.errors import NotFoundError, ServiceError, tool_error_text
+from memchentic.services.memories import EntryTypeName, MemoryKindName
 from memchentic.services.spaces import Visibility
+from memchentic.services.validation import parse_datetime, parse_uuid, require_uuid
 
 mcp = FastMCP(name="memchentic")
 
 
-def _parse_uuid(value: str | None) -> uuid.UUID | None:
-    if not value:
-        return None
-    return uuid.UUID(value)
+def _reported[**P, R](fn: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
+    """Report typed service errors to the MCP client with a stable prefix.
 
+    The text is built by ``tool_error_text``: ``"<code>: <message>"``.
 
-def _parse_dt(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    return datetime.fromisoformat(value)
+    Args:
+        fn: Tool coroutine function.
+
+    Returns:
+        The wrapped coroutine function with the same signature.
+    """
+
+    @functools.wraps(fn)
+    async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        try:
+            return await fn(*args, **kwargs)
+        except ServiceError as exc:
+            raise ToolError(tool_error_text(exc)) from exc
+
+    return wrapper
 
 
 @mcp.tool
+@_reported
 async def me() -> dict[str, Any]:
     """Who am I (subject, provider, personal space, memberships)?"""
     principal = require_principal()
@@ -54,6 +69,7 @@ async def me() -> dict[str, Any]:
 
 
 @mcp.tool
+@_reported
 async def space_list() -> list[dict[str, Any]]:
     """Personal + groups I belong to."""
     principal = require_principal()
@@ -63,6 +79,7 @@ async def space_list() -> list[dict[str, Any]]:
 
 
 @mcp.tool
+@_reported
 async def space_create(name: str) -> dict[str, Any]:
     """Create a group; caller becomes owner."""
     principal = require_principal()
@@ -72,13 +89,14 @@ async def space_create(name: str) -> dict[str, Any]:
 
 
 @mcp.tool
+@_reported
 async def space_show(space_id: str) -> dict[str, Any]:
     """Detail + members for personal or a group I can see."""
     principal = require_principal()
     session = require_session()
-    space = await space_service.show_space(session, principal, uuid.UUID(space_id))
+    space = await space_service.show_space(session, principal, require_uuid(space_id, "space_id"))
     if not space:
-        raise ValueError("Space not found")
+        raise NotFoundError("Space not found")
     return {
         "id": str(space.id),
         "name": space.name,
@@ -96,10 +114,11 @@ async def space_show(space_id: str) -> dict[str, Any]:
 
 
 @mcp.tool
+@_reported
 async def remember(
     title: str,
     body: str,
-    type: str = "note",
+    type: EntryTypeName = "note",
     tags: list[str] | None = None,
     space_id: str | None = None,
     expires_at: str | None = None,
@@ -130,10 +149,10 @@ async def remember(
         body=body,
         entry_type=type,
         tags=tags,
-        space_id=_parse_uuid(space_id),
+        space_id=parse_uuid(space_id, "space_id"),
         group=group,
         visibility=visibility,
-        expires_at=_parse_dt(expires_at),
+        expires_at=parse_datetime(expires_at, "expires_at"),
         ttl_days=ttl_days,
         permanent=permanent,
         path_hint=path_hint,
@@ -144,9 +163,10 @@ async def remember(
 
 
 @mcp.tool
+@_reported
 async def find(
     query: str,
-    type: str | None = None,
+    type: EntryTypeName | None = None,
     tags: list[str] | None = None,
     space_id: str | None = None,
     path_hint: str | None = None,
@@ -166,7 +186,7 @@ async def find(
         session,
         principal,
         query=query,
-        space_id=_parse_uuid(space_id),
+        space_id=parse_uuid(space_id, "space_id"),
         entry_type=type,
         tags=tags,
         path_hint=path_hint,
@@ -179,6 +199,7 @@ async def find(
 
 
 @mcp.tool
+@_reported
 async def open(
     id: str | None = None, title: str | None = None, space_id: str | None = None
 ) -> dict[str, Any]:
@@ -188,22 +209,23 @@ async def open(
     memory = await memory_service.open_memory(
         session,
         principal,
-        memory_id=_parse_uuid(id),
+        memory_id=parse_uuid(id, "id"),
         title=title,
-        space_id=_parse_uuid(space_id),
+        space_id=parse_uuid(space_id, "space_id"),
         recall=True,
     )
     if not memory:
-        raise ValueError("Not found")
+        raise NotFoundError("Memory not found")
     return memory_service.memory_to_dict(memory, full=True)
 
 
 @mcp.tool
+@_reported
 async def revise(
     id: str,
     title: str | None = None,
     body: str | None = None,
-    type: str | None = None,
+    type: EntryTypeName | None = None,
     tags: list[str] | None = None,
     expires_at: str | None = None,
     clear_expiry: bool = False,
@@ -216,12 +238,12 @@ async def revise(
     memory = await memory_service.revise(
         session,
         principal,
-        uuid.UUID(id),
+        require_uuid(id, "id"),
         title=title,
         body=body,
         entry_type=type,
         tags=tags,
-        expires_at=_parse_dt(expires_at),
+        expires_at=parse_datetime(expires_at, "expires_at"),
         clear_expiry=clear_expiry,
         path_hint=path_hint,
         repo_hint=repo_hint,
@@ -230,19 +252,21 @@ async def revise(
 
 
 @mcp.tool
+@_reported
 async def forget(id: str) -> dict[str, str]:
     """Delete an entry I can write."""
     principal = require_principal()
     session = require_session()
-    await memory_service.forget(session, principal, uuid.UUID(id))
+    await memory_service.forget(session, principal, require_uuid(id, "id"))
     return {"status": "deleted", "id": id}
 
 
 @mcp.tool
+@_reported
 async def browse(
     space_id: str | None = None,
-    kind: str | None = None,
-    type: str | None = None,
+    kind: MemoryKindName | None = None,
+    type: EntryTypeName | None = None,
     limit: int | None = None,
     offset: int = 0,
     include_expired: bool = False,
@@ -253,7 +277,7 @@ async def browse(
     rows = await memory_service.browse(
         session,
         principal,
-        space_id=_parse_uuid(space_id),
+        space_id=parse_uuid(space_id, "space_id"),
         kind=kind,
         entry_type=type,
         limit=limit,
@@ -264,6 +288,7 @@ async def browse(
 
 
 @mcp.tool
+@_reported
 async def since(
     since: str | None = None,
     until: str | None = None,
@@ -277,9 +302,9 @@ async def since(
     digests = await memory_service.since(
         session,
         principal,
-        since_dt=_parse_dt(since),
-        until_dt=_parse_dt(until),
-        space_id=_parse_uuid(space_id),
+        since_dt=parse_datetime(since, "since"),
+        until_dt=parse_datetime(until, "until"),
+        space_id=parse_uuid(space_id, "space_id"),
         limit=limit,
         include_expired=include_expired,
     )
@@ -287,6 +312,7 @@ async def since(
 
 
 @mcp.tool
+@_reported
 async def by_tag(
     tags: list[str],
     mode: str = "and",
@@ -302,7 +328,7 @@ async def by_tag(
         principal,
         tags=tags,
         mode=mode,
-        space_id=_parse_uuid(space_id),
+        space_id=parse_uuid(space_id, "space_id"),
         limit=limit,
         include_expired=include_expired,
     )
@@ -310,15 +336,19 @@ async def by_tag(
 
 
 @mcp.tool
+@_reported
 async def relocate(id: str, space_id: str) -> dict[str, Any]:
     """Move an entry to another space I can write."""
     principal = require_principal()
     session = require_session()
-    memory = await memory_service.relocate(session, principal, uuid.UUID(id), uuid.UUID(space_id))
+    memory = await memory_service.relocate(
+        session, principal, require_uuid(id, "id"), require_uuid(space_id, "space_id")
+    )
     return memory_service.memory_to_dict(memory, full=True)
 
 
 @mcp.tool
+@_reported
 async def guide_write(
     title: str,
     body: str,
@@ -343,7 +373,7 @@ async def guide_write(
         title=title,
         body=body,
         tags=tags,
-        space_id=_parse_uuid(space_id),
+        space_id=parse_uuid(space_id, "space_id"),
         group=group,
         visibility=visibility,
         ttl_days=ttl_days,
@@ -353,6 +383,7 @@ async def guide_write(
 
 
 @mcp.tool
+@_reported
 async def guide_find(
     query: str,
     space_id: str | None = None,
@@ -366,7 +397,7 @@ async def guide_find(
         session,
         principal,
         query=query,
-        space_id=_parse_uuid(space_id),
+        space_id=parse_uuid(space_id, "space_id"),
         limit=limit,
         include_expired=include_expired,
     )
@@ -374,6 +405,7 @@ async def guide_find(
 
 
 @mcp.tool
+@_reported
 async def about_path(
     path: str,
     repo_hint: str | None = None,
@@ -395,20 +427,22 @@ async def about_path(
 
 
 @mcp.tool
+@_reported
 async def trace(id: str) -> dict[str, Any]:
     """Provenance for an entry/guide."""
     principal = require_principal()
     session = require_session()
-    return await memory_service.trace(session, principal, uuid.UUID(id))
+    return await memory_service.trace(session, principal, require_uuid(id, "id"))
 
 
 @mcp.tool
+@_reported
 async def overlap_report(space_id: str | None = None, limit: int | None = None) -> dict[str, Any]:
     """Read-only: near-duplicate pairs, conflicts, soon-to-expire."""
     principal = require_principal()
     session = require_session()
     return await memory_service.overlap_report(
-        session, principal, space_id=_parse_uuid(space_id), limit=limit
+        session, principal, space_id=parse_uuid(space_id, "space_id"), limit=limit
     )
 
 

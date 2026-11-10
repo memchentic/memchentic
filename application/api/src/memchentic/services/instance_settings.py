@@ -9,6 +9,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from memchentic.models.entities import InstanceSetting
+from memchentic.services.errors import ForbiddenError
 from memchentic.settings import Settings, get_settings
 
 if TYPE_CHECKING:
@@ -19,7 +20,7 @@ KEY_REGISTER_ENABLED = "register_enabled"
 
 def _require_admin(principal: Principal) -> None:
     if not getattr(principal, "is_admin", False):
-        raise PermissionError("Administrators only")
+        raise ForbiddenError("Administrators only")
 
 
 def _parse_bool(raw: str) -> bool:
@@ -74,7 +75,7 @@ async def set_register_enabled(session: AsyncSession, principal: Principal, enab
         The stored value.
 
     Raises:
-        PermissionError: When the caller is not an administrator.
+        ForbiddenError: When the caller is not an administrator.
     """
     _require_admin(principal)
     result = await session.execute(

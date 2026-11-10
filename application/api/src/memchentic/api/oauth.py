@@ -56,7 +56,10 @@ def validate_redirect_uri(uri: str) -> str:
     """
     if not uri or not isinstance(uri, str) or not uri.strip():
         raise HTTPException(400, "Invalid redirect_uri: empty")
-    parsed = urlparse(uri)
+    try:
+        parsed = urlparse(uri)
+    except ValueError as exc:
+        raise HTTPException(400, "Invalid redirect_uri: not a valid URL") from exc
     scheme = (parsed.scheme or "").lower()
     if not scheme:
         raise HTTPException(400, "Invalid redirect_uri: relative URIs are not allowed")

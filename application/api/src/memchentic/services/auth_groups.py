@@ -12,6 +12,9 @@ from sqlalchemy.orm import selectinload
 
 from memchentic.auth.users import ensure_admin_user, get_user, normalize_email
 from memchentic.models.entities import AuthGroup, AuthGroupMember, User
+from memchentic.services import limits
+from memchentic.services.errors import ForbiddenError, NotFoundError
+from memchentic.services.validation import check_optional_text
 from memchentic.settings import Settings, get_settings
 
 if TYPE_CHECKING:
@@ -213,7 +216,7 @@ async def add_to_users_group(session: AsyncSession, user_id: uuid.UUID) -> None:
 
 def _require_admin(principal: Principal) -> None:
     if not getattr(principal, "is_admin", False):
-        raise PermissionError("Administrators only")
+        raise ForbiddenError("Administrators only")
 
 
 def _group_payload(group: AuthGroup, member_count: int) -> dict[str, Any]:
@@ -255,7 +258,7 @@ async def list_members(
     _require_admin(principal)
     group = await _get_by_slug(session, slug)
     if not group:
-        raise LookupError("Auth group not found")
+        raise NotFoundError("Auth group not found")
     result = await session.execute(
         select(AuthGroupMember)
         .options(selectinload(AuthGroupMember.user))
@@ -289,7 +292,7 @@ async def get_idp_bind(session: AsyncSession, principal: Principal, slug: str) -
     _require_admin(principal)
     group = await _get_by_slug(session, slug)
     if not group:
-        raise LookupError("Auth group not found")
+        raise NotFoundError("Auth group not found")
     bound = _group_bound(group)
     return {
         "slug": group.slug,
@@ -315,9 +318,11 @@ async def set_idp_bind(
     _require_admin(principal)
     group = await _get_by_slug(session, slug)
     if not group:
-        raise LookupError("Auth group not found")
+        raise NotFoundError("Auth group not found")
     gid = (idp_group_id or "").strip() or None
     gname = (idp_group_name or "").strip() or None
+    gid = check_optional_text(gid, "idp_group_id", limits.IDP_GROUP_MAX)
+    gname = check_optional_text(gname, "idp_group_name", limits.IDP_GROUP_MAX)
     if gid:
         group.idp_group_id = gid
         group.idp_group_name = gname or gid
@@ -406,23 +411,23 @@ async def add_member(
     _require_admin(principal)
     group = await _get_by_slug(session, slug)
     if not group:
-        raise LookupError("Auth group not found")
+        raise NotFoundError("Auth group not found")
     if _group_bound(group):
-        raise PermissionError("Roster is synced from IdP — clear the bind to edit manually")
+        raise ForbiddenError("Roster is synced from IdP — clear the bind to edit manually")
     user = await get_user(session, user_id)
     if not user:
-        raise LookupError("User not found")
+        raise NotFoundError("User not found")
     settings = get_settings()
     if slug == SLUG_USERS and _is_env_admin(user, settings):
-        raise PermissionError("Admin account stays in Administrators only")
+        raise ForbiddenError("Admin account stays in Administrators only")
 
     other_slug = SLUG_USERS if slug == SLUG_ADMINISTRATORS else SLUG_ADMINISTRATORS
     other = await _get_by_slug(session, other_slug)
     if other:
         if other_slug == SLUG_ADMINISTRATORS and _is_env_admin(user, settings):
-            raise PermissionError("Cannot move the admin account out of Administrators")
+            raise ForbiddenError("Cannot move the admin account out of Administrators")
         if _group_bound(other) and other_slug == SLUG_ADMINISTRATORS:
-            raise PermissionError("Cannot move members out of an IdP-bound Administrators roster")
+            raise ForbiddenError("Cannot move members out of an IdP-bound Administrators roster")
         await _remove_member_raw(session, other.id, user_id)
 
     await add_member_raw(session, group, user_id, source=SOURCE_MANUAL)
@@ -449,21 +454,21 @@ async def remove_member(
     The env admin cannot leave Administrators. Bound rosters refuse all removes.
 
     Raises:
-        PermissionError: When the roster is IdP-bound or removing the env admin.
-        LookupError: Unknown group or membership.
+        ForbiddenError: When the roster is IdP-bound or removing the env admin.
+        NotFoundError: Unknown group or membership.
     """
     _require_admin(principal)
     group = await _get_by_slug(session, slug)
     if not group:
-        raise LookupError("Auth group not found")
+        raise NotFoundError("Auth group not found")
     if _group_bound(group):
-        raise PermissionError("Roster is synced from IdP — clear the bind to edit manually")
+        raise ForbiddenError("Roster is synced from IdP — clear the bind to edit manually")
     user = await get_user(session, user_id)
     if not user:
-        raise LookupError("User not found")
+        raise NotFoundError("User not found")
     settings = get_settings()
     if group.slug == SLUG_ADMINISTRATORS and _is_env_admin(user, settings):
-        raise PermissionError("Cannot remove the admin account from Administrators")
+        raise ForbiddenError("Cannot remove the admin account from Administrators")
 
     result = await session.execute(
         select(AuthGroupMember).where(
@@ -472,7 +477,7 @@ async def remove_member(
     )
     row = result.scalar_one_or_none()
     if not row:
-        raise LookupError("Membership not found")
+        raise NotFoundError("Membership not found")
     await session.delete(row)
 
     if group.slug == SLUG_ADMINISTRATORS:

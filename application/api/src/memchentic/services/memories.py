@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 from sqlalchemy import (
@@ -25,13 +25,20 @@ from memchentic.auth.principal import Principal
 from memchentic.db.session import commit_with_rls, set_rls_context
 from memchentic.embeddings import get_embedder
 from memchentic.events import memory_event_from_row, publish_memory_event
-from memchentic.models.entities import EntryType, Memory, MemoryKind, SpaceKind, User
+from memchentic.models.entities import EntryType, Memory, MemoryKind, User
 from memchentic.search.hybrid import (
     Digest,
     active_memory_clause,
     escape_ilike,
     hybrid_search,
     memory_type_clause,
+)
+from memchentic.services import limits
+from memchentic.services.errors import (
+    ForbiddenError,
+    NearDuplicateError,
+    NotFoundError,
+    ValidationError,
 )
 from memchentic.services.spaces import (
     Visibility,
@@ -40,7 +47,50 @@ from memchentic.services.spaces import (
     resolve_write_space,
     show_space,
 )
+from memchentic.services.validation import (
+    check_body,
+    check_offset,
+    check_optional_text,
+    check_query,
+    check_tags,
+    check_text,
+    check_title,
+    check_ttl_days,
+    parse_space_scope,
+)
 from memchentic.settings import get_settings
+
+# Closed sets shared with the MCP tool signatures (keep in step with the
+# ``EntryType`` and ``MemoryKind`` enums; a test asserts they match).
+EntryTypeName = Literal[
+    "fact", "preference", "decision", "instruction", "feedback", "insight", "note"
+]
+MemoryKindName = Literal["entry", "guide"]
+
+_KIND_VALUES = frozenset(k.value for k in MemoryKind)
+_ENTRY_TYPE_VALUES = tuple(e.value for e in EntryType)
+
+
+def _parse_entry_type(value: str) -> EntryType:
+    """Return the entry type named by ``value``.
+
+    Args:
+        value: Entry type name.
+
+    Returns:
+        The matching ``EntryType``.
+
+    Raises:
+        ValidationError: When ``value`` is not an entry type. Guides have no
+            entry type, so ``guide`` is rejected too.
+    """
+    try:
+        return EntryType(value)
+    except ValueError:
+        raise ValidationError(
+            f"type must be one of {', '.join(_ENTRY_TYPE_VALUES)}; got {value!r} "
+            "(guides have no entry type: use kind='guide' or guide_find)"
+        ) from None
 
 
 def memory_to_dict(m: Memory, *, full: bool = False) -> dict[str, Any]:
@@ -92,12 +142,11 @@ def resolve_expiry(
         Expiry timestamp, or None for a permanent memory.
 
     Raises:
-        ValueError: When ``ttl_days`` is negative.
+        ValidationError: When ``ttl_days`` is outside ``0..TTL_DAYS_MAX``.
     """
     if expires_at is not None:
         return expires_at
-    if ttl_days is not None and ttl_days < 0:
-        raise ValueError("ttl_days must be >= 0")
+    check_ttl_days(ttl_days)
     if permanent or ttl_days == 0:
         return None
     ref = now or datetime.now(UTC)
@@ -264,7 +313,7 @@ async def accessible_space_ids(
         return [space.id] if space else []
     spaces = await list_spaces(session, principal)
     if space_scope:
-        kind = SpaceKind(space_scope)
+        kind = parse_space_scope(space_scope)
         spaces = [s for s in spaces if s.kind == kind]
     return [s.id for s in spaces]
 
@@ -279,12 +328,20 @@ def resolve_type_tokens(
 
     Explicit ``types`` wins. Legacy ``kind`` / ``entry_type`` map to tokens.
     None means no type restriction.
+
+    Raises:
+        ValidationError: When ``kind`` is not ``entry`` or ``guide``, or
+            ``entry_type`` is not an entry type.
     """
     if types is not None:
         tokens = [t.strip() for t in types if t and t.strip()]
         return tokens or None
+    if kind and kind not in _KIND_VALUES:
+        raise ValidationError(f"kind must be 'entry' or 'guide'; got {kind!r}")
     if kind == "guide":
         return ["guide"]
+    if entry_type:
+        _parse_entry_type(entry_type)
     if kind == "entry":
         return [entry_type] if entry_type else [e.value for e in EntryType]
     if entry_type:
@@ -377,17 +434,25 @@ async def remember(
     group: str | None = None,
     visibility: Visibility | None = None,
 ) -> Memory:
+    title = check_title(title)
+    body = check_body(body)
+    tags = check_tags(tags)
+    path_hint = check_optional_text(path_hint, "path_hint", limits.PATH_HINT_MAX)
+    repo_hint = check_optional_text(repo_hint, "repo_hint", limits.REPO_HINT_MAX)
     space = await resolve_write_space(
         session, principal, space_id, group=group, visibility=visibility
     )
-    et = EntryType(entry_type)
+    et = _parse_entry_type(entry_type)
     expiry = resolve_expiry(expires_at=expires_at, ttl_days=ttl_days, permanent=permanent)
     if not force:
         dup = await find_near_duplicate(
             session, space_id=space.id, title=title, body=body, kind=MemoryKind.entry
         )
         if dup:
-            raise ValueError(f"Near-duplicate exists ({dup.id}). Pass force=true to create anyway.")
+            raise NearDuplicateError(
+                f"Near-duplicate exists ({dup.id}). Pass force=true to create anyway.",
+                duplicate_id=str(dup.id),
+            )
 
     embedder = get_embedder()
     embedding = await embedder.aembed_memory_text(title, body)
@@ -436,6 +501,9 @@ async def open_memory(
 
     Returns:
         Memory, or None when missing or not visible.
+
+    Raises:
+        ValidationError: When ``title`` matches several memories.
     """
     memory: Memory | None = None
     if memory_id:
@@ -456,7 +524,7 @@ async def open_memory(
         if len(rows) > 1:
             choices = ", ".join(f"{m.id} (space {m.space_id})" for m in rows[:8])
             more = "" if len(rows) <= 8 else f" (+{len(rows) - 8} more)"
-            raise ValueError(
+            raise ValidationError(
                 f"Title {title!r} matches {len(rows)} memories; "
                 f"pass id or space_id. Matches: {choices}{more}"
             )
@@ -482,7 +550,7 @@ async def require_memory_manage(
         memory: Already-loaded memory the caller can at least open.
 
     Raises:
-        PermissionError: When the caller may not manage the memory.
+        ForbiddenError: When the caller may not manage the memory.
     """
     if principal.is_admin:
         return
@@ -495,7 +563,7 @@ async def require_memory_manage(
     space = await show_space(session, principal, memory.space_id)
     if space is not None and can_manage_group(space, principal):
         return
-    raise PermissionError("Not allowed to manage this memory")
+    raise ForbiddenError("Not allowed to manage this memory")
 
 
 async def revise(
@@ -512,9 +580,23 @@ async def revise(
     path_hint: str | None = None,
     repo_hint: str | None = None,
 ) -> Memory:
+    if title is not None:
+        title = check_title(title)
+    if body is not None:
+        body = check_body(body)
+    if tags is not None:
+        tags = check_tags(tags)
+    path_hint = check_optional_text(path_hint, "path_hint", limits.PATH_HINT_MAX)
+    repo_hint = check_optional_text(repo_hint, "repo_hint", limits.REPO_HINT_MAX)
     memory = await open_memory(session, principal, memory_id=memory_id)
     if not memory:
-        raise PermissionError("Memory not found")
+        raise NotFoundError("Memory not found")
+    new_type: EntryType | None = None
+    if entry_type is not None:
+        # Validate before any field is changed, so a refused call edits nothing.
+        if memory.kind == MemoryKind.guide:
+            raise ValidationError("Guides have no entry type; omit type when revising a guide")
+        new_type = _parse_entry_type(entry_type)
     text_changed = False
     if title is not None:
         memory.title = title.strip()
@@ -522,8 +604,8 @@ async def revise(
     if body is not None:
         memory.body = body
         text_changed = True
-    if entry_type is not None:
-        memory.entry_type = EntryType(entry_type)
+    if new_type is not None:
+        memory.entry_type = new_type
     if tags is not None:
         memory.tags = tags
     if clear_expiry:
@@ -546,7 +628,7 @@ async def revise(
 async def forget(session: AsyncSession, principal: Principal, memory_id: uuid.UUID) -> None:
     memory = await open_memory(session, principal, memory_id=memory_id)
     if not memory:
-        raise PermissionError("Memory not found")
+        raise NotFoundError("Memory not found")
     await require_memory_manage(session, principal, memory)
     event = memory_event_from_row("deleted", memory)
     await session.delete(memory)
@@ -567,6 +649,7 @@ async def browse(
     offset: int = 0,
     include_expired: bool = False,
 ) -> list[Memory]:
+    offset = check_offset(offset)
     space_ids = await accessible_space_ids(session, principal, space_id, space_scope=space_scope)
     if not space_ids:
         return []
@@ -631,14 +714,17 @@ async def by_tag(
     limit: int | None = None,
     include_expired: bool = False,
 ) -> list[Digest]:
+    tags = check_tags(tags)
+    if not tags:
+        raise ValidationError("tags must contain at least one non-empty tag")
     space_ids = await accessible_space_ids(session, principal, space_id)
-    if not space_ids or not tags:
+    if not space_ids:
         return []
     limit = get_settings().resolve_browse_limit(limit)
     stmt = _active_select(space_ids, include_expired)
     normalized = (mode or "and").strip().lower()
     if normalized not in {"and", "or"}:
-        raise ValueError("by_tag mode must be 'and' or 'or'")
+        raise ValidationError("by_tag mode must be 'and' or 'or'")
     if normalized == "or":
         stmt = stmt.where(Memory.tags.overlap(tags))
     else:
@@ -657,7 +743,7 @@ async def relocate(
 ) -> Memory:
     memory = await open_memory(session, principal, memory_id=memory_id)
     if not memory:
-        raise PermissionError("Memory not found")
+        raise NotFoundError("Memory not found")
     await require_memory_manage(session, principal, memory)
     target = await resolve_write_space(session, principal, target_space_id)
     left = memory_event_from_row("deleted", memory)
@@ -686,6 +772,12 @@ async def find(
     offset: int = 0,
     include_expired: bool = False,
 ) -> list[Digest]:
+    query = check_query(query)
+    offset = check_offset(offset)
+    if tags is not None:
+        tags = check_tags(tags)
+    path_hint = check_optional_text(path_hint, "path_hint", limits.PATH_HINT_MAX)
+    repo_hint = check_optional_text(repo_hint, "repo_hint", limits.REPO_HINT_MAX)
     space_ids = await accessible_space_ids(session, principal, space_id, space_scope=space_scope)
     tokens = resolve_type_tokens(
         types=types, kind="entry" if types is None else None, entry_type=entry_type
@@ -720,6 +812,8 @@ async def search(
     include_expired: bool = False,
 ) -> list[Digest]:
     """Hybrid search across entries and/or guides for the GUI/REST surface."""
+    query = check_query(query)
+    offset = check_offset(offset)
     space_ids = await accessible_space_ids(session, principal, space_id, space_scope=space_scope)
     tokens = resolve_type_tokens(types=types, kind=kind, entry_type=entry_type)
     if tokens is None and kind is None and entry_type is None:
@@ -756,6 +850,10 @@ async def guide_write(
     Reinforcement raises confidence, counts as a recall, and slides the expiry
     (an explicit ``expires_at`` / ``ttl_days`` / ``permanent`` replaces it).
     """
+    title = check_title(title)
+    body = check_body(body)
+    if tags is not None:
+        tags = check_tags(tags)
     space = await resolve_write_space(
         session, principal, space_id, group=group, visibility=visibility
     )
@@ -820,6 +918,7 @@ async def guide_find(
     limit: int | None = None,
     include_expired: bool = False,
 ) -> list[Digest]:
+    query = check_query(query)
     digests = await hybrid_search(
         session,
         query=query,
@@ -840,6 +939,8 @@ async def about_path(
     limit: int | None = None,
     include_expired: bool = False,
 ) -> list[Digest]:
+    path = check_text(path, "path", limits.PATH_HINT_MAX)
+    repo_hint = check_optional_text(repo_hint, "repo_hint", limits.REPO_HINT_MAX)
     space_ids = await accessible_space_ids(session, principal, None)
     if not space_ids:
         return []
@@ -864,7 +965,7 @@ async def trace(
 ) -> dict[str, Any]:
     memory = await open_memory(session, principal, memory_id=memory_id)
     if not memory:
-        raise PermissionError("Memory not found")
+        raise NotFoundError("Memory not found")
     return {
         "id": str(memory.id),
         "title": memory.title,

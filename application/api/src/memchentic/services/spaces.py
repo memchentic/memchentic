@@ -10,6 +10,9 @@ from sqlalchemy.orm import aliased, selectinload
 from memchentic.auth.principal import Principal
 from memchentic.db.session import commit_with_rls, set_rls_context
 from memchentic.models.entities import Space, SpaceKind, SpaceMember, User
+from memchentic.services import limits
+from memchentic.services.errors import ForbiddenError, NotFoundError, ValidationError
+from memchentic.services.validation import check_name
 
 
 async def ensure_personal_space(session: AsyncSession, user: User) -> Space:
@@ -76,7 +79,8 @@ async def list_spaces(session: AsyncSession, principal: Principal) -> list[Space
 
 async def create_group(session: AsyncSession, principal: Principal, *, name: str) -> Space:
     if not principal.user_id:
-        raise PermissionError("Authentication required")
+        raise ForbiddenError("Authentication required")
+    name = check_name(name, "name", limits.SPACE_NAME_MAX)
     owner_id = principal.user_id
     space_id = uuid.uuid4()
     await session.execute(
@@ -185,13 +189,14 @@ async def require_roster_manager(
         The group space.
 
     Raises:
-        PermissionError: When the group is not visible or the caller is not creator/admin.
+        NotFoundError: When the group is not visible.
+        ForbiddenError: When the caller is not creator/admin.
     """
     space = await show_space(session, principal, space_id)
     if not space or space.kind != SpaceKind.group:
-        raise PermissionError("Group not found")
+        raise NotFoundError("Group not found")
     if not can_manage_group(space, principal):
-        raise PermissionError("Only the group creator or admin can manage membership")
+        raise ForbiddenError("Only the group creator or admin can manage membership")
     return space
 
 
@@ -213,6 +218,8 @@ async def add_member(
         The membership row.
     """
     await require_roster_manager(session, principal, space_id)
+    if await session.get(User, user_id) is None:
+        raise NotFoundError("User not found")
     existing = await session.execute(
         select(SpaceMember).where(SpaceMember.space_id == space_id, SpaceMember.user_id == user_id)
     )
@@ -233,12 +240,12 @@ async def remove_member(
 ) -> None:
     space = await show_space(session, principal, space_id)
     if not space or space.kind != SpaceKind.group:
-        raise PermissionError("Group not found")
+        raise NotFoundError("Group not found")
     leaving_self = principal.user_id is not None and principal.user_id == user_id
     if not leaving_self and not can_manage_group(space, principal):
-        raise PermissionError("Only the group creator or admin can manage membership")
+        raise ForbiddenError("Only the group creator or admin can manage membership")
     if space.created_by_user_id == user_id:
-        raise ValueError("Cannot remove the group creator")
+        raise ForbiddenError("Cannot remove the group creator")
     result = await session.execute(
         select(SpaceMember).where(SpaceMember.space_id == space_id, SpaceMember.user_id == user_id)
     )
@@ -251,15 +258,16 @@ async def remove_member(
 async def rename_space(
     session: AsyncSession, principal: Principal, space_id: uuid.UUID, name: str
 ) -> Space:
+    name = check_name(name, "name", limits.SPACE_NAME_MAX)
     space = await show_space(session, principal, space_id)
     if not space:
-        raise PermissionError("Space not found")
+        raise NotFoundError("Space not found")
     if space.kind == SpaceKind.group and not can_manage_group(space, principal):
-        raise PermissionError("Only the group creator or admin can rename")
+        raise ForbiddenError("Only the group creator or admin can rename")
     if space.kind == SpaceKind.personal and not (
         principal.is_admin or space.created_by_user_id == principal.user_id
     ):
-        raise PermissionError("Cannot rename another user's personal space")
+        raise ForbiddenError("Cannot rename another user's personal space")
     space.name = name.strip()
     await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
     await session.refresh(space)
@@ -284,13 +292,14 @@ async def delete_space(session: AsyncSession, principal: Principal, space_id: uu
         space_id: Group space id.
 
     Raises:
-        PermissionError: Missing group, or caller is not the owner (or admin).
+        NotFoundError: Missing group.
+        ForbiddenError: Caller is not the owner (or admin).
     """
     space = await show_space(session, principal, space_id)
     if not space or space.kind != SpaceKind.group:
-        raise PermissionError("Group not found")
+        raise NotFoundError("Group not found")
     if not can_delete_group(space, principal):
-        raise PermissionError("Only the group owner can delete")
+        raise ForbiddenError("Only the group owner can delete")
     await session.delete(space)
     await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
 
@@ -298,7 +307,7 @@ async def delete_space(session: AsyncSession, principal: Principal, space_id: uu
 Visibility = Literal["personal", "shared"]
 
 
-class SpaceResolveError(ValueError):
+class SpaceResolveError(ValidationError):
     """A write target (group name or shared default) did not resolve to one group."""
 
 
@@ -335,7 +344,7 @@ async def resolve_group_by_name(session: AsyncSession, principal: Principal, gro
         The single matching group.
 
     Raises:
-        ValueError: When zero or several of the caller's groups match.
+        SpaceResolveError: When zero or several of the caller's groups match.
     """
     groups = await _member_groups(session, principal)
     wanted = group.strip().casefold()
@@ -394,15 +403,16 @@ async def resolve_write_space(
         The writable target space.
 
     Raises:
-        PermissionError: Unauthenticated or inaccessible ``space_id``.
-        ValueError: Group name or shared default cannot be resolved to one group.
+        ForbiddenError: Unauthenticated caller.
+        NotFoundError: Inaccessible ``space_id``.
+        SpaceResolveError: Group name or shared default cannot be resolved to one group.
     """
     if not principal.user_id:
-        raise PermissionError("Authentication required")
+        raise ForbiddenError("Authentication required")
     if space_id is not None:
         space = await show_space(session, principal, space_id)
         if not space:
-            raise PermissionError("Space not found or not accessible")
+            raise NotFoundError("Space not found or not accessible")
         return space
     if group and group.strip():
         return await resolve_group_by_name(session, principal, group)
@@ -412,7 +422,7 @@ async def resolve_write_space(
     if not space:
         user = await session.get(User, principal.user_id)
         if not user:
-            raise PermissionError("User not found")
+            raise ForbiddenError("User not found")
         space = await ensure_personal_space(session, user)
         await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
     return space
@@ -436,14 +446,14 @@ async def set_default_shared_space(
             caller belongs to.
     """
     if not principal.user_id:
-        raise PermissionError("Default shared group needs a user principal")
+        raise ForbiddenError("Default shared group needs a user principal")
     user = await session.get(User, principal.user_id)
     if not user:
-        raise PermissionError("User not found")
+        raise ForbiddenError("User not found")
     if space_id is not None:
         groups = await _member_groups(session, principal)
         if space_id not in {g.id for g in groups}:
-            raise PermissionError("Default shared group must be an active group you belong to")
+            raise NotFoundError("Default shared group must be an active group you belong to")
     user.default_shared_space_id = space_id
     await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
     await session.refresh(user)

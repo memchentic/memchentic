@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from memchentic.embeddings import get_embedder
 from memchentic.models.entities import EntryType, Memory, MemoryKind
+from memchentic.services.errors import ValidationError
 from memchentic.settings import get_settings
 
 
@@ -44,7 +45,7 @@ def memory_type_clause(tokens: Sequence[str] | None) -> ColumnElement[bool] | No
         try:
             entry_enums.append(EntryType(name))
         except ValueError as exc:
-            raise ValueError(f"unknown memory type: {name}") from exc
+            raise ValidationError(f"unknown memory type: {name}") from exc
     clauses: list[ColumnElement[bool]] = []
     if include_guide:
         clauses.append(Memory.kind == MemoryKind.guide)

@@ -1,3 +1,5 @@
+"""Request principals and bearer-token resolution (JWT, API key, admin key)."""
+
 from __future__ import annotations
 
 import hashlib
@@ -9,12 +11,15 @@ import jwt
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from memchentic.auth.idp_groups import groups_from_claims
 from memchentic.models.entities import User, UserIdentity
 from memchentic.settings import Settings, get_settings
 
 
 @dataclass
 class Principal:
+    """Authenticated caller resolved from a bearer credential."""
+
     is_admin: bool = False
     user_id: UUID | None = None
     email: str | None = None
@@ -23,10 +28,12 @@ class Principal:
 
     @property
     def subject(self) -> str:
+        """Return the user id as text, or ``anonymous``."""
         return str(self.user_id) if self.user_id else "anonymous"
 
 
 def hash_api_key(raw: str) -> str:
+    """Return the SHA-256 hex digest stored for an API key."""
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -35,6 +42,19 @@ async def resolve_bearer(
     token: str | None,
     settings: Settings | None = None,
 ) -> Principal | None:
+    """Resolve a bearer token to a principal.
+
+    Accepts ``ADMIN_API_KEY``, a per-user API key, an internal access token,
+    or (in external-IdP mode) an IdP token.
+
+    Args:
+        session: Database session.
+        token: Raw bearer token, or None.
+        settings: Optional settings override.
+
+    Returns:
+        The principal, or None when the token is missing or invalid.
+    """
     if not token:
         return None
     settings = settings or get_settings()
@@ -154,7 +174,6 @@ async def _upsert_from_external_claims(
     Returns:
         The upserted user, or ``None`` when email is missing/unverified.
     """
-    from memchentic.auth.idp_groups import groups_from_claims
     from memchentic.auth.users import upsert_oauth_user
 
     email = payload.get("email")

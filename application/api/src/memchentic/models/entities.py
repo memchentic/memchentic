@@ -1,3 +1,5 @@
+"""SQLAlchemy models for users, spaces, memories, auth groups and OAuth state."""
+
 from __future__ import annotations
 
 import enum
@@ -27,16 +29,22 @@ from memchentic.models.base import Base
 
 
 class SpaceKind(str, enum.Enum):
+    """Kind of space: personal or group."""
+
     personal = "personal"
     group = "group"
 
 
 class MemoryKind(str, enum.Enum):
+    """Kind of memory: entry or guide."""
+
     entry = "entry"
     guide = "guide"
 
 
 class EntryType(str, enum.Enum):
+    """Closed classification of an entry."""
+
     fact = "fact"
     preference = "preference"
     decision = "decision"
@@ -47,6 +55,8 @@ class EntryType(str, enum.Enum):
 
 
 class User(Base):
+    """A local user account."""
+
     __tablename__ = "users"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -119,13 +129,10 @@ class AuthGroup(Base):
         back_populates="group", cascade="all, delete-orphan"
     )
 
-    @property
-    def is_bound(self) -> bool:
-        """True when this roster is synced from an IdP group bind."""
-        return bool(self.idp_group_id and self.idp_group_id.strip())
-
 
 class AuthGroupMember(Base):
+    """Membership of a user in an auth group."""
+
     __tablename__ = "auth_group_members"
     __table_args__ = (Index("ix_auth_group_members_user_id", "user_id"),)
 
@@ -143,6 +150,8 @@ class AuthGroupMember(Base):
 
 
 class ApiKey(Base):
+    """A per-user API key (stored hashed)."""
+
     __tablename__ = "api_keys"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -159,6 +168,8 @@ class ApiKey(Base):
 
 
 class Space(Base):
+    """A personal space or a group that holds memories."""
+
     __tablename__ = "spaces"
     __table_args__ = (
         Index(
@@ -175,6 +186,9 @@ class Space(Base):
     created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
+    # Parked: nothing sets archived_at. The listing queries filter on
+    # ``archived_at IS NULL``; lookups by space id and the RLS policies do not.
+    # An archive feature needs a writer and those checks.
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -187,6 +201,8 @@ class Space(Base):
 
 
 class SpaceMember(Base):
+    """Membership of a user in a group."""
+
     __tablename__ = "space_members"
     __table_args__ = (Index("ix_space_members_user_id", "user_id"),)
 
@@ -205,6 +221,8 @@ class SpaceMember(Base):
 
 
 class Memory(Base):
+    """An entry or a guide in a space."""
+
     __tablename__ = "memories"
     __table_args__ = (
         Index("ix_memories_space_updated", "space_id", "updated_at"),
@@ -241,6 +259,8 @@ class Memory(Base):
     last_recalled_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Width must equal EMBEDDING_DIM in memchentic/embeddings/loader.py and the
+    # vector(384) column created by alembic/versions/001_initial.py.
     embedding = mapped_column(Vector(384), nullable=True)
     search_tsv: Mapped[Any] = mapped_column(TSVECTOR, nullable=True)
     provenance: Mapped[dict[str, Any]] = mapped_column(
@@ -261,10 +281,14 @@ class Memory(Base):
 
 
 class OAuthClient(Base):
+    """A dynamically registered OAuth client."""
+
     __tablename__ = "oauth_clients"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     client_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    # Parked: confidential clients are not implemented. Registration always stores
+    # client_secret_hash=NULL and is_public=true, and nothing reads either column.
     client_secret_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     redirect_uris: Mapped[list[str]] = mapped_column(
         ARRAY(String), nullable=False, server_default=text("'{}'")
@@ -275,6 +299,8 @@ class OAuthClient(Base):
 
 
 class AuthCode(Base):
+    """A single-use OAuth authorization code."""
+
     __tablename__ = "auth_codes"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -293,6 +319,8 @@ class AuthCode(Base):
 
 
 class AuthRefreshToken(Base):
+    """An OAuth refresh token (stored hashed), rotated per use."""
+
     __tablename__ = "auth_refresh_tokens"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -332,6 +360,8 @@ class GuiSession(Base):
 
 
 class InternalSigningKey(Base):
+    """An RS256 key pair for internal access tokens."""
+
     __tablename__ = "internal_signing_keys"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

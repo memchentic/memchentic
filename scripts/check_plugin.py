@@ -220,7 +220,7 @@ def check_refs(files: Files) -> list[str]:
 def check_types(files: Files) -> list[str]:
     """The entry-type table has one home and matches the ``EntryType`` enum."""
     errors: list[str] = []
-    block = re.search(r'class EntryType\(.*?\):\n((?:    \w+ = "\w+"\n)+)', files.get(ENTITIES, ""))
+    block = re.search(r'class EntryType\(.*?\):\n(?:    """.*?"""\n\n)?((?:    \w+ = "\w+"\n)+)', files.get(ENTITIES, ""))
     enum = set(re.findall(r'= "(\w+)"', block.group(1))) if block else set()
     if not enum:
         return [f"{ENTITIES}: EntryType enum not found"]

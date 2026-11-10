@@ -1,3 +1,5 @@
+"""FastMCP server and the memchentic MCP tools."""
+
 from __future__ import annotations
 
 import functools
@@ -774,4 +776,5 @@ async def overlap_report(
 
 
 def create_mcp() -> FastMCP:
+    """Return the FastMCP server with every memchentic tool registered."""
     return mcp

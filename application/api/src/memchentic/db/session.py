@@ -1,3 +1,5 @@
+"""Async SQLAlchemy engine, sessions and row-level-security context."""
+
 from typing import Any
 from uuid import UUID
 
@@ -72,6 +74,7 @@ def _reset_rls_on_checkin(dbapi_connection: Any, _record: Any) -> None:
 
 
 def get_session_factory() -> async_sessionmaker[AsyncSession]:
+    """Return the process-wide async session factory."""
     global _session_factory
     if _session_factory is None:
         _session_factory = async_sessionmaker(get_engine(), expire_on_commit=False)

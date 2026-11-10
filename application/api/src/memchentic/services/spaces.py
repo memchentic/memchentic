@@ -1,3 +1,5 @@
+"""Personal spaces, groups and group membership."""
+
 from __future__ import annotations
 
 import uuid
@@ -20,6 +22,7 @@ from memchentic.services.validation import check_name
 async def ensure_personal_space(session: AsyncSession, user: User) -> Space:
     # FORCE RLS: SELECT/INSERT policies key off app.user_id — always bind it
     # to the space owner before looking up or creating their personal space.
+    """Return the user's personal space, creating it when missing."""
     await set_rls_context(session, user_id=user.id, is_admin=False)
     result = await session.execute(
         select(Space).where(Space.kind == SpaceKind.personal, Space.created_by_user_id == user.id)
@@ -56,6 +59,7 @@ async def ensure_personal_space(session: AsyncSession, user: User) -> Space:
 
 
 async def get_personal_space(session: AsyncSession, user_id: uuid.UUID) -> Space | None:
+    """Return the user's personal space, or None."""
     result = await session.execute(
         select(Space).where(Space.kind == SpaceKind.personal, Space.created_by_user_id == user_id)
     )
@@ -101,6 +105,15 @@ async def list_spaces(session: AsyncSession, principal: Principal) -> list[Space
 
 
 async def create_group(session: AsyncSession, principal: Principal, *, name: str) -> Space:
+    """Create a group owned by the caller.
+
+    Returns:
+        The new group.
+
+    Raises:
+        ForbiddenError: When the caller has no user id.
+        ValidationError: On an invalid name.
+    """
     if not principal.user_id:
         raise ForbiddenError("Authentication required")
     name = check_name(name, "name", limits.SPACE_NAME_MAX)
@@ -127,6 +140,11 @@ async def create_group(session: AsyncSession, principal: Principal, *, name: str
 async def show_space(
     session: AsyncSession, principal: Principal, space_id: uuid.UUID
 ) -> Space | None:
+    """Return a space with its members when the caller can read it.
+
+    Returns:
+        The space, or None when it does not exist or is not readable.
+    """
     result = await session.execute(
         select(Space)
         .options(selectinload(Space.members).selectinload(SpaceMember.user))
@@ -328,6 +346,7 @@ async def list_visible_groups_for_user(
 
 
 def can_manage_group(space: Space, principal: Principal) -> bool:
+    """Return True for an administrator or the group creator."""
     if principal.is_admin:
         return True
     return bool(principal.user_id and space.created_by_user_id == principal.user_id)
@@ -534,6 +553,18 @@ async def remove_member(
 async def rename_space(
     session: AsyncSession, principal: Principal, space_id: uuid.UUID, name: str
 ) -> Space:
+    """Rename a space.
+
+    Allowed for the group creator, the personal-space owner, or an administrator.
+
+    Returns:
+        The renamed space.
+
+    Raises:
+        NotFoundError: When the space is not readable.
+        ForbiddenError: When the caller may not rename it.
+        ValidationError: On an invalid name.
+    """
     name = check_name(name, "name", limits.SPACE_NAME_MAX)
     space = await show_space(session, principal, space_id)
     if not space:

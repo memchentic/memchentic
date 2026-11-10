@@ -1,3 +1,5 @@
+"""Local MiniLM ONNX embedder with a deterministic hash fallback."""
+
 from __future__ import annotations
 
 import asyncio
@@ -9,6 +11,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+
+from memchentic.settings import get_settings
 
 if TYPE_CHECKING:
     from tokenizers import Tokenizer
@@ -29,13 +33,14 @@ _embedder: Embedder | None = None
 class Embedder:
     """Local embedding. Uses ONNX when model files exist; otherwise a stable hash fallback.
 
-    Fallback keeps hybrid search functional in CI / first boot before the image
-    bake or ``scripts/fetch_minilm_onnx.sh`` has populated the model directory.
+    The hash fallback is for local development and tests only. ``get_embedder``
+    refuses to return a hash-backed embedder unless ``ALLOW_HASH_EMBEDDINGS`` is
+    true, so that hash vectors are never mixed into an ONNX corpus.
     """
 
-    def __init__(self, model_path: str | Path | None = None, dim: int = EMBEDDING_DIM) -> None:
+    def __init__(self, model_path: str | Path | None = None) -> None:
         self.model_path = Path(model_path) if model_path is not None else DEFAULT_MODEL_DIR
-        self.dim = dim
+        self.dim = EMBEDDING_DIM
         self._session: Any | None = None
         self._tokenizer: Tokenizer | None = None
         self._backend = "hash"
@@ -68,14 +73,23 @@ class Embedder:
             )
             self._backend = "onnx"
             logger.info("Loaded ONNX embedder from %s", model_file)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 - any load failure falls back to hash embeddings
             logger.warning("Failed to load ONNX embedder: %s; using hash fallback", exc)
 
     @property
     def backend(self) -> str:
+        """Return the active backend: ``onnx`` or ``hash``."""
         return self._backend
 
     def embed(self, text: str) -> list[float]:
+        """Embed one text as a unit vector.
+
+        Args:
+            text: Input text. Blank text gives a zero vector.
+
+        Returns:
+            ``EMBEDDING_DIM`` floats.
+        """
         text = (text or "").strip()
         if not text:
             return [0.0] * self.dim
@@ -138,6 +152,7 @@ class Embedder:
         return (vec / norm).tolist()
 
     def embed_memory_text(self, title: str, body: str) -> list[float]:
+        """Embed a memory from its title and body."""
         return self.embed(f"{title}\n{body}")
 
     async def aembed(self, text: str) -> list[float]:
@@ -174,18 +189,9 @@ def get_embedder() -> Embedder:
     global _embedder
     if _embedder is None:
         _embedder = Embedder()
-    if _embedder.backend != "onnx":
-        from memchentic.settings import get_settings
-
-        if not get_settings().allow_hash_embeddings:
-            raise RuntimeError(
-                "ONNX embedder unavailable; set ALLOW_HASH_EMBEDDINGS=true for "
-                "local/hash fallback, or run scripts/fetch_minilm_onnx.sh"
-            )
+    if _embedder.backend != "onnx" and not get_settings().allow_hash_embeddings:
+        raise RuntimeError(
+            "ONNX embedder unavailable; set ALLOW_HASH_EMBEDDINGS=true for "
+            "local/hash fallback, or run scripts/fetch_minilm_onnx.sh"
+        )
     return _embedder
-
-
-def reset_embedder() -> None:
-    """Clear the cached embedder (tests)."""
-    global _embedder
-    _embedder = None

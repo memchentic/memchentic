@@ -1,8 +1,10 @@
+"""Application settings loaded from the environment."""
+
 import logging
 import ssl
 from functools import lru_cache
 from typing import Literal
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -24,6 +26,8 @@ PostgresSslMode = Literal["disable", "prefer", "require", "verify-ca", "verify-f
 
 
 class Settings(BaseSettings):
+    """Application settings read from environment variables and ``.env``."""
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     base_url: str = Field(default="http://localhost:8080", alias="BASE_URL")
@@ -208,8 +212,6 @@ class Settings(BaseSettings):
         """
         if self.session_cookie_secure is not None:
             return self.session_cookie_secure
-        from urllib.parse import urlparse
-
         host = (urlparse(self.base_url).hostname or "").casefold()
         return host not in {"localhost", "127.0.0.1", "::1"}
 
@@ -259,10 +261,12 @@ class Settings(BaseSettings):
 
     @property
     def cors_origin_list(self) -> list[str]:
+        """Return ``CORS_ORIGINS`` as a list."""
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
     @property
     def mcp_resource_url(self) -> str:
+        """Return the public URL of the MCP endpoint."""
         return f"{self.base_url.rstrip('/')}/mcp"
 
     @property
@@ -276,6 +280,7 @@ class Settings(BaseSettings):
 
     @property
     def effective_audience(self) -> str:
+        """Return ``OAUTH_AUDIENCE``, else the MCP resource URL."""
         return self.oauth_audience or self.mcp_resource_url
 
     @property
@@ -290,4 +295,5 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
+    """Return the cached process-wide settings."""
     return Settings()

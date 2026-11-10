@@ -17,6 +17,7 @@ from memchentic.embeddings.loader import (
     MAX_SEQUENCE_LENGTH,
     Embedder,
 )
+from memchentic.models.entities import Memory
 from memchentic.search.hybrid import prepare_filtered_vector_scan, rrf_fuse
 
 _ONNX_READY = (DEFAULT_MODEL_DIR / "model.onnx").is_file() and (
@@ -182,3 +183,8 @@ async def test_prepare_filtered_vector_scan_sets_transaction_local_setting(
     after = await _hnsw_settings(session)
     assert after.get("hnsw.iterative_scan") != "strict_order"
     assert after.get("hnsw.ef_search") != "1000"
+
+
+def test_embedding_column_width_matches_embedder() -> None:
+    """The ``memories.embedding`` column and the embedder agree on the vector width."""
+    assert Memory.__table__.c.embedding.type.dim == EMBEDDING_DIM

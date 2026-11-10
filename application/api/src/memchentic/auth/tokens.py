@@ -1,3 +1,5 @@
+"""Internal RS256 signing keys, access tokens and opaque token helpers."""
+
 from __future__ import annotations
 
 import base64
@@ -147,6 +149,17 @@ def _b64url_uint(val: int) -> str:
 
 
 async def jwks(session: AsyncSession) -> dict:
+    """Return the public JWKS of the active signing keys.
+
+    Args:
+        session: Database session.
+
+    Returns:
+        A ``{"keys": [...]}`` document.
+
+    Raises:
+        TypeError: When a stored key is not an RSA key.
+    """
     result = await session.execute(
         select(InternalSigningKey).where(InternalSigningKey.active.is_(True))
     )
@@ -175,10 +188,20 @@ async def issue_access_token(
     subject: str,
     email: str | None = None,
     provider: str = "internal",
-    extra: dict | None = None,
     settings: Settings | None = None,
-    expires_seconds: int = ACCESS_TOKEN_SECONDS,
 ) -> str:
+    """Sign a memchentic access token valid for ``ACCESS_TOKEN_SECONDS``.
+
+    Args:
+        session: Database session (loads or creates the signing key).
+        subject: ``sub`` claim; the user id as a string.
+        email: ``email`` claim.
+        provider: ``provider`` claim.
+        settings: Optional settings override.
+
+    Returns:
+        The compact RS256 JWT.
+    """
     settings = settings or get_settings()
     key = await ensure_signing_key(session)
     now = datetime.now(UTC)
@@ -189,10 +212,8 @@ async def issue_access_token(
         "email": email,
         "provider": provider,
         "iat": int(now.timestamp()),
-        "exp": int((now + timedelta(seconds=expires_seconds)).timestamp()),
+        "exp": int((now + timedelta(seconds=ACCESS_TOKEN_SECONDS)).timestamp()),
     }
-    if extra:
-        payload.update(extra)
     private_key = decrypt_private_key(key.private_pem, settings)
     return jwt.encode(payload, private_key, algorithm="RS256", headers={"kid": key.kid})
 
@@ -277,8 +298,10 @@ async def verify_access_token(
 
 
 def hash_token(raw: str) -> str:
+    """Return the SHA-256 hex digest stored for an opaque token."""
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
 def new_opaque_token() -> str:
+    """Return a new random URL-safe token."""
     return secrets.token_urlsafe(32)

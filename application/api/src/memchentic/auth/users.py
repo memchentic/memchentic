@@ -1,3 +1,5 @@
+"""User accounts: internal sign-up and login, IdP upsert, directory and deletion."""
+
 from __future__ import annotations
 
 import asyncio
@@ -34,11 +36,11 @@ from memchentic.services.errors import (
     NotFoundError,
     ValidationError,
 )
-from memchentic.services.spaces import ensure_personal_space
+from memchentic.services.spaces import ensure_personal_space, get_personal_space
+from memchentic.settings import Settings, get_settings
 
 if TYPE_CHECKING:
     from memchentic.auth.principal import Principal
-    from memchentic.settings import Settings
 
 logger = logging.getLogger("memchentic")
 
@@ -361,7 +363,7 @@ async def upsert_oauth_user(
     async def _finish(user: User) -> User:
         from memchentic.services.auth_groups import sync_user_from_idp_groups
 
-        await sync_user_from_idp_groups(session, user, groups, commit=False)
+        await sync_user_from_idp_groups(session, user, groups)
         await session.commit()
         await session.refresh(user)
         return user
@@ -381,8 +383,6 @@ async def upsert_oauth_user(
 
     by_email = await get_user_by_email(session, email_n)
     if by_email:
-        from memchentic.settings import get_settings
-
         is_env_admin = email_n == normalize_email(get_settings().admin_contact_email)
         if by_email.password_hash is not None and not is_env_admin:
             await _revoke_unverified_credentials(session, by_email)
@@ -434,8 +434,6 @@ async def ensure_admin_user(
     Returns:
         The admin user row.
     """
-    from memchentic.settings import get_settings
-
     settings = settings or get_settings()
     email_n = normalize_email(settings.admin_contact_email)
     display = settings.admin_display_name.strip() or email_n.split("@")[0]
@@ -600,7 +598,6 @@ async def user_delete_eligibility(
         ``(deletable, reason)`` — reason is set when not deletable.
     """
     from memchentic.services.auth_groups import user_in_idp_bound_roster
-    from memchentic.settings import get_settings
 
     settings = settings or get_settings()
     if normalize_email(target.email) == normalize_email(settings.admin_contact_email):
@@ -635,9 +632,6 @@ async def delete_user(
         LookupError: Target user missing.
         PermissionError: Env admin, self-delete, or IdP-bound roster member.
     """
-    from memchentic.services.spaces import get_personal_space
-    from memchentic.settings import get_settings
-
     settings = settings or get_settings()
     user = await get_user(session, target_user_id)
     if not user:

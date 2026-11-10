@@ -1,3 +1,5 @@
+"""OAuth provider presets, OIDC discovery, JWKS lookup and IdP code exchange."""
+
 from __future__ import annotations
 
 import base64
@@ -26,13 +28,19 @@ _jwks_uri_cache: dict[str, tuple[float, str]] = {}
 
 @dataclass
 class ProviderPreset:
-    name: str
+    """Defaults for one ``OAUTH_PROVIDER`` value.
+
+    Attributes:
+        default_issuer: Issuer used when ``OAUTH_ISSUER`` is empty.
+        default_scopes: Comma-separated scopes used when ``OAUTH_SCOPES`` is empty.
+        discovery: False when the provider publishes no OIDC discovery document.
+        label: Text for the Continue-with button.
+    """
+
     default_issuer: str = ""
     default_scopes: str = "openid,profile,email"
-    jwks_path: str = "/.well-known/jwks.json"
     discovery: bool = True
     label: str = ""
-    notes: str = ""
 
 
 @dataclass
@@ -47,51 +55,36 @@ class OAuthProfile:
 
 
 PRESETS: dict[str, ProviderPreset] = {
-    "google": ProviderPreset(
-        name="google",
-        default_issuer="https://accounts.google.com",
-        default_scopes="openid,profile,email",
-        label="Google",
-        notes="Google OAuth / Workspace",
-    ),
+    "google": ProviderPreset(default_issuer="https://accounts.google.com", label="Google"),
+    # GitHub is an OAuth App: web login only, opaque tokens, no OIDC discovery.
     "github": ProviderPreset(
-        name="github",
         default_issuer="https://github.com/login/oauth",
         default_scopes="read:user,user:email",
         discovery=False,
         label="GitHub",
-        notes="GitHub OAuth App — web login only (opaque tokens)",
     ),
-    "okta": ProviderPreset(name="okta", label="Okta", notes="Okta OIDC — set OAUTH_ISSUER"),
-    "authentik": ProviderPreset(
-        name="authentik",
-        label="Authentik",
-        notes="Self-hosted Authentik application issuer",
-    ),
-    "keycloak": ProviderPreset(name="keycloak", label="Keycloak", notes="Keycloak realm issuer"),
-    "auth0": ProviderPreset(name="auth0", label="Auth0", notes="Auth0 tenant issuer"),
+    "okta": ProviderPreset(label="Okta"),
+    "authentik": ProviderPreset(label="Authentik"),
+    "keycloak": ProviderPreset(label="Keycloak"),
+    "auth0": ProviderPreset(label="Auth0"),
     "entra": ProviderPreset(
-        name="entra",
-        default_scopes="openid,profile,email,offline_access",
-        label="Microsoft",
-        notes="Microsoft Entra ID",
+        default_scopes="openid,profile,email,offline_access", label="Microsoft"
     ),
-    "gitlab": ProviderPreset(
-        name="gitlab",
-        default_issuer="https://gitlab.com",
-        label="GitLab",
-        notes="GitLab OAuth/OIDC",
-    ),
-    "generic": ProviderPreset(
-        name="generic", label="SSO", notes="Raw OIDC via issuer + client env"
-    ),
-    "internal": ProviderPreset(
-        name="internal", label="Internal", notes="Built-in email/password AS"
-    ),
+    "gitlab": ProviderPreset(default_issuer="https://gitlab.com", label="GitLab"),
+    "generic": ProviderPreset(label="SSO"),
+    "internal": ProviderPreset(label="Internal"),
 }
 
 
 def resolve_issuer(settings: Settings) -> str:
+    """Return the issuer for the active provider.
+
+    Args:
+        settings: App settings.
+
+    Returns:
+        ``OAUTH_ISSUER``, else the preset default; the session issuer in internal mode.
+    """
     if settings.oauth_provider == "internal":
         return settings.session_issuer
     preset = PRESETS.get(settings.oauth_provider)
@@ -116,6 +109,15 @@ def provider_label(settings: Settings) -> str:
 
 
 def resolve_jwks_uri(settings: Settings) -> str:
+    """Return the JWKS URL without OIDC discovery.
+
+    Args:
+        settings: App settings.
+
+    Returns:
+        ``OAUTH_JWKS_URI`` when set, otherwise a provider-specific or
+        issuer-relative default.
+    """
     if settings.oauth_jwks_uri:
         return settings.oauth_jwks_uri
     issuer = resolve_issuer(settings).rstrip("/")
@@ -348,7 +350,7 @@ async def authorization_server_metadata(settings: Settings) -> dict:
             "response_types_supported": ["code"],
             "grant_types_supported": ["authorization_code", "refresh_token"],
             "code_challenge_methods_supported": ["S256"],
-            "token_endpoint_auth_methods_supported": ["none", "client_secret_post"],
+            "token_endpoint_auth_methods_supported": ["none"],
             "scopes_supported": ["openid", "profile", "email"],
             "subject_types_supported": ["public"],
             "id_token_signing_alg_values_supported": ["RS256"],
@@ -383,6 +385,14 @@ async def authorization_server_metadata(settings: Settings) -> dict:
 
 
 def protected_resource_metadata(settings: Settings) -> dict:
+    """Build RFC 9728 metadata for the MCP endpoint.
+
+    Args:
+        settings: App settings.
+
+    Returns:
+        The protected-resource metadata document.
+    """
     issuer = (
         resolve_issuer(settings)
         if settings.oauth_provider != "internal"
@@ -443,9 +453,6 @@ async def resolve_oidc_endpoints(settings: Settings) -> dict[str, str]:
         }
     if settings.oauth_provider == "internal":
         raise ValueError("Internal provider has no external authorize endpoints")
-    preset = PRESETS.get(settings.oauth_provider)
-    if preset and not preset.discovery:
-        raise ValueError(f"Provider {settings.oauth_provider} has no OIDC discovery")
     meta = await _oidc_discovery(settings)
     auth = meta.get("authorization_endpoint")
     token = meta.get("token_endpoint")
@@ -527,8 +534,18 @@ async def _token_post(
     token_endpoint: str,
     code: str,
     code_verifier: str,
-    accept_json: bool,
 ) -> dict[str, Any]:
+    """Exchange an authorization code at the IdP token endpoint.
+
+    Args:
+        settings: App settings (client id/secret, redirect URI).
+        token_endpoint: IdP token endpoint URL.
+        code: Authorization code from the callback.
+        code_verifier: PKCE verifier stored for this login.
+
+    Returns:
+        The JSON token response.
+    """
     data = {
         "grant_type": "authorization_code",
         "code": code,
@@ -538,17 +555,10 @@ async def _token_post(
     }
     if settings.oauth_client_secret:
         data["client_secret"] = settings.oauth_client_secret
-    headers = {"Accept": "application/json"} if accept_json else {}
     async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.post(token_endpoint, data=data, headers=headers)
+        resp = await client.post(token_endpoint, data=data, headers={"Accept": "application/json"})
         resp.raise_for_status()
-        if accept_json or "application/json" in resp.headers.get("content-type", ""):
-            return resp.json()
-        # GitHub may return form-encoded without Accept
-        from urllib.parse import parse_qs
-
-        parsed = parse_qs(resp.text)
-        return {k: v[0] for k, v in parsed.items()}
+        return resp.json()
 
 
 async def _oidc_exchange(
@@ -564,7 +574,6 @@ async def _oidc_exchange(
         token_endpoint=endpoints["token_endpoint"],
         code=code,
         code_verifier=code_verifier,
-        accept_json=True,
     )
     claims: dict[str, Any] = {}
     id_token = token_payload.get("id_token")
@@ -593,7 +602,6 @@ async def _github_exchange(settings: Settings, *, code: str, code_verifier: str)
         token_endpoint=endpoints["token_endpoint"],
         code=code,
         code_verifier=code_verifier,
-        accept_json=True,
     )
     access_token = token_payload.get("access_token")
     if not isinstance(access_token, str) or not access_token:

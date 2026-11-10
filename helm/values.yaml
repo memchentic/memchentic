@@ -105,6 +105,11 @@ config:
   sessionBrowserHours: "12"
   # Default Secure cookies for non-loopback hosts.
   sessionCookieSecure: "true"
+  # Addresses or CIDR ranges of the ingress controller / reverse proxy that
+  # may set X-Forwarded-For and X-Forwarded-Proto (comma separated), e.g. the
+  # pod CIDR of the ingress controller. Empty = trust only 127.0.0.1 (uvicorn
+  # default), which makes every client share one rate-limit bucket.
+  forwardedAllowIps: ""
   # Public self-registration when OAUTH_PROVIDER=internal. First-boot value only; afterwards System Settings is the source of truth.
   registerEnabled: "true"
   enableApiDocs: "false"

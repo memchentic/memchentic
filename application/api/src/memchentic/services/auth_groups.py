@@ -6,11 +6,11 @@ import uuid
 from collections.abc import Collection
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from memchentic.auth.users import ensure_admin_user, get_user, normalize_email
+from memchentic.auth.users import get_user, get_user_by_email, normalize_email
 from memchentic.models.entities import AuthGroup, AuthGroupMember, User
 from memchentic.services import limits
 from memchentic.services.errors import ForbiddenError, NotFoundError
@@ -135,9 +135,7 @@ async def add_member_raw(
     return row
 
 
-async def ensure_auth_groups(
-    session: AsyncSession, settings: Settings | None = None
-) -> dict[str, AuthGroup]:
+async def ensure_auth_groups(session: AsyncSession, admin: User) -> dict[str, AuthGroup]:
     """Ensure system Auth Groups with exclusive membership.
 
     ``ADMIN_EMAIL`` is always in Administrators and never in Users. Unbound
@@ -145,17 +143,15 @@ async def ensure_auth_groups(
 
     Args:
         session: Database session.
-        settings: Settings override.
+        admin: The ``ADMIN_EMAIL`` user row, already created by the caller.
 
     Returns:
         Map of slug → auth group.
     """
-    settings = settings or get_settings()
     groups: dict[str, AuthGroup] = {}
     for slug, name in _SYSTEM_GROUPS:
         groups[slug] = await _ensure_group(session, slug, name)
 
-    admin = await ensure_admin_user(session, settings)
     await add_member_raw(session, groups[SLUG_ADMINISTRATORS], admin.id, source=SOURCE_MANUAL)
     await _remove_member_raw(session, groups[SLUG_USERS].id, admin.id)
 
@@ -180,13 +176,38 @@ async def ensure_auth_groups(
             )
         )
 
-    # Only backfill Users when that roster is unbound.
+    # Only backfill Users when that roster is unbound. Set-based: the cost
+    # does not grow with the number of users.
     if not _group_bound(groups[SLUG_USERS]):
-        user_ids = (await session.execute(select(User.id))).scalars().all()
-        for uid in user_ids:
-            if uid in admin_id_set:
-                continue
-            await add_member_raw(session, groups[SLUG_USERS], uid, source=SOURCE_MANUAL)
+        await session.execute(
+            text(
+                """
+                INSERT INTO auth_group_members (group_id, user_id, source)
+                SELECT CAST(:users_gid AS uuid), u.id, CAST(:manual AS varchar)
+                FROM users u
+                WHERE NOT EXISTS (
+                  SELECT 1 FROM auth_group_members m
+                  WHERE m.user_id = u.id
+                    AND m.group_id IN (CAST(:users_gid AS uuid), CAST(:admins_gid AS uuid))
+                )
+                ON CONFLICT (group_id, user_id) DO NOTHING
+                """
+            ),
+            {
+                "users_gid": groups[SLUG_USERS].id,
+                "admins_gid": groups[SLUG_ADMINISTRATORS].id,
+                "manual": SOURCE_MANUAL,
+            },
+        )
+        # An unbound roster has only manual members.
+        await session.execute(
+            update(AuthGroupMember)
+            .where(
+                AuthGroupMember.group_id == groups[SLUG_USERS].id,
+                AuthGroupMember.source != SOURCE_MANUAL,
+            )
+            .values(source=SOURCE_MANUAL)
+        )
 
     await session.commit()
     return groups
@@ -236,7 +257,6 @@ def _group_payload(group: AuthGroup, member_count: int) -> dict[str, Any]:
 async def list_groups(session: AsyncSession, principal: Principal) -> list[dict[str, Any]]:
     """List fixed Auth Groups with member counts and bind state."""
     _require_admin(principal)
-    await ensure_auth_groups(session)
     rows: list[dict[str, Any]] = []
     for slug, _name in _SYSTEM_GROUPS:
         group = await _get_by_slug(session, slug)
@@ -330,6 +350,11 @@ async def set_idp_bind(
         group.idp_group_id = None
         group.idp_group_name = None
     await session.commit()
+    if gid is None:
+        # The roster is manual again: place users that the IdP sync left out.
+        admin = await get_user_by_email(session, get_settings().admin_contact_email)
+        if admin is not None:
+            await ensure_auth_groups(session, admin)
     return await get_idp_bind(session, principal, slug)
 
 

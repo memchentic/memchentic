@@ -79,3 +79,7 @@ config:
 ```
 
 `POSTGRES_PASSWORD` still comes from the resolved Secret.
+
+## Ingress
+
+When the Ingress is enabled, set `config.forwardedAllowIps` to the address range of the ingress controller; otherwise all clients share one rate-limit bucket.

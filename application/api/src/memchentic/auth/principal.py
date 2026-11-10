@@ -40,11 +40,16 @@ async def resolve_bearer(
     settings = settings or get_settings()
 
     if hmac.compare_digest(token.encode(), settings.admin_api_key.encode()):
-        from memchentic.auth.users import ensure_admin_user
+        from memchentic.auth.users import ensure_admin_user, get_user_by_email
         from memchentic.services.auth_groups import ensure_auth_groups
 
-        admin = await ensure_admin_user(session, settings)
-        await ensure_auth_groups(session, settings)
+        # The application lifespan ensures the admin row and the rosters at
+        # start. Per request, one SELECT is enough.
+        admin = await get_user_by_email(session, settings.admin_contact_email)
+        if admin is None:
+            # The row was removed out of band: rebuild it once.
+            admin = await ensure_admin_user(session, settings)
+            await ensure_auth_groups(session, admin)
         return Principal(
             is_admin=True,
             user_id=admin.id,

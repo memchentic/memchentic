@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from memchentic.auth.users import delete_user, register_internal_user
+from memchentic.auth.users import delete_user, ensure_admin_user, register_internal_user
 from memchentic.models.entities import Space
 from memchentic.services.auth_groups import (
     SLUG_USERS,
@@ -146,7 +146,8 @@ async def test_delete_user_removes_personal_space(session: AsyncSession) -> None
     assert personal is not None
     personal_id = personal.id
 
-    await ensure_auth_groups(session)
+    admin = await ensure_admin_user(session)
+    await ensure_auth_groups(session, admin)
     await delete_user(session, actor_user_id=None, target_user_id=user.id)
 
     assert await get_personal_space(session, user.id) is None
@@ -185,7 +186,8 @@ async def test_delete_user_refuses_when_on_bound_roster(session: AsyncSession) -
         email=f"bound-{uuid.uuid4().hex[:8]}@example.com",
         password="password-ok-12",
     )
-    groups = await ensure_auth_groups(session)
+    admin = await ensure_admin_user(session)
+    groups = await ensure_auth_groups(session, admin)
     principal = type("P", (), {"is_admin": True})()
     try:
         await set_idp_bind(

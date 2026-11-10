@@ -195,8 +195,8 @@ def create_app() -> FastAPI:
             from memchentic.services.memories import backfill_orphan_creators
 
             await set_rls_context(session, user_id=None, is_admin=True)
-            await ensure_admin_user(session, settings)
-            await ensure_auth_groups(session, settings)
+            admin = await ensure_admin_user(session, settings)
+            await ensure_auth_groups(session, admin)
             await ensure_instance_settings(session, settings)
             # Attribute orphan memories to the space owner only (never silently
             # claim them as the env admin — that hides deleted-owner history).

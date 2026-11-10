@@ -75,9 +75,7 @@ async def create_session(
     return raw, row
 
 
-async def touch_session(
-    session: AsyncSession, raw: str, settings: Settings
-) -> GuiSession | None:
+async def touch_session(session: AsyncSession, raw: str, settings: Settings) -> GuiSession | None:
     """Validate a cookie token and slide a remembered session's expiry.
 
     Browser-only sessions keep their original expiry so they cannot be kept

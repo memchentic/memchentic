@@ -104,6 +104,7 @@ class Settings(BaseSettings):
         if not app_password:
             return self.migration_database_url
         return self._dsn(user=app_user, password=app_password)
+
     near_dup_threshold: float = Field(default=0.92, alias="NEAR_DUP_THRESHOLD")
     rrf_k: int = Field(default=60, alias="RRF_K")
     near_dup_candidates: int = Field(default=5, ge=1, alias="NEAR_DUP_CANDIDATES")
@@ -120,9 +121,7 @@ class Settings(BaseSettings):
         default=6.0, ge=0, alias="MEMORY_TTL_TOUCH_DEBOUNCE_HOURS"
     )
     memory_max_ttl_days: int = Field(default=730, ge=0, alias="MEMORY_MAX_TTL_DAYS")
-    memory_usage_score_weight: float = Field(
-        default=0.05, ge=0, alias="MEMORY_USAGE_SCORE_WEIGHT"
-    )
+    memory_usage_score_weight: float = Field(default=0.05, ge=0, alias="MEMORY_USAGE_SCORE_WEIGHT")
 
     # Default result counts when callers omit ``limit`` (MCP/REST/services).
     search_default_limit: int = Field(default=20, ge=1, alias="SEARCH_DEFAULT_LIMIT")
@@ -149,9 +148,7 @@ class Settings(BaseSettings):
     session_cookie_secure: bool | None = Field(default=None, alias="SESSION_COOKIE_SECURE")
     register_enabled: bool = Field(default=True, alias="REGISTER_ENABLED")
     enable_api_docs: bool = Field(default=False, alias="ENABLE_API_DOCS")
-    allow_hash_embeddings: bool = Field(
-        default=False, alias="ALLOW_HASH_EMBEDDINGS"
-    )
+    allow_hash_embeddings: bool = Field(default=False, alias="ALLOW_HASH_EMBEDDINGS")
 
     @field_validator("session_cookie_secure", mode="before")
     @classmethod
@@ -174,6 +171,7 @@ class Settings(BaseSettings):
 
         host = (urlparse(self.base_url).hostname or "").casefold()
         return host not in {"localhost", "127.0.0.1", "::1"}
+
     def insecure_secret_names(self) -> list[str]:
         """Name break-glass secrets that are empty, placeholders, or too short.
 
@@ -191,13 +189,10 @@ class Settings(BaseSettings):
         bad: list[str] = []
         for name, (value, min_len) in checks.items():
             lowered = value.casefold()
-            if (
-                value in weak_exact
-                or "change-me" in lowered
-                or len(value) < min_len
-            ):
+            if value in weak_exact or "change-me" in lowered or len(value) < min_len:
                 bad.append(name)
         return bad
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

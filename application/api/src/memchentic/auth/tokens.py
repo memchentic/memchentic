@@ -121,7 +121,9 @@ def _b64url_uint(val: int) -> str:
 
 
 async def jwks(session: AsyncSession) -> dict:
-    result = await session.execute(select(InternalSigningKey).where(InternalSigningKey.active.is_(True)))
+    result = await session.execute(
+        select(InternalSigningKey).where(InternalSigningKey.active.is_(True))
+    )
     keys = []
     for row in result.scalars():
         public = serialization.load_pem_public_key(row.public_pem.encode())
@@ -167,9 +169,7 @@ async def issue_access_token(
     return jwt.encode(payload, private_key, algorithm="RS256", headers={"kid": key.kid})
 
 
-async def _verify_session_token(
-    session: AsyncSession, token: str, settings: Settings
-) -> dict:
+async def _verify_session_token(session: AsyncSession, token: str, settings: Settings) -> dict:
     """Verify a memchentic-signed GUI/session access token.
 
     Args:

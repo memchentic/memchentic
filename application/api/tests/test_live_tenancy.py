@@ -63,8 +63,12 @@ def _tool(client: TestClient, token: str, name: str, args: dict[str, Any]) -> di
             "Authorization": f"Bearer {token}",
             "Accept": "application/json, text/event-stream",
         },
-        json={"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-              "params": {"name": name, "arguments": args}},
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": args},
+        },
     )
     resp.raise_for_status()
     return resp.json()["result"]
@@ -82,15 +86,32 @@ def test_tool_surface_is_memchentic_native(client: TestClient) -> None:
     token, _, _ = _user(client)
     resp = client.post(
         "/mcp",
-        headers={"Authorization": f"Bearer {token}",
-                 "Accept": "application/json, text/event-stream"},
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json, text/event-stream",
+        },
         json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
     )
     names = {t["name"] for t in resp.json()["result"]["tools"]}
     assert names == {
-        "me", "space_list", "space_create", "space_show", "remember", "find", "open",
-        "revise", "forget", "browse", "since", "by_tag", "relocate", "guide_write",
-        "guide_find", "about_path", "trace", "overlap_report",
+        "me",
+        "space_list",
+        "space_create",
+        "space_show",
+        "remember",
+        "find",
+        "open",
+        "revise",
+        "forget",
+        "browse",
+        "since",
+        "by_tag",
+        "relocate",
+        "guide_write",
+        "guide_find",
+        "about_path",
+        "trace",
+        "overlap_report",
     }
 
 
@@ -109,17 +130,31 @@ def test_personal_isolation_and_group_lifecycle(client: TestClient) -> None:
     group = _tool(client, token_a, "space_create", {"name": f"group {marker}"})["structuredContent"]
     auth_a = {"Authorization": f"Bearer {token_a}"}
     auth_b = {"Authorization": f"Bearer {token_b}"}
-    assert client.post(f"/api/spaces/{group['id']}/members", headers=auth_a,
-                       json={"email": email_b}).status_code == 200
-    shared = _tool(client, token_a, "remember",
-                   {"title": f"shared {marker}", "body": marker, "space_id": group["id"]})
+    assert (
+        client.post(
+            f"/api/spaces/{group['id']}/members", headers=auth_a, json={"email": email_b}
+        ).status_code
+        == 200
+    )
+    shared = _tool(
+        client,
+        token_a,
+        "remember",
+        {"title": f"shared {marker}", "body": marker, "space_id": group["id"]},
+    )
     shared_id = shared["structuredContent"]["id"]
     assert _tool(client, token_b, "open", {"id": shared_id})["structuredContent"]["id"] == shared_id
 
-    assert client.post(f"/api/spaces/{group['id']}/members", headers=auth_b,
-                       json={"user_id": user_b}).status_code == 403
-    assert client.delete(f"/api/spaces/{group['id']}/members/{user_b}",
-                         headers=auth_b).status_code == 200
+    assert (
+        client.post(
+            f"/api/spaces/{group['id']}/members", headers=auth_b, json={"user_id": user_b}
+        ).status_code
+        == 403
+    )
+    assert (
+        client.delete(f"/api/spaces/{group['id']}/members/{user_b}", headers=auth_b).status_code
+        == 200
+    )
     assert _tool(client, token_b, "open", {"id": shared_id}).get("isError") is True
 
 
@@ -164,11 +199,18 @@ def test_user_detail_groups_are_acl_scoped(client: TestClient) -> None:
     auth_b = {"Authorization": f"Bearer {token_b}"}
     auth_c = {"Authorization": f"Bearer {token_c}"}
 
-    shared = client.post("/api/spaces", headers=auth_a, json={"name": f"shared-{uuid.uuid4().hex[:8]}"}).json()
-    private = client.post("/api/spaces", headers=auth_a, json={"name": f"private-{uuid.uuid4().hex[:8]}"}).json()
-    assert client.post(
-        f"/api/spaces/{shared['id']}/members", headers=auth_a, json={"user_id": user_b}
-    ).status_code == 200
+    shared = client.post(
+        "/api/spaces", headers=auth_a, json={"name": f"shared-{uuid.uuid4().hex[:8]}"}
+    ).json()
+    private = client.post(
+        "/api/spaces", headers=auth_a, json={"name": f"private-{uuid.uuid4().hex[:8]}"}
+    ).json()
+    assert (
+        client.post(
+            f"/api/spaces/{shared['id']}/members", headers=auth_a, json={"user_id": user_b}
+        ).status_code
+        == 200
+    )
 
     detail_b = client.get(f"/api/users/{user_b}", headers=auth_a).json()
     assert detail_b["id"] == user_b
@@ -218,9 +260,12 @@ def test_user_detail_acl_edges(client: TestClient) -> None:
     solo = client.post(
         "/api/spaces", headers=auth_a, json={"name": f"solo-{uuid.uuid4().hex[:6]}"}
     ).json()
-    assert client.post(
-        f"/api/spaces/{both['id']}/members", headers=auth_a, json={"user_id": user_b}
-    ).status_code == 200
+    assert (
+        client.post(
+            f"/api/spaces/{both['id']}/members", headers=auth_a, json={"user_id": user_b}
+        ).status_code
+        == 200
+    )
 
     mutual = client.get(f"/api/users/{user_b}", headers=auth_a).json()
     assert {t["id"] for t in mutual["groups"]} == {both["id"]}
@@ -245,10 +290,16 @@ def test_write_target_resolution(client: TestClient) -> None:
     marker = uuid.uuid4().hex
 
     def write(**target: Any) -> Any:
-        return client.post("/api/memories", headers=auth, json={
-            "title": f"t {uuid.uuid4().hex}", "body": f"{marker} {uuid.uuid4().hex}",
-            "force": True, **target,
-        })
+        return client.post(
+            "/api/memories",
+            headers=auth,
+            json={
+                "title": f"t {uuid.uuid4().hex}",
+                "body": f"{marker} {uuid.uuid4().hex}",
+                "force": True,
+                **target,
+            },
+        )
 
     me = client.get("/api/me", headers=auth).json()
     assert write().json()["space_id"] == me["personal_space_id"]
@@ -262,8 +313,12 @@ def test_write_target_resolution(client: TestClient) -> None:
     assert write(visibility="shared").status_code == 422
     assert write(group=f"missing {marker}").status_code == 422
 
-    assert client.patch("/api/me", headers=auth,
-                        json={"default_shared_space_id": home["id"]}).status_code == 200
+    assert (
+        client.patch(
+            "/api/me", headers=auth, json={"default_shared_space_id": home["id"]}
+        ).status_code
+        == 200
+    )
     assert write(visibility="shared").json()["space_id"] == home["id"]
     assert write(visibility="personal").json()["space_id"] == me["personal_space_id"]
 
@@ -271,10 +326,17 @@ def test_write_target_resolution(client: TestClient) -> None:
     assert write(group=f"Ops {marker}").status_code == 422
 
     outsider, _, _ = _user(client)
-    other = client.post("/api/spaces", headers={"Authorization": f"Bearer {outsider}"},
-                        json={"name": f"Other {marker}"}).json()
-    assert client.patch("/api/me", headers=auth,
-                        json={"default_shared_space_id": other["id"]}).status_code == 403
+    other = client.post(
+        "/api/spaces",
+        headers={"Authorization": f"Bearer {outsider}"},
+        json={"name": f"Other {marker}"},
+    ).json()
+    assert (
+        client.patch(
+            "/api/me", headers=auth, json={"default_shared_space_id": other["id"]}
+        ).status_code
+        == 403
+    )
 
 
 def test_admin_key_writes_as_admin_user(client: TestClient) -> None:
@@ -301,8 +363,9 @@ def test_admin_key_writes_as_admin_user(client: TestClient) -> None:
 def test_api_keys_bind_to_user_and_admin_key_is_admin(client: TestClient) -> None:
     """A per-user key acts as that user; the env admin key acts as admin."""
     token, _, email = _user(client)
-    raw = client.post("/api/api-keys", headers={"Authorization": f"Bearer {token}"},
-                      json={"name": "test"}).json()["key"]
+    raw = client.post(
+        "/api/api-keys", headers={"Authorization": f"Bearer {token}"}, json={"name": "test"}
+    ).json()["key"]
     assert _tool(client, raw, "me", {})["structuredContent"]["email"] == email
     if ADMIN_KEY:
         admin_me = _tool(client, ADMIN_KEY, "me", {})["structuredContent"]
@@ -331,9 +394,10 @@ def test_api_key_cycle_is_own_only_and_admin_can_cycle_others(client: TestClient
     denied = client.get("/api/me", headers={"Authorization": f"Bearer {first['key']}"})
     assert denied.status_code in {401, 403}
 
-    assert client.post(
-        "/api/api-keys/cycle", headers=auth_b, json={"user_id": user_a}
-    ).status_code == 403
+    assert (
+        client.post("/api/api-keys/cycle", headers=auth_b, json={"user_id": user_a}).status_code
+        == 403
+    )
 
     if not ADMIN_KEY:
         return
@@ -341,14 +405,10 @@ def test_api_key_cycle_is_own_only_and_admin_can_cycle_others(client: TestClient
     admin_list = client.get("/api/api-keys", headers=admin).json()
     assert user_a in {row["user_id"] for row in admin_list}
     assert user_b not in {row["user_id"] for row in admin_list}
-    cycled = client.post(
-        "/api/api-keys/cycle", headers=admin, json={"user_id": user_b}
-    ).json()
+    cycled = client.post("/api/api-keys/cycle", headers=admin, json={"user_id": user_b}).json()
     assert cycled["user_id"] == user_b
     assert client.get("/api/api-keys", headers=auth_b).json()[0]["prefix"] == cycled["prefix"]
-    assert user_b in {
-        row["user_id"] for row in client.get("/api/api-keys", headers=admin).json()
-    }
+    assert user_b in {row["user_id"] for row in client.get("/api/api-keys", headers=admin).json()}
 
 
 def test_near_duplicate_refused_without_force(client: TestClient) -> None:
@@ -358,8 +418,9 @@ def test_near_duplicate_refused_without_force(client: TestClient) -> None:
     body = {"title": "Database choice", "body": f"Postgres with pgvector {uuid.uuid4().hex}"}
     assert client.post("/api/memories", headers=auth, json=body).status_code == 200
     assert client.post("/api/memories", headers=auth, json=body).status_code == 409
-    assert client.post("/api/memories", headers=auth,
-                       json={**body, "force": True}).status_code == 200
+    assert (
+        client.post("/api/memories", headers=auth, json={**body, "force": True}).status_code == 200
+    )
 
 
 def _pkce_pair() -> tuple[str, str]:
@@ -379,34 +440,61 @@ def test_authorize_requires_registered_redirect_and_pkce(client: TestClient) -> 
     email = f"o{uuid.uuid4().hex[:10]}@example.com"
     client.post("/api/auth/register", json={"email": email, "password": password})
     redirect = "http://127.0.0.1:9/cb"
-    client_id = client.post("/oauth/register", json={
-        "client_name": "Test Harness", "redirect_uris": [redirect]}).json()["client_id"]
+    client_id = client.post(
+        "/oauth/register", json={"client_name": "Test Harness", "redirect_uris": [redirect]}
+    ).json()["client_id"]
     verifier, challenge = _pkce_pair()
-    base = {"client_id": client_id, "redirect_uri": redirect, "response_type": "code",
-            "code_challenge_method": "S256"}
+    base = {
+        "client_id": client_id,
+        "redirect_uri": redirect,
+        "response_type": "code",
+        "code_challenge_method": "S256",
+    }
 
     assert client.get("/oauth/authorize", params={**base, "code_challenge": ""}).status_code == 400
-    assert client.get("/oauth/authorize", params={
-        **base, "code_challenge": challenge, "redirect_uri": "http://evil.example/cb",
-    }).status_code == 400
+    assert (
+        client.get(
+            "/oauth/authorize",
+            params={
+                **base,
+                "code_challenge": challenge,
+                "redirect_uri": "http://evil.example/cb",
+            },
+        ).status_code
+        == 400
+    )
     page = client.get("/oauth/authorize", params={**base, "code_challenge": challenge})
     assert page.status_code == 200
     assert "Test Harness" in page.text and "127.0.0.1:9" in page.text
     assert page.headers["x-frame-options"] == "DENY"
 
-    form = {"email": email, "password": password, "client_id": client_id,
-            "redirect_uri": redirect, "code_challenge": challenge,
-            "code_challenge_method": "S256", "csrf_token": _oauth_csrf(page.text)}
+    form = {
+        "email": email,
+        "password": password,
+        "client_id": client_id,
+        "redirect_uri": redirect,
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
+        "csrf_token": _oauth_csrf(page.text),
+    }
     redirected = client.post("/oauth/authorize", data=form, follow_redirects=False)
     assert redirected.status_code == 302
     code = parse_qs(urlparse(redirected.headers["location"]).query)["code"][0]
 
-    grant = {"grant_type": "authorization_code", "code": code, "client_id": client_id,
-             "redirect_uri": redirect}
+    grant = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "client_id": client_id,
+        "redirect_uri": redirect,
+    }
     assert client.post("/oauth/token", data={**grant, "code_verifier": "x" * 50}).status_code == 400
     missing_redirect = {k: v for k, v in grant.items() if k != "redirect_uri"}
-    assert client.post("/oauth/token",
-                       data={**missing_redirect, "code_verifier": verifier}).status_code == 400
+    assert (
+        client.post(
+            "/oauth/token", data={**missing_redirect, "code_verifier": verifier}
+        ).status_code
+        == 400
+    )
     assert client.post("/oauth/token", data={**grant, "code_verifier": verifier}).status_code == 200
     assert client.post("/oauth/token", data={**grant, "code_verifier": verifier}).status_code == 400
 
@@ -484,8 +572,9 @@ def test_roster_rules_and_no_email_enumeration(client: TestClient) -> None:
     members = f"/api/spaces/{group['structuredContent']['id']}/members"
 
     outsider_known = client.post(members, headers=auth[token_c], json={"email": email_b})
-    outsider_unknown = client.post(members, headers=auth[token_c],
-                                   json={"email": f"nobody{uuid.uuid4().hex}@example.com"})
+    outsider_unknown = client.post(
+        members, headers=auth[token_c], json={"email": f"nobody{uuid.uuid4().hex}@example.com"}
+    )
     assert outsider_known.status_code == outsider_unknown.status_code == 403
 
     for email in (email_b, email_c):
@@ -500,6 +589,9 @@ def test_non_admin_cannot_issue_keys_for_another_user(client: TestClient) -> Non
     """A user-supplied user_id on key issue is refused for non-admins."""
     token_a, _, _ = _user(client)
     _, user_b, _ = _user(client)
-    issued = client.post("/api/api-keys", headers={"Authorization": f"Bearer {token_a}"},
-                         json={"name": "steal", "user_id": user_b})
+    issued = client.post(
+        "/api/api-keys",
+        headers={"Authorization": f"Bearer {token_a}"},
+        json={"name": "steal", "user_id": user_b},
+    )
     assert issued.status_code == 403

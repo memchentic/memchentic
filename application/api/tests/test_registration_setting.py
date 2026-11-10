@@ -37,9 +37,7 @@ def test_registration_setting_admin_only_and_gates_public_register(
     assert current.status_code == 200, current.text
     assert current.json()["enabled"] is True
 
-    off = client.put(
-        "/api/system/registration", headers=admin, json={"enabled": False}
-    )
+    off = client.put("/api/system/registration", headers=admin, json={"enabled": False})
     assert off.status_code == 200, off.text
     assert off.json()["enabled"] is False
     assert client.get("/api/provider").json()["register_enabled"] is False
@@ -58,9 +56,7 @@ def test_registration_setting_admin_only_and_gates_public_register(
     )
     assert created.status_code == 200, created.text
 
-    on = client.put(
-        "/api/system/registration", headers=admin, json={"enabled": True}
-    )
+    on = client.put("/api/system/registration", headers=admin, json={"enabled": True})
     assert on.status_code == 200, on.text
     assert on.json()["enabled"] is True
 

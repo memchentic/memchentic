@@ -34,10 +34,14 @@ async def reembed_all(batch_size: int = 200) -> int:
         offset = 0
         while True:
             rows = (
-                await session.execute(
-                    select(Memory).order_by(Memory.id).offset(offset).limit(batch_size)
+                (
+                    await session.execute(
+                        select(Memory).order_by(Memory.id).offset(offset).limit(batch_size)
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             if not rows:
                 break
             for memory in rows:

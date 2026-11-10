@@ -24,10 +24,7 @@ async def test_runtime_role_is_not_superuser() -> None:
         async with engine.connect() as conn:
             row = (
                 await conn.execute(
-                    text(
-                        "SELECT rolsuper, rolbypassrls FROM pg_roles "
-                        "WHERE rolname = current_user"
-                    )
+                    text("SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user")
                 )
             ).one()
         assert row.rolsuper is False

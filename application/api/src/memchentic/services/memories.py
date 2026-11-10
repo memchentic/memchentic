@@ -375,9 +375,7 @@ async def remember(
             session, space_id=space.id, title=title, body=body, kind=MemoryKind.entry
         )
         if dup:
-            raise ValueError(
-                f"Near-duplicate exists ({dup.id}). Pass force=true to create anyway."
-            )
+            raise ValueError(f"Near-duplicate exists ({dup.id}). Pass force=true to create anyway.")
 
     embedder = get_embedder()
     embedding = await embedder.aembed_memory_text(title, body)
@@ -400,9 +398,7 @@ async def remember(
     await session.flush()
     await session.refresh(memory)
     await publish_memory_event(session, memory_event_from_row("created", memory))
-    await commit_with_rls(
-        session, user_id=principal.user_id, is_admin=principal.is_admin
-    )
+    await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
     await session.refresh(memory)
     return memory
 
@@ -446,9 +442,7 @@ async def open_memory(
         )
         rows = list((await session.execute(stmt)).scalars())
         if len(rows) > 1:
-            choices = ", ".join(
-                f"{m.id} (space {m.space_id})" for m in rows[:8]
-            )
+            choices = ", ".join(f"{m.id} (space {m.space_id})" for m in rows[:8])
             more = "" if len(rows) <= 8 else f" (+{len(rows) - 8} more)"
             raise ValueError(
                 f"Title {title!r} matches {len(rows)} memories; "
@@ -529,21 +523,15 @@ async def revise(
     if repo_hint is not None:
         memory.repo_hint = repo_hint
     if text_changed:
-        memory.embedding = await get_embedder().aembed_memory_text(
-            memory.title, memory.body
-        )
+        memory.embedding = await get_embedder().aembed_memory_text(memory.title, memory.body)
     memory.updated_at = datetime.now(UTC)
     await publish_memory_event(session, memory_event_from_row("updated", memory))
-    await commit_with_rls(
-        session, user_id=principal.user_id, is_admin=principal.is_admin
-    )
+    await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
     await session.refresh(memory)
     return memory
 
 
-async def forget(
-    session: AsyncSession, principal: Principal, memory_id: uuid.UUID
-) -> None:
+async def forget(session: AsyncSession, principal: Principal, memory_id: uuid.UUID) -> None:
     memory = await open_memory(session, principal, memory_id=memory_id)
     if not memory:
         raise PermissionError("Memory not found")
@@ -551,9 +539,7 @@ async def forget(
     event = memory_event_from_row("deleted", memory)
     await session.delete(memory)
     await publish_memory_event(session, event)
-    await commit_with_rls(
-        session, user_id=principal.user_id, is_admin=principal.is_admin
-    )
+    await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
 
 
 async def browse(
@@ -569,9 +555,7 @@ async def browse(
     offset: int = 0,
     include_expired: bool = False,
 ) -> list[Memory]:
-    space_ids = await accessible_space_ids(
-        session, principal, space_id, space_scope=space_scope
-    )
+    space_ids = await accessible_space_ids(session, principal, space_id, space_scope=space_scope)
     if not space_ids:
         return []
     limit = get_settings().resolve_browse_limit(limit)
@@ -669,9 +653,7 @@ async def relocate(
     memory.updated_at = datetime.now(UTC)
     await publish_memory_event(session, left)
     await publish_memory_event(session, memory_event_from_row("created", memory))
-    await commit_with_rls(
-        session, user_id=principal.user_id, is_admin=principal.is_admin
-    )
+    await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
     await session.refresh(memory)
     return memory
 
@@ -692,9 +674,7 @@ async def find(
     offset: int = 0,
     include_expired: bool = False,
 ) -> list[Digest]:
-    space_ids = await accessible_space_ids(
-        session, principal, space_id, space_scope=space_scope
-    )
+    space_ids = await accessible_space_ids(session, principal, space_id, space_scope=space_scope)
     tokens = resolve_type_tokens(
         types=types, kind="entry" if types is None else None, entry_type=entry_type
     )
@@ -728,9 +708,7 @@ async def search(
     include_expired: bool = False,
 ) -> list[Digest]:
     """Hybrid search across entries and/or guides for the GUI/REST surface."""
-    space_ids = await accessible_space_ids(
-        session, principal, space_id, space_scope=space_scope
-    )
+    space_ids = await accessible_space_ids(session, principal, space_id, space_scope=space_scope)
     tokens = resolve_type_tokens(types=types, kind=kind, entry_type=entry_type)
     if tokens is None and kind is None and entry_type is None:
         # Default REST search historically searched entries only.
@@ -787,17 +765,13 @@ async def guide_write(
         elif dup.expires_at is not None and dup.expires_at > now:
             # Never revive a past-due guide via slide; find_near_duplicate skips
             # expired rows, so this branch only extends still-live expiries.
-            dup.expires_at = slide_expiry(
-                dup.expires_at, created_at=dup.created_at, now=now
-            )
+            dup.expires_at = slide_expiry(dup.expires_at, created_at=dup.created_at, now=now)
         dup.recall_count = (dup.recall_count or 0) + 1
         dup.last_recalled_at = now
         dup.embedding = await get_embedder().aembed_memory_text(dup.title, dup.body)
         dup.updated_at = now
         await publish_memory_event(session, memory_event_from_row("updated", dup))
-        await commit_with_rls(
-            session, user_id=principal.user_id, is_admin=principal.is_admin
-        )
+        await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
         await session.refresh(dup)
         return dup
 
@@ -819,9 +793,7 @@ async def guide_write(
     await session.flush()
     await session.refresh(memory)
     await publish_memory_event(session, memory_event_from_row("created", memory))
-    await commit_with_rls(
-        session, user_id=principal.user_id, is_admin=principal.is_admin
-    )
+    await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
     await session.refresh(memory)
     return memory
 
@@ -839,9 +811,7 @@ async def guide_find(
     digests = await hybrid_search(
         session,
         query=query,
-        space_ids=await accessible_space_ids(
-            session, principal, space_id, space_scope=space_scope
-        ),
+        space_ids=await accessible_space_ids(session, principal, space_id, space_scope=space_scope),
         type_tokens=["guide"],
         limit=limit,
         include_expired=include_expired,
@@ -870,9 +840,7 @@ async def about_path(
         ),
     )
     if repo_hint:
-        stmt = stmt.where(
-            Memory.repo_hint.ilike(f"%{escape_ilike(repo_hint)}%", escape="\\")
-        )
+        stmt = stmt.where(Memory.repo_hint.ilike(f"%{escape_ilike(repo_hint)}%", escape="\\"))
     stmt = stmt.order_by(Memory.updated_at.desc()).limit(limit)
     rows = list((await session.execute(stmt)).scalars())
     digests = [_digest_from_memory(m) for m in rows]

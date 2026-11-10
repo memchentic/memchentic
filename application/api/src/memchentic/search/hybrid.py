@@ -49,9 +49,7 @@ def memory_type_clause(tokens: Sequence[str] | None) -> ColumnElement[bool] | No
     if include_guide:
         clauses.append(Memory.kind == MemoryKind.guide)
     if entry_enums:
-        clauses.append(
-            and_(Memory.kind == MemoryKind.entry, Memory.entry_type.in_(entry_enums))
-        )
+        clauses.append(and_(Memory.kind == MemoryKind.entry, Memory.entry_type.in_(entry_enums)))
     if not clauses:
         return None
     if len(clauses) == 1:
@@ -184,13 +182,9 @@ async def hybrid_search(
         if clause is not None:
             base_filters.append(clause)
     if path_hint:
-        base_filters.append(
-            Memory.path_hint.ilike(f"%{escape_ilike(path_hint)}%", escape="\\")
-        )
+        base_filters.append(Memory.path_hint.ilike(f"%{escape_ilike(path_hint)}%", escape="\\"))
     if repo_hint:
-        base_filters.append(
-            Memory.repo_hint.ilike(f"%{escape_ilike(repo_hint)}%", escape="\\")
-        )
+        base_filters.append(Memory.repo_hint.ilike(f"%{escape_ilike(repo_hint)}%", escape="\\"))
     if tags:
         if tag_mode == "or":
             base_filters.append(Memory.tags.overlap(tags))
@@ -209,7 +203,11 @@ async def hybrid_search(
             select(Memory.id)
             .where(*base_filters)
             .where(Memory.search_tsv.op("@@")(func.websearch_to_tsquery("english", query)))
-            .order_by(func.ts_rank_cd(Memory.search_tsv, func.websearch_to_tsquery("english", query)).desc())
+            .order_by(
+                func.ts_rank_cd(
+                    Memory.search_tsv, func.websearch_to_tsquery("english", query)
+                ).desc()
+            )
             .limit(fetch_n)
         )
         fts_ids = [row[0] for row in (await session.execute(fts_stmt)).all()]
@@ -236,13 +234,10 @@ async def hybrid_search(
 
     rrf_map = dict(fused)
     rows = (
-        await session.execute(select(Memory).where(Memory.id.in_(list(rrf_map))))
-    ).scalars().all()
+        (await session.execute(select(Memory).where(Memory.id.in_(list(rrf_map))))).scalars().all()
+    )
     scored = sorted(
-        (
-            (m, rerank_score(m, rrf_map[m.id], now=now, path_hint=path_hint))
-            for m in rows
-        ),
+        ((m, rerank_score(m, rrf_map[m.id], now=now, path_hint=path_hint)) for m in rows),
         key=lambda pair: pair[1],
         reverse=True,
     )[offset : offset + limit]

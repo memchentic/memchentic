@@ -61,8 +61,12 @@ class User(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    api_keys: Mapped[list[ApiKey]] = relationship(back_populates="user", cascade="all, delete-orphan")
-    memberships: Mapped[list[SpaceMember]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    api_keys: Mapped[list[ApiKey]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    memberships: Mapped[list[SpaceMember]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
     identities: Mapped[list[UserIdentity]] = relationship(
         back_populates="user", cascade="all, delete-orphan", order_by="UserIdentity.provider"
     )
@@ -123,9 +127,7 @@ class AuthGroupMember(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
     )
-    source: Mapped[str] = mapped_column(
-        String(16), nullable=False, server_default=text("'manual'")
-    )
+    source: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'manual'"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     group: Mapped[AuthGroup] = relationship(back_populates="members")
@@ -160,8 +162,12 @@ class Space(Base):
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    members: Mapped[list[SpaceMember]] = relationship(back_populates="space", cascade="all, delete-orphan")
-    memories: Mapped[list[Memory]] = relationship(back_populates="space", cascade="all, delete-orphan")
+    members: Mapped[list[SpaceMember]] = relationship(
+        back_populates="space", cascade="all, delete-orphan"
+    )
+    memories: Mapped[list[Memory]] = relationship(
+        back_populates="space", cascade="all, delete-orphan"
+    )
 
 
 class SpaceMember(Base):
@@ -197,7 +203,9 @@ class Memory(Base):
     )
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    tags: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False, server_default=text("'{}'"))
+    tags: Mapped[list[str]] = mapped_column(
+        ARRAY(String), nullable=False, server_default=text("'{}'")
+    )
     path_hint: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     repo_hint: Mapped[str | None] = mapped_column(String(512), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -208,7 +216,9 @@ class Memory(Base):
     )
     embedding = mapped_column(Vector(384), nullable=True)
     search_tsv: Mapped[Any] = mapped_column(TSVECTOR, nullable=True)
-    provenance: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    provenance: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
     created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
@@ -226,7 +236,9 @@ class OAuthClient(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     client_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     client_secret_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    redirect_uris: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False, server_default=text("'{}'"))
+    redirect_uris: Mapped[list[str]] = mapped_column(
+        ARRAY(String), nullable=False, server_default=text("'{}'")
+    )
     is_public: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     name: Mapped[str] = mapped_column(String(255), nullable=False, default="MCP Client")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -281,7 +293,9 @@ class GuiSession(Base):
     )
     persistent: Mapped[bool] = mapped_column(Boolean, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    last_used_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    last_used_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

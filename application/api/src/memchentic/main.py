@@ -109,7 +109,10 @@ class McpAuthMiddleware:
                     }
                 )
                 await send(
-                    {"type": "http.response.body", "body": json.dumps({"error": "unauthorized"}).encode()}
+                    {
+                        "type": "http.response.body",
+                        "body": json.dumps({"error": "unauthorized"}).encode(),
+                    }
                 )
                 return
 

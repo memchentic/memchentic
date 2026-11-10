@@ -18,9 +18,7 @@ if TYPE_CHECKING:
     from memchentic.settings import Settings
 
 # Fixed bcrypt hash so missing-user auth still pays verify cost (timing pad).
-_MISSING_USER_DUMMY_HASH = (
-    "$2b$12$ZXqUKsbftiNtBvL4M9MFUeYf3mnv8n4FqIquSwBfi0224L2Mg55/m"
-)
+_MISSING_USER_DUMMY_HASH = "$2b$12$ZXqUKsbftiNtBvL4M9MFUeYf3mnv8n4FqIquSwBfi0224L2Mg55/m"
 
 
 def normalize_email(email: str) -> str:
@@ -205,9 +203,7 @@ async def register_internal_user(
     return user
 
 
-async def authenticate_internal(
-    session: AsyncSession, *, email: str, password: str
-) -> User | None:
+async def authenticate_internal(session: AsyncSession, *, email: str, password: str) -> User | None:
     """Authenticate an internal user by email and password.
 
     Args:
@@ -386,9 +382,7 @@ async def list_users(session: AsyncSession) -> list[User]:
         All users ordered by created_at descending, with identities loaded.
     """
     result = await session.execute(
-        select(User)
-        .options(selectinload(User.identities))
-        .order_by(User.created_at.desc())
+        select(User).options(selectinload(User.identities)).order_by(User.created_at.desc())
     )
     return list(result.scalars())
 
@@ -423,9 +417,7 @@ async def directory_user_visible(
     return hit.scalar_one_or_none() is not None
 
 
-async def list_directory_users(
-    session: AsyncSession, principal: Principal
-) -> list[User]:
+async def list_directory_users(session: AsyncSession, principal: Principal) -> list[User]:
     """List users visible in the authenticated directory.
 
     Admins see everyone. Other callers only see users who share at least one

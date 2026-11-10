@@ -72,9 +72,7 @@ def _group_bound(group: AuthGroup) -> bool:
     return bool(group.idp_group_id and group.idp_group_id.strip())
 
 
-async def user_in_idp_bound_roster(
-    session: AsyncSession, user_id: uuid.UUID
-) -> bool:
+async def user_in_idp_bound_roster(session: AsyncSession, user_id: uuid.UUID) -> bool:
     """True when ``user_id`` is a member of any Auth Group with an IdP bind.
 
     Used to refuse hard-delete of directory users that IdP sync owns.
@@ -155,18 +153,20 @@ async def ensure_auth_groups(
         groups[slug] = await _ensure_group(session, slug, name)
 
     admin = await ensure_admin_user(session, settings)
-    await add_member_raw(
-        session, groups[SLUG_ADMINISTRATORS], admin.id, source=SOURCE_MANUAL
-    )
+    await add_member_raw(session, groups[SLUG_ADMINISTRATORS], admin.id, source=SOURCE_MANUAL)
     await _remove_member_raw(session, groups[SLUG_USERS].id, admin.id)
 
     admin_ids = (
-        await session.execute(
-            select(AuthGroupMember.user_id).where(
-                AuthGroupMember.group_id == groups[SLUG_ADMINISTRATORS].id
+        (
+            await session.execute(
+                select(AuthGroupMember.user_id).where(
+                    AuthGroupMember.group_id == groups[SLUG_ADMINISTRATORS].id
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     admin_id_set = set(admin_ids)
 
     if admin_id_set:
@@ -269,9 +269,7 @@ async def list_members(
     for m in members:
         user = m.user
         env_locked = (
-            group.slug == SLUG_ADMINISTRATORS
-            and user is not None
-            and _is_env_admin(user, settings)
+            group.slug == SLUG_ADMINISTRATORS and user is not None and _is_env_admin(user, settings)
         )
         locked = env_locked or roster_bound
         out.append(
@@ -286,9 +284,7 @@ async def list_members(
     return out
 
 
-async def get_idp_bind(
-    session: AsyncSession, principal: Principal, slug: str
-) -> dict[str, Any]:
+async def get_idp_bind(session: AsyncSession, principal: Principal, slug: str) -> dict[str, Any]:
     """Return the IdP bind for one Auth Group."""
     _require_admin(principal)
     group = await _get_by_slug(session, slug)

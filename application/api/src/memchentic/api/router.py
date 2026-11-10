@@ -140,9 +140,7 @@ def _dt(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value)
 
 
-async def _memory_out(
-    session: AsyncSession, memory: Any, *, full: bool = False
-) -> dict:
+async def _memory_out(session: AsyncSession, memory: Any, *, full: bool = False) -> dict:
     """Serialize a memory and attach creator email / display name."""
     rows = await memory_service.enrich_creator_fields(
         session, [memory_service.memory_to_dict(memory, full=full)]
@@ -206,8 +204,7 @@ async def _reauth_memory_events(
             return None
         await set_rls_context(session, user_id=principal.user_id, is_admin=principal.is_admin)
         allowed = {
-            str(sid)
-            for sid in await memory_service.accessible_space_ids(session, principal, None)
+            str(sid) for sid in await memory_service.accessible_space_ids(session, principal, None)
         }
         return principal, allowed
 
@@ -299,9 +296,7 @@ def _set_session_cookie(response: Response, raw: str, persistent: bool) -> None:
     response.set_cookie(
         SESSION_COOKIE,
         raw,
-        max_age=(
-            int(session_lifetime(True, settings).total_seconds()) if persistent else None
-        ),
+        max_age=(int(session_lifetime(True, settings).total_seconds()) if persistent else None),
         path=SESSION_COOKIE_PATH,
         secure=settings.cookie_secure,
         httponly=True,
@@ -350,9 +345,7 @@ async def login(
 ) -> dict:
     settings = get_settings()
     ip = request.client.host if request.client else "unknown"
-    check_rate_limit(
-        f"login:{ip}:{body.email.casefold()}", limit=20, window_seconds=60
-    )
+    check_rate_limit(f"login:{ip}:{body.email.casefold()}", limit=20, window_seconds=60)
     # Prefer a real DB user when email+password match; break-glass is fallback.
     user = await authenticate_internal(session, email=body.email, password=body.password)
     if user:
@@ -456,10 +449,7 @@ async def oauth_web_callback(
     """Finish browser OAuth: upsert user, set session cookie, redirect home."""
     from memchentic.auth.oauth_browser import finish_oauth_login
 
-    return await finish_oauth_login(
-        request, session, code=code, state=state, error=error
-    )
-
+    return await finish_oauth_login(request, session, code=code, state=state, error=error)
 
 
 @api_router.get("/me")
@@ -503,9 +493,7 @@ async def _me_payload(session: AsyncSession, principal: Principal) -> dict[str, 
         "provider": principal.provider,
         "is_admin": principal.is_admin,
         "personal_space_id": str(personal.id) if personal else None,
-        "memberships": [
-            {"id": str(s.id), "name": s.name, "kind": s.kind.value} for s in spaces
-        ],
+        "memberships": [{"id": str(s.id), "name": s.name, "kind": s.kind.value} for s in spaces],
     }
 
 
@@ -579,9 +567,7 @@ async def show_user(
         "id": str(user.id),
         "email": user.email,
         "display_name": user.display_name,
-        "groups": [
-            {"id": str(s.id), "name": s.name, "kind": s.kind.value} for s in groups
-        ],
+        "groups": [{"id": str(s.id), "name": s.name, "kind": s.kind.value} for s in groups],
     }
     if principal.is_admin:
         out["providers"] = providers_for(user)
@@ -608,9 +594,7 @@ async def remove_user(
     except ValueError as exc:
         raise HTTPException(404, "Not found") from exc
     try:
-        await delete_user(
-            session, actor_user_id=principal.user_id, target_user_id=uid
-        )
+        await delete_user(session, actor_user_id=principal.user_id, target_user_id=uid)
     except LookupError as exc:
         raise HTTPException(404, "Not found") from exc
     except PermissionError as exc:
@@ -670,9 +654,7 @@ async def rename_space(
     session: AsyncSession = Depends(db_session),
 ) -> dict:
     try:
-        space = await space_service.rename_space(
-            session, principal, uuid.UUID(space_id), body.name
-        )
+        space = await space_service.rename_space(session, principal, uuid.UUID(space_id), body.name)
     except PermissionError as exc:
         raise HTTPException(403, str(exc)) from exc
     return {"id": str(space.id), "name": space.name, "kind": space.kind.value}
@@ -1158,9 +1140,7 @@ async def remove_auth_group_member(
     session: AsyncSession = Depends(db_session),
 ) -> dict[str, str]:
     try:
-        await auth_group_service.remove_member(
-            session, principal, slug, uuid.UUID(user_id)
-        )
+        await auth_group_service.remove_member(session, principal, slug, uuid.UUID(user_id))
     except PermissionError as exc:
         raise HTTPException(403, str(exc)) from exc
     except LookupError as exc:

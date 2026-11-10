@@ -60,9 +60,7 @@ async def test_aembed_matches_sync_embed(tmp_path) -> None:
     embedder = Embedder(str(tmp_path))
     text = "concurrent embed offload"
     assert await embedder.aembed(text) == embedder.embed(text)
-    assert await embedder.aembed_memory_text("t", "b") == embedder.embed_memory_text(
-        "t", "b"
-    )
+    assert await embedder.aembed_memory_text("t", "b") == embedder.embed_memory_text("t", "b")
 
 
 @pytest.mark.asyncio

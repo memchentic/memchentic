@@ -33,9 +33,7 @@ async def test_internal_login_email_is_case_insensitive(session: AsyncSession) -
     """Registered emails authenticate when the login form uses different casing."""
     suffix = uuid.uuid4().hex[:10]
     email = f"Case-{suffix}@Example.COM"
-    created = await register_internal_user(
-        session, email=email, password="password-ok-12"
-    )
+    created = await register_internal_user(session, email=email, password="password-ok-12")
     assert created.email == f"case-{suffix}@example.com"
     user = await authenticate_internal(
         session, email=f"CASE-{suffix}@EXAMPLE.com", password="password-ok-12"
@@ -43,8 +41,6 @@ async def test_internal_login_email_is_case_insensitive(session: AsyncSession) -
     assert user is not None
     assert user.id == created.id
     assert (
-        await authenticate_internal(
-            session, email=f"CASE-{suffix}@EXAMPLE.com", password="wrong"
-        )
+        await authenticate_internal(session, email=f"CASE-{suffix}@EXAMPLE.com", password="wrong")
         is None
     )

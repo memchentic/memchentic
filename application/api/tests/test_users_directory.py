@@ -116,15 +116,9 @@ def test_lookup_email_for_manager_not_random_user(client: TestClient) -> None:
     assert upper.json()["id"] == _user_c
 
     # Member B (not manager) looking up stranger C → 404.
-    assert (
-        client.get(f"/api/users/lookup?email={email_c}", headers=auth_b).status_code
-        == 404
-    )
+    assert client.get(f"/api/users/lookup?email={email_c}", headers=auth_b).status_code == 404
     # Random user C looking up B → 404.
-    assert (
-        client.get(f"/api/users/lookup?email={email_b}", headers=auth_c).status_code
-        == 404
-    )
+    assert client.get(f"/api/users/lookup?email={email_b}", headers=auth_c).status_code == 404
     # Miss and unauthorized share the same 404.
     assert (
         client.get(

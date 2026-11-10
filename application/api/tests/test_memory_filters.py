@@ -70,7 +70,11 @@ def test_browse_space_scope_and_types(client: TestClient) -> None:
 
     assert personal_fact["created_by"] == me["id"]
     assert personal_fact["created_by_email"]
-    owned = next(row for row in client.get("/api/memories", headers=auth).json() if row["id"] == personal_fact["id"])
+    owned = next(
+        row
+        for row in client.get("/api/memories", headers=auth).json()
+        if row["id"] == personal_fact["id"]
+    )
     assert owned["created_by"] == me["id"]
     assert owned["created_by_email"] == personal_fact["created_by_email"]
 

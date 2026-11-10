@@ -70,8 +70,6 @@ def test_refresh_requires_gui_header(client: TestClient) -> None:
 def test_logout_revokes_session(client: TestClient) -> None:
     _, cookie = _login(client, remember=True)
     client.cookies.clear()
-    out = client.post(
-        "/api/auth/logout", headers={**GUI, "Cookie": f"memchentic_session={cookie}"}
-    )
+    out = client.post("/api/auth/logout", headers={**GUI, "Cookie": f"memchentic_session={cookie}"})
     assert out.status_code == 200
     assert _refresh(client, cookie).status_code == 401

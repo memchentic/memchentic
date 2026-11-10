@@ -88,9 +88,7 @@ def test_oauth_start_rejected_when_internal(client: TestClient) -> None:
     assert res.status_code == 400
 
 
-def test_oauth_start_redirects_to_idp(
-    client: TestClient, external_oauth: None
-) -> None:
+def test_oauth_start_redirects_to_idp(client: TestClient, external_oauth: None) -> None:
     endpoints = {
         "authorization_endpoint": "https://accounts.google.com/o/oauth2/v2/auth",
         "token_endpoint": "https://oauth2.googleapis.com/token",
@@ -100,9 +98,7 @@ def test_oauth_start_redirects_to_idp(
         "memchentic.auth.providers.resolve_oidc_endpoints",
         new=AsyncMock(return_value=endpoints),
     ):
-        res = client.get(
-            "/api/auth/oauth/start?remember=true", follow_redirects=False
-        )
+        res = client.get("/api/auth/oauth/start?remember=true", follow_redirects=False)
     assert res.status_code == 302
     loc = res.headers["location"]
     assert loc.startswith(endpoints["authorization_endpoint"])
@@ -115,9 +111,7 @@ def test_oauth_start_redirects_to_idp(
     assert "memchentic_oauth_nonce" in set_cookie
 
 
-def test_oauth_callback_sets_session(
-    client: TestClient, external_oauth: None
-) -> None:
+def test_oauth_callback_sets_session(client: TestClient, external_oauth: None) -> None:
     endpoints = {
         "authorization_endpoint": "https://accounts.google.com/o/oauth2/v2/auth",
         "token_endpoint": "https://oauth2.googleapis.com/token",
@@ -171,9 +165,7 @@ def test_oauth_callback_sets_session(
     assert me.json()["email"] == profile.email
 
 
-def test_oauth_callback_rejects_unverified_email(
-    client: TestClient, external_oauth: None
-) -> None:
+def test_oauth_callback_rejects_unverified_email(client: TestClient, external_oauth: None) -> None:
     endpoints = {
         "authorization_endpoint": "https://accounts.google.com/o/oauth2/v2/auth",
         "token_endpoint": "https://oauth2.googleapis.com/token",

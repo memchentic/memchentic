@@ -56,10 +56,7 @@ async def resolve_bearer(
     key_hash = hash_api_key(token)
     key_row = (
         await session.execute(
-            text(
-                "SELECT user_id, email, display_name, provider "
-                "FROM app_resolve_api_key(:h)"
-            ),
+            text("SELECT user_id, email, display_name, provider FROM app_resolve_api_key(:h)"),
             {"h": key_hash},
         )
     ).first()
@@ -172,7 +169,6 @@ async def _upsert_from_external_claims(
         )
     except ValueError:
         return None
-
 
 
 def check_admin_password(email: str, password: str, settings: Settings | None = None) -> bool:

@@ -502,7 +502,7 @@ async def patch_me(
 
 
 async def _me_payload(session: AsyncSession, principal: Principal) -> dict[str, Any]:
-    spaces = await space_service.list_spaces(session, principal)
+    spaces = await space_service.list_member_spaces(session, principal)
     personal = (
         await space_service.get_personal_space(session, principal.user_id)
         if principal.user_id
@@ -520,6 +520,7 @@ async def _me_payload(session: AsyncSession, principal: Principal) -> dict[str, 
         "is_admin": principal.is_admin,
         "personal_space_id": str(personal.id) if personal else None,
         "memberships": [{"id": str(s.id), "name": s.name, "kind": s.kind.value} for s in spaces],
+        "pending_invites": await space_service.list_pending_invites(session, principal),
     }
 
 
@@ -558,9 +559,9 @@ async def users_lookup(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict:
-    """Exact email lookup for admins and group roster managers.
+    """Exact email lookup for admins.
 
-    Misses and unauthorized callers both receive 404 to avoid enumeration.
+    Misses and non-admin callers both receive 404 to avoid enumeration.
     """
     user = await lookup_user_by_email(session, principal, email)
     if user is None:
@@ -653,8 +654,9 @@ async def show_space(
                 "user_id": str(m.user_id),
                 "email": m.user.email if m.user else None,
                 "display_name": m.user.display_name if m.user else None,
+                "pending": m.accepted_at is None,
             }
-            for m in space.members
+            for m in space_service.visible_members(space, principal)
         ],
     }
 
@@ -687,18 +689,37 @@ async def add_member(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict:
+    """Invite a user to a group by id or by email.
+
+    The response is identical whether or not the target exists, so a group
+    creator cannot use this route to test which addresses are registered.
+    """
     await space_service.require_roster_manager(session, principal, space_id)
+    target: User | None
     if body.user_id:
-        target = require_uuid(body.user_id, "user_id")
-    elif body.email:
-        user = await get_user_by_email(session, body.email)
-        if not user:
-            raise HTTPException(404, "No user with that email")
-        target = user.id
+        target = await get_user(session, require_uuid(body.user_id, "user_id"))
+    elif body.email and body.email.strip():
+        target = await get_user_by_email(session, body.email)
     else:
         raise ValidationError("user_id or email required")
-    await space_service.add_member(session, principal, space_id, target)
-    return {"status": "ok", "user_id": str(target)}
+    if target is not None:
+        await space_service.add_member(session, principal, space_id, target.id)
+    return {"status": "ok"}
+
+
+@api_router.post("/spaces/{space_id}/accept")
+async def accept_space_invite(
+    space_id: uuid.UUID,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    """Accept the caller's pending invite to a group (idempotent).
+
+    A missing invite returns 404 so the route does not confirm that a group
+    id exists.
+    """
+    space = await space_service.accept_invite(session, principal, space_id)
+    return {"id": str(space.id), "name": space.name, "kind": space.kind.value}
 
 
 @api_router.delete("/spaces/{space_id}/members/{user_id}")

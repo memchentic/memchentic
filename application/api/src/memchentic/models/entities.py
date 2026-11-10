@@ -180,6 +180,8 @@ class SpaceMember(Base):
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # NULL = invited, not accepted. Only accepted rows grant access.
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     space: Mapped[Space] = relationship(back_populates="members")
     user: Mapped[User] = relationship(back_populates="memberships")
@@ -220,6 +222,9 @@ class Memory(Base):
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
     created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -24,6 +24,20 @@ def _user(client: TestClient) -> tuple[str, str, str]:
     return token, user_id, email
 
 
+def _join(
+    client: TestClient, owner_token: str, member_token: str, member_id: str, group_id: str
+) -> None:
+    """Owner invites ``member_id``; the member accepts."""
+    owner = {"Authorization": f"Bearer {owner_token}"}
+    member = {"Authorization": f"Bearer {member_token}"}
+    added = client.post(
+        f"/api/spaces/{group_id}/members", headers=owner, json={"user_id": member_id}
+    )
+    assert added.status_code == 200, added.text
+    accepted = client.post(f"/api/spaces/{group_id}/accept", headers=member)
+    assert accepted.status_code == 200, accepted.text
+
+
 def _tool(client: TestClient, token: str, name: str, args: dict[str, Any]) -> dict[str, Any]:
     """Call an MCP tool over streamable HTTP."""
     resp = client.post(
@@ -57,14 +71,7 @@ def _shared_group(
     group = client.post(
         "/api/spaces", headers=auth_a, json={"name": f"acl-{uuid.uuid4().hex[:8]}"}
     ).json()
-    assert (
-        client.post(
-            f"/api/spaces/{group['id']}/members",
-            headers=auth_a,
-            json={"user_id": user_b},
-        ).status_code
-        == 200
-    )
+    _join(client, token_a, token_b, user_b, group["id"])
     return token_a, token_b, group["id"], user_a, user_b
 
 
@@ -132,14 +139,7 @@ def test_member_cannot_relocate_another_members_memory(client: TestClient) -> No
     other = client.post(
         "/api/spaces", headers=auth_a, json={"name": f"other-{uuid.uuid4().hex[:8]}"}
     ).json()
-    assert (
-        client.post(
-            f"/api/spaces/{other['id']}/members",
-            headers=auth_a,
-            json={"user_id": user_b},
-        ).status_code
-        == 200
-    )
+    _join(client, token_a, token_b, user_b, other["id"])
 
     refused = _tool(client, token_b, "relocate", {"id": memory_id, "space_id": other["id"]})
     assert refused.get("isError") is True
@@ -152,26 +152,12 @@ def test_creator_and_manager_can_relocate(client: TestClient) -> None:
     token_a, token_b, group_id, _, user_b = _shared_group(client)
     token_c, user_c, _ = _user(client)
     auth_a = {"Authorization": f"Bearer {token_a}"}
-    assert (
-        client.post(
-            f"/api/spaces/{group_id}/members",
-            headers=auth_a,
-            json={"user_id": user_c},
-        ).status_code
-        == 200
-    )
+    _join(client, token_a, token_c, user_c, group_id)
     dest = client.post(
         "/api/spaces", headers=auth_a, json={"name": f"dest-{uuid.uuid4().hex[:8]}"}
     ).json()
-    for uid in (user_b, user_c):
-        assert (
-            client.post(
-                f"/api/spaces/{dest['id']}/members",
-                headers=auth_a,
-                json={"user_id": uid},
-            ).status_code
-            == 200
-        )
+    for tok, uid in ((token_b, user_b), (token_c, user_c)):
+        _join(client, token_a, tok, uid, dest["id"])
 
     marker = uuid.uuid4().hex
     by_b = _tool(
@@ -199,9 +185,10 @@ def test_creator_and_manager_can_relocate(client: TestClient) -> None:
     assert moved_c["structuredContent"]["space_id"] == dest["id"]
 
 
-def test_member_can_still_revise_peer_visible_memory(client: TestClient) -> None:
-    """revise stays member-level (open_memory only), not manage ACL."""
+def test_member_cannot_revise_another_members_memory(client: TestClient) -> None:
+    """revise needs the same right as forget: creator, group manager, or admin."""
     token_a, token_b, group_id, _, _ = _shared_group(client)
+    auth_b = {"Authorization": f"Bearer {token_b}"}
     marker = uuid.uuid4().hex
     memory_id = _tool(
         client,
@@ -209,11 +196,98 @@ def test_member_can_still_revise_peer_visible_memory(client: TestClient) -> None
         "remember",
         {"title": f"owner-entry {marker}", "body": marker, "space_id": group_id},
     )["structuredContent"]["id"]
-    revised = _tool(
+
+    refused = _tool(client, token_b, "revise", {"id": memory_id, "title": "x", "body": "x"})
+    assert refused.get("isError") is True
+    patched = client.patch(
+        f"/api/memories/{memory_id}",
+        headers=auth_b,
+        json={"title": "x", "body": "x", "expires_at": "2000-01-01T00:00:00+00:00"},
+    )
+    assert patched.status_code == 403
+
+    still = _tool(client, token_b, "open", {"id": memory_id})["structuredContent"]
+    assert still["title"] == f"owner-entry {marker}"
+    assert still["body"] == marker
+
+    own = _tool(client, token_a, "revise", {"id": memory_id, "body": f"updated {marker}"})
+    assert own.get("isError") is not True
+    assert own["structuredContent"]["body"] == f"updated {marker}"
+
+
+def test_group_manager_can_revise_member_memory(client: TestClient) -> None:
+    """The group creator may revise a memory that a member created."""
+    token_a, token_b, group_id, _, _ = _shared_group(client)
+    marker = uuid.uuid4().hex
+    memory_id = _tool(
         client,
         token_b,
-        "revise",
-        {"id": memory_id, "body": f"updated {marker}"},
-    )
+        "remember",
+        {"title": f"member-entry {marker}", "body": marker, "space_id": group_id},
+    )["structuredContent"]["id"]
+    revised = _tool(client, token_a, "revise", {"id": memory_id, "body": f"fixed {marker}"})
     assert revised.get("isError") is not True
-    assert revised["structuredContent"]["body"] == f"updated {marker}"
+    assert revised["structuredContent"]["body"] == f"fixed {marker}"
+
+
+def test_guide_write_does_not_replace_another_members_guide(client: TestClient) -> None:
+    """A title match on someone else's guide creates a separate guide."""
+    token_a, token_b, group_id, user_a, user_b = _shared_group(client)
+    marker = uuid.uuid4().hex[:8]
+    title = f"Docker {marker}"
+    body_a = f"Always pin base images by digest {marker}."
+    body_b = f"Completely unrelated text {marker}."
+    original = _tool(
+        client, token_a, "guide_write", {"title": title, "body": body_a, "space_id": group_id}
+    )["structuredContent"]
+
+    args_b = {"title": title.upper(), "body": body_b, "space_id": group_id}
+    other = _tool(client, token_b, "guide_write", args_b)["structuredContent"]
+    assert other["id"] != original["id"]
+    assert other["created_by"] == user_b
+
+    # The member's own guide is the upsert target from now on.
+    again = _tool(client, token_b, "guide_write", args_b)["structuredContent"]
+    assert again["id"] == other["id"]
+    assert again["confidence"] == 2.0
+
+    kept = _tool(client, token_a, "open", {"id": original["id"]})["structuredContent"]
+    assert kept["title"] == title
+    assert kept["body"] == body_a
+    assert kept["confidence"] == 1.0
+    assert kept["created_by"] == user_a
+
+
+def test_edits_record_the_editor(client: TestClient) -> None:
+    """The last editor is recorded and returned next to the creator."""
+    token_a, token_b, group_id, user_a, user_b = _shared_group(client)
+    auth_a = {"Authorization": f"Bearer {token_a}"}
+    email_a = client.get("/api/me", headers=auth_a).json()["email"]
+    marker = uuid.uuid4().hex
+    created = _tool(
+        client,
+        token_b,
+        "remember",
+        {"title": f"member-entry {marker}", "body": marker, "space_id": group_id},
+    )["structuredContent"]
+    assert created["created_by"] == user_b
+    assert created["updated_by"] is None
+
+    revised = _tool(client, token_a, "revise", {"id": created["id"], "body": f"edited {marker}"})[
+        "structuredContent"
+    ]
+    assert revised["created_by"] == user_b
+    assert revised["updated_by"] == user_a
+
+    traced = _tool(client, token_b, "trace", {"id": created["id"]})["structuredContent"]
+    assert traced["created_by"] == user_b
+    assert traced["updated_by"] == user_a
+    assert traced["updated_at"]
+
+    found = _tool(client, token_b, "find", {"query": marker})["structuredContent"]["result"]
+    digest = next(d for d in found if d["id"] == created["id"])
+    assert digest["updated_by"] == user_a
+
+    rest = client.get(f"/api/memories/{created['id']}", headers=auth_a).json()
+    assert rest["updated_by"] == user_a
+    assert rest["updated_by_email"] == email_a

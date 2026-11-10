@@ -1,5 +1,5 @@
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faFloppyDisk, faTrash, faXmark } from "@fortawesome/free-solid-svg-icons";
+import { faCheck, faFloppyDisk, faTrash, faXmark } from "@fortawesome/free-solid-svg-icons";
 import { useCallback, useEffect, useState, type FormEvent, type MouseEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
@@ -18,6 +18,7 @@ export default function GroupsPage() {
   const [groups, setGroups] = useState<SpaceDetail[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
+  const invites = me?.pending_invites ?? [];
 
   const load = useCallback(async () => {
     try {
@@ -64,6 +65,58 @@ export default function GroupsPage() {
       </PageHeader>
       <div className="page-body">
         <ErrorNote error={error} />
+        {invites.length > 0 && (
+          <div className="panel mb-6 overflow-x-auto">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Invitation</th>
+                  <th>Group creator</th>
+                  <th className="table-actions-col">
+                    <span className="sr-only">Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {invites.map((inv) => (
+                  <tr key={inv.id}>
+                    <td className="font-medium text-ink">{inv.name}</td>
+                    <td className="text-muted">
+                      {inv.creator_display_name || inv.creator_email || "—"}
+                    </td>
+                    <td className="table-actions-col">
+                      <button
+                        className="btn"
+                        type="button"
+                        title="Accept"
+                        aria-label={`Accept invitation to ${inv.name}`}
+                        onClick={() =>
+                          void run(() => api(`/api/spaces/${inv.id}/accept`, { method: "POST" }))
+                        }
+                      >
+                        <FontAwesomeIcon icon={faCheck} />
+                      </button>
+                      <button
+                        className="btn ml-2"
+                        type="button"
+                        title="Decline"
+                        aria-label={`Decline invitation to ${inv.name}`}
+                        onClick={() => {
+                          if (!me?.id) return;
+                          void run(() =>
+                            api(`/api/spaces/${inv.id}/members/${me.id}`, { method: "DELETE" }),
+                          );
+                        }}
+                      >
+                        <FontAwesomeIcon icon={faXmark} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
         <ComposerReveal open={showNew}>
           <NewGroup
             onCreated={() => {

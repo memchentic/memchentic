@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import uuid
-from typing import Literal
+from datetime import UTC, datetime
+from typing import Any, Literal
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -60,21 +61,42 @@ async def get_personal_space(session: AsyncSession, user_id: uuid.UUID) -> Space
     return result.scalar_one_or_none()
 
 
-async def list_spaces(session: AsyncSession, principal: Principal) -> list[Space]:
-    if principal.is_admin:
-        result = await session.execute(
-            select(Space).where(Space.archived_at.is_(None)).order_by(Space.created_at.desc())
-        )
-        return list(result.scalars())
+async def list_member_spaces(session: AsyncSession, principal: Principal) -> list[Space]:
+    """Spaces the caller is a member of. Admin status does not widen the list.
+
+    Use this for "my spaces" (the ``memberships`` field of ``me``). Use
+    ``list_spaces`` for "spaces I may read".
+
+    Args:
+        session: Database session.
+        principal: Authenticated caller.
+
+    Returns:
+        The caller's personal space and groups, unarchived.
+    """
     if not principal.user_id:
         return []
     result = await session.execute(
         select(Space)
         .join(SpaceMember, SpaceMember.space_id == Space.id)
-        .where(SpaceMember.user_id == principal.user_id, Space.archived_at.is_(None))
+        .where(
+            SpaceMember.user_id == principal.user_id,
+            SpaceMember.accepted_at.is_not(None),
+            Space.archived_at.is_(None),
+        )
         .order_by(Space.kind.asc(), Space.name.asc())
     )
     return list(result.scalars())
+
+
+async def list_spaces(session: AsyncSession, principal: Principal) -> list[Space]:
+    """Spaces the caller may read: every space for an admin, else memberships."""
+    if principal.is_admin:
+        result = await session.execute(
+            select(Space).where(Space.archived_at.is_(None)).order_by(Space.created_at.desc())
+        )
+        return list(result.scalars())
+    return await list_member_spaces(session, principal)
 
 
 async def create_group(session: AsyncSession, principal: Principal, *, name: str) -> Space:
@@ -116,10 +138,29 @@ async def show_space(
         return space
     if not principal.user_id:
         return None
-    member_ids = {m.user_id for m in space.members}
+    member_ids = {m.user_id for m in space.members if m.accepted_at is not None}
     if principal.user_id not in member_ids:
         return None
     return space
+
+
+def visible_members(space: Space, principal: Principal) -> list[SpaceMember]:
+    """Roster rows the caller may see.
+
+    Accepted members are visible to everyone who can open the space. Pending
+    invites are visible to admins only: showing them to the group creator
+    would reveal whether an invited email address is registered.
+
+    Args:
+        space: Space loaded by ``show_space`` (members eagerly loaded).
+        principal: Authenticated caller.
+
+    Returns:
+        Membership rows to serialise.
+    """
+    if principal.is_admin:
+        return list(space.members)
+    return [m for m in space.members if m.accepted_at is not None]
 
 
 async def list_visible_groups_for_user(
@@ -144,6 +185,7 @@ async def list_visible_groups_for_user(
             .join(SpaceMember, SpaceMember.space_id == Space.id)
             .where(
                 SpaceMember.user_id == target_user_id,
+                SpaceMember.accepted_at.is_not(None),
                 Space.kind == SpaceKind.group,
                 Space.archived_at.is_(None),
             )
@@ -160,7 +202,9 @@ async def list_visible_groups_for_user(
         .join(caller_m, caller_m.space_id == Space.id)
         .where(
             target_m.user_id == target_user_id,
+            target_m.accepted_at.is_not(None),
             caller_m.user_id == principal.user_id,
+            caller_m.accepted_at.is_not(None),
             Space.kind == SpaceKind.group,
             Space.archived_at.is_(None),
         )
@@ -206,16 +250,20 @@ async def add_member(
     space_id: uuid.UUID,
     user_id: uuid.UUID,
 ) -> SpaceMember:
-    """Add a user to a group the principal manages; idempotent.
+    """Invite a user to a group the principal manages; idempotent.
+
+    The row starts pending (``accepted_at`` NULL) and grants nothing until
+    the invited user calls ``accept_invite``. A caller who adds themselves is
+    accepted at once.
 
     Args:
         session: Database session.
         principal: Authenticated caller.
         space_id: Group space id.
-        user_id: User to add.
+        user_id: User to invite.
 
     Returns:
-        The membership row.
+        The membership row (pending or accepted).
     """
     await require_roster_manager(session, principal, space_id)
     if await session.get(User, user_id) is None:
@@ -226,10 +274,89 @@ async def add_member(
     member = existing.scalar_one_or_none()
     if member:
         return member
-    member = SpaceMember(space_id=space_id, user_id=user_id)
+    member = SpaceMember(
+        space_id=space_id,
+        user_id=user_id,
+        accepted_at=datetime.now(UTC) if user_id == principal.user_id else None,
+    )
     session.add(member)
     await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
     return member
+
+
+async def accept_invite(session: AsyncSession, principal: Principal, space_id: uuid.UUID) -> Space:
+    """Accept the caller's pending invite to a group; idempotent.
+
+    Args:
+        session: Database session.
+        principal: Authenticated caller (the invited user).
+        space_id: Group space id.
+
+    Returns:
+        The group, now readable by the caller.
+
+    Raises:
+        ForbiddenError: The caller is not authenticated.
+        NotFoundError: The caller has no invite or membership in that group.
+    """
+    if not principal.user_id:
+        raise ForbiddenError("Authentication required")
+    result = await session.execute(
+        select(SpaceMember).where(
+            SpaceMember.space_id == space_id,
+            SpaceMember.user_id == principal.user_id,
+        )
+    )
+    member = result.scalar_one_or_none()
+    if member is None:
+        raise NotFoundError("Invite not found")
+    if member.accepted_at is None:
+        member.accepted_at = datetime.now(UTC)
+        await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
+    space = await show_space(session, principal, space_id)
+    if space is None or space.kind != SpaceKind.group:
+        raise NotFoundError("Invite not found")
+    return space
+
+
+async def list_pending_invites(session: AsyncSession, principal: Principal) -> list[dict[str, Any]]:
+    """Group invites the caller has not accepted yet.
+
+    The group name is text chosen by the inviting user. Show it to a human
+    (REST, GUI). Do not return it to an agent: the MCP ``me`` tool reports a
+    count only.
+
+    Args:
+        session: Database session.
+        principal: Authenticated caller.
+
+    Returns:
+        One dict per pending invite: group id, group name, creator labels.
+    """
+    if not principal.user_id:
+        return []
+    creator = aliased(User)
+    result = await session.execute(
+        select(Space, creator)
+        .join(SpaceMember, SpaceMember.space_id == Space.id)
+        .outerjoin(creator, creator.id == Space.created_by_user_id)
+        .where(
+            SpaceMember.user_id == principal.user_id,
+            SpaceMember.accepted_at.is_(None),
+            Space.kind == SpaceKind.group,
+            Space.archived_at.is_(None),
+        )
+        .order_by(Space.name.asc())
+    )
+    return [
+        {
+            "id": str(space.id),
+            "name": space.name,
+            "creator_email": owner.email if owner else None,
+            "creator_display_name": owner.display_name if owner else None,
+        }
+        for space, owner in result.all()
+    ]
 
 
 async def remove_member(
@@ -238,10 +365,39 @@ async def remove_member(
     space_id: uuid.UUID,
     user_id: uuid.UUID,
 ) -> None:
+    """Remove a member, leave a group, or decline a pending invite.
+
+    Args:
+        session: Database session.
+        principal: Authenticated caller.
+        space_id: Group space id.
+        user_id: Member to remove; the caller's own id leaves or declines.
+
+    Raises:
+        NotFoundError: Group missing or not visible to the caller.
+        ForbiddenError: Caller may not manage the roster, or the target is
+            the group creator.
+    """
+    leaving_self = principal.user_id is not None and principal.user_id == user_id
     space = await show_space(session, principal, space_id)
+    if space is None and leaving_self:
+        # Not a member yet: the caller may still delete their own pending row.
+        pending = (
+            await session.execute(
+                select(SpaceMember).where(
+                    SpaceMember.space_id == space_id,
+                    SpaceMember.user_id == user_id,
+                    SpaceMember.accepted_at.is_(None),
+                )
+            )
+        ).scalar_one_or_none()
+        if pending is None:
+            raise NotFoundError("Group not found")
+        await session.delete(pending)
+        await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
+        return
     if not space or space.kind != SpaceKind.group:
         raise NotFoundError("Group not found")
-    leaving_self = principal.user_id is not None and principal.user_id == user_id
     if not leaving_self and not can_manage_group(space, principal):
         raise ForbiddenError("Only the group creator or admin can manage membership")
     if space.created_by_user_id == user_id:
@@ -324,6 +480,7 @@ async def _member_groups(session: AsyncSession, principal: Principal) -> list[Sp
         .join(SpaceMember, SpaceMember.space_id == Space.id)
         .where(
             SpaceMember.user_id == principal.user_id,
+            SpaceMember.accepted_at.is_not(None),
             Space.archived_at.is_(None),
             Space.kind == SpaceKind.group,
         )

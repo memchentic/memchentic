@@ -76,6 +76,11 @@ def active_memory_clause(
     return or_(Memory.expires_at.is_(None), Memory.expires_at > ref)
 
 
+# Upper bound for guide confidence, in storage and in ranking. Repeating
+# guide_write must not raise a guide's rank without limit.
+GUIDE_CONFIDENCE_MAX = 5.0
+
+
 def rerank_score(
     memory: Memory,
     base: float,
@@ -106,7 +111,8 @@ def rerank_score(
     if path_hint and memory.path_hint and path_hint.casefold() in memory.path_hint.casefold():
         score *= 1.0 + settings.search_path_boost
     if memory.kind == MemoryKind.guide:
-        score *= 1.0 + 0.1 * float(memory.confidence or 1.0)
+        confidence = min(float(memory.confidence or 1.0), GUIDE_CONFIDENCE_MAX)
+        score *= 1.0 + 0.1 * confidence
     if memory.recall_count:
         score *= 1.0 + math.log1p(memory.recall_count) * settings.memory_usage_score_weight
     return score
@@ -125,6 +131,7 @@ class Digest:
     created_by: str | None = None
     updated_at: str | None = None
     expires_at: str | None = None
+    updated_by: str | None = None
 
 
 def _snippet(body: str, limit: int = 180) -> str:
@@ -255,6 +262,7 @@ async def hybrid_search(
                 space_id=str(m.space_id),
                 kind=m.kind.value,
                 created_by=str(m.created_by_user_id) if m.created_by_user_id else None,
+                updated_by=str(m.updated_by_user_id) if m.updated_by_user_id else None,
                 updated_at=m.updated_at.isoformat() if m.updated_at else None,
                 expires_at=m.expires_at.isoformat() if m.expires_at else None,
             )

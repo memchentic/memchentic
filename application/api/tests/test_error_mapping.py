@@ -68,6 +68,8 @@ def _group_with_member(client: TestClient) -> tuple[dict[str, str], dict[str, st
         f"/api/spaces/{group_id}/members", headers=owner, json={"email": member_email}
     )
     assert added.status_code == 200, added.text
+    accepted = client.post(f"/api/spaces/{group_id}/accept", headers=member)
+    assert accepted.status_code == 200, accepted.text
     return owner, member, group_id
 
 

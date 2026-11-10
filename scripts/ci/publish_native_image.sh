@@ -4,7 +4,7 @@
 # GITHUB_REPOSITORY_OWNER), PACKAGE_NAME, GITHUB_SHA, GH_TOKEN, GH_ACTOR,
 # SOURCE_URL.
 #
-# Optional: PUBLISH_BUILD_ATTEMPTS (default 3) retries BuildKit EOF / rpc flakes.
+# Optional: PUBLISH_BUILD_ATTEMPTS (default 3, positive integer) retries BuildKit EOF / Unavailable drops.
 set -euo pipefail
 
 printf '%s' "${GH_TOKEN}" | docker login ghcr.io --username "${GH_ACTOR}" --password-stdin
@@ -43,6 +43,12 @@ publish_args=(
 # Retry BuildKit drops (rpc Unavailable / EOF) after a short backoff.
 buildx_build() {
   local attempts="${PUBLISH_BUILD_ATTEMPTS:-3}"
+  case "${attempts}" in
+    '' | *[!0-9]* | 0)
+      echo "PUBLISH_BUILD_ATTEMPTS must be a positive integer (got '${attempts}')" >&2
+      return 2
+      ;;
+  esac
   local attempt=1
   local logfile status
   logfile="$(mktemp)"
@@ -61,7 +67,7 @@ buildx_build() {
       rm -f "${logfile}"
       return "${status}"
     fi
-    if ! grep -Eqi 'error reading from server: EOF|code = Unavailable|rpc error' "${logfile}"; then
+    if ! grep -Eqi 'error reading from server: EOF|code = Unavailable' "${logfile}"; then
       rm -f "${logfile}"
       return "${status}"
     fi

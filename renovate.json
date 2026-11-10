@@ -1,6 +1,52 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:recommended"
+    "config:recommended",
+    "helpers:pinGitHubActionDigests",
+    ":maintainLockFilesWeekly"
+  ],
+  "pip-compile": {
+    "managerFilePatterns": [
+      "/^application/api/requirements(-dev)?\\.lock$/"
+    ]
+  },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "MiniLM model revision pinned in docker/Dockerfile (SHA-256 values must be updated by hand)",
+      "managerFilePatterns": [
+        "/^docker/Dockerfile$/"
+      ],
+      "matchStrings": [
+        "ARG MINILM_REVISION=(?<currentDigest>[0-9a-f]{40})\\s"
+      ],
+      "depNameTemplate": "all-MiniLM-L6-v2",
+      "packageNameTemplate": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2",
+      "datasourceTemplate": "git-refs",
+      "currentValueTemplate": "main"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Keep Dockerfile base images pinned by digest and propose digest updates",
+      "matchManagers": [
+        "dockerfile"
+      ],
+      "pinDigests": true
+    },
+    {
+      "description": "A model revision change needs new SHA-256 values and a re-embedding decision: list it on the Dependency Dashboard, never open a pull request automatically",
+      "matchDepNames": [
+        "all-MiniLM-L6-v2"
+      ],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "One pull request for all GitHub Actions updates",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "groupName": "github-actions"
+    }
   ]
 }

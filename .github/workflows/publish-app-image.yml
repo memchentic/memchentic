@@ -9,9 +9,13 @@ name: Publish App Image
 # Runner pool is a workflow_dispatch choice: self-hosted (homelab labels) or
 # github (ubuntu-24.04 / ubuntu-24.04-arm). Per-arch refs (X.Y.Z-amd64 /
 # X.Y.Z-arm64) exist only so the manifest job can stitch the published semver.
-# Choose increment=Major|Minor|Patch to bump from existing GHCR tags (no tags
-# yet: Major → 1.0.0, Minor → 0.1.0, Patch → 0.0.1). The manifest job also
-# moves the floating ``latest`` tag onto the new semver multi-arch image.
+# Choose increment=Major|Minor|Patch to bump from the highest version among the
+# existing GHCR tags (X.Y.Z, X.Y.Z-amd64, X.Y.Z-arm64). The plan job fails when
+# it cannot list the tags or finds no version; tick first_release only for the
+# very first publish (Major → 1.0.0, Minor → 0.1.0, Patch → 0.0.1). The manifest
+# job refuses to overwrite an existing X.Y.Z tag and moves the floating
+# ``latest`` tag onto the new semver image only when both architectures
+# were built.
 
 on:
   workflow_dispatch:
@@ -52,12 +56,20 @@ on:
           - both
           - ghcr
           - zot
+      first_release:
+        description: Tick only for the very first publish (no released image exists yet)
+        required: false
+        type: boolean
+        default: false
 
-permissions:
-  contents: read
-  packages: write
-  id-token: write
-  attestations: write
+# Deny by default. Each job declares the scopes it uses.
+permissions: {}
+
+# One release at a time. A second dispatch waits for the running one, so two
+# runs never plan the same version.
+concurrency:
+  group: publish-app-image
+  cancel-in-progress: false
 
 env:
   REGISTRY: ghcr.io
@@ -70,21 +82,35 @@ jobs:
     name: Plan publish targets
     runs-on: ${{ fromJSON(github.event.inputs.runner == 'self-hosted' && '["self-hosted","linux","memchentic","build"]' || '["ubuntu-24.04"]') }}
     timeout-minutes: 5
+    environment: release
+    permissions:
+      packages: read
     outputs:
       build_amd64: ${{ steps.plan.outputs.build_amd64 }}
       build_arm64: ${{ steps.plan.outputs.build_arm64 }}
       version: ${{ steps.plan.outputs.version }}
       selected_arches: ${{ steps.plan.outputs.selected_arches }}
     steps:
+      - name: Require the default branch
+        env:
+          REF: ${{ github.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [ "${REF}" != "refs/heads/${DEFAULT_BRANCH}" ]; then
+            echo "::error::Publish App Image runs only from the default branch (${DEFAULT_BRANCH}); this run uses ${REF}."
+            exit 1
+          fi
+
       - name: Plan version and arch legs
         id: plan
         env:
           GH_TOKEN: ${{ github.token }}
-          OWNER_TYPE: ${{ github.repository.owner.type }}
+          OWNER_TYPE: ${{ github.event.repository.owner.type }}
           SELECTED_RUNNER: ${{ github.event.inputs.runner }}
           SELECTED_PLATFORMS: ${{ github.event.inputs.platforms }}
           INCREMENT: ${{ github.event.inputs.increment }}
           PACKAGE: ${{ env.PACKAGE_NAME }}
+          FIRST_RELEASE: ${{ github.event.inputs.first_release }}
         run: |
           set -euo pipefail
 
@@ -115,25 +141,32 @@ jobs:
           list_package_tags() {
             local package="$1"
             local page=1
-            : > "/tmp/tags-${package}.txt"
+            : > "${RUNNER_TEMP}/tags-${package}.txt"
             while :; do
               http_code="$(
-                curl -sS -o /tmp/package-versions.json -w '%{http_code}' \
+                curl -sS -o "${RUNNER_TEMP}/package-versions.json" -w '%{http_code}' \
                   -H "Authorization: Bearer ${GH_TOKEN}" \
                   -H "Accept: application/vnd.github+json" \
                   -H "X-GitHub-Api-Version: 2022-11-28" \
                   "https://api.github.com/${owner_path}/packages/container/${package}/versions?per_page=100&page=${page}"
               )"
-              if [ "${http_code}" = "404" ]; then
-                break
-              fi
-              if [ "${http_code}" != "200" ]; then
-                echo "::warning::Could not list GHCR tags for ${package} (HTTP ${http_code}); treating as no existing versions."
-                break
-              fi
-              jq -r '.[].metadata.container.tags[]? // empty' /tmp/package-versions.json \
-                >> "/tmp/tags-${package}.txt"
-              count="$(jq 'length' /tmp/package-versions.json)"
+              case "${http_code}" in
+                200) ;;
+                404)
+                  if [ "${FIRST_RELEASE:-false}" = "true" ] && [ "${page}" -eq 1 ]; then
+                    break
+                  fi
+                  echo "::error::GHCR package ${package} was not found (HTTP 404). Refusing to restart version numbering. Re-run with first_release ticked only if no image was ever published."
+                  exit 1
+                  ;;
+                *)
+                  echo "::error::Could not list GHCR tags for ${package} (HTTP ${http_code}). Refusing to plan a version."
+                  exit 1
+                  ;;
+              esac
+              jq -r '.[].metadata.container.tags[]? // empty' "${RUNNER_TEMP}/package-versions.json" \
+                >> "${RUNNER_TEMP}/tags-${package}.txt"
+              count="$(jq 'length' "${RUNNER_TEMP}/package-versions.json")"
               if [ "${count}" -lt 100 ]; then
                 break
               fi
@@ -146,12 +179,16 @@ jobs:
             local level="$2"
             local latest_semver
             latest_semver="$(
-              grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' "${tags_file}" \
-                | sed 's/^v//' \
-                | sort -t. -k1,1n -k2,2n -k3,3n \
+              grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+(-(amd64|arm64))?$' "${tags_file}" \
+                | sed -E 's/^v//; s/-(amd64|arm64)$//' \
+                | sort -u -t. -k1,1n -k2,2n -k3,3n \
                 | tail -n 1 || true
             )"
             if [ -z "${latest_semver}" ]; then
+              if [ "${FIRST_RELEASE:-false}" != "true" ]; then
+                echo "::error::No released version tag was found for ${PACKAGE}. Refusing to restart version numbering. Re-run with first_release ticked only if no image was ever published." >&2
+                exit 1
+              fi
               case "${level}" in
                 major) printf '%s\n' "1.0.0" ;;
                 minor) printf '%s\n' "0.1.0" ;;
@@ -185,7 +222,7 @@ jobs:
               ;;
           esac
           list_package_tags "${PACKAGE}"
-          version="$(bump_from_tags_file "/tmp/tags-${PACKAGE}.txt" "${increment}")"
+          version="$(bump_from_tags_file "${RUNNER_TEMP}/tags-${PACKAGE}.txt" "${increment}")"
 
           selected_arches=()
           build_amd64=false
@@ -207,17 +244,82 @@ jobs:
             echo "selected_arches=${selected_arches_csv}"
           } >> "$GITHUB_OUTPUT"
 
-          echo "### Publish plan" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Package: \`${PACKAGE}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Version: \`${version}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Runner: \`${SELECTED_RUNNER}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Platforms: \`${SELECTED_PLATFORMS}\` (arches: \`${selected_arches_csv}\`)" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### Publish plan"
+            echo "- Package: \`${PACKAGE}\`"
+            echo "- Version: \`${version}\`"
+            echo "- Runner: \`${SELECTED_RUNNER}\`"
+            echo "- Platforms: \`${SELECTED_PLATFORMS}\` (arches: \`${selected_arches_csv}\`)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  test:
+    name: Release gate (lint and tests in the image)
+    needs: plan
+    # Always GitHub-hosted: the gate never runs on the self-hosted pool.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Build the dev image
+        run: |
+          set -euo pipefail
+          docker build --file docker/Dockerfile --build-arg INSTALL_DEV=1 \
+            --tag memchentic:release-gate .
+
+      - name: Start Postgres
+        run: |
+          set -euo pipefail
+          gate_db_password="$(openssl rand -hex 16)"
+          echo "::add-mask::${gate_db_password}"
+          echo "GATE_DB_PASSWORD=${gate_db_password}" >> "$GITHUB_ENV"
+          docker network create release-gate
+          docker run --detach --name release-gate-db --network release-gate \
+            --env POSTGRES_USER=memchentic \
+            --env POSTGRES_PASSWORD="${gate_db_password}" \
+            --env POSTGRES_DB=memchentic \
+            pgvector/pgvector:0.8.7-pg16
+          for _ in $(seq 1 30); do
+            if docker exec release-gate-db pg_isready -h 127.0.0.1 -U memchentic -d memchentic >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::Postgres did not become ready"
+          docker logs release-gate-db >&2
+          exit 1
+
+      - name: Lint (ruff)
+        run: |
+          docker run --rm \
+            --volume "${GITHUB_WORKSPACE}/application/api/tests:/opt/memchentic/tests:ro" \
+            memchentic:release-gate ruff check --no-cache src tests
+
+      - name: Test (pytest)
+        run: |
+          docker run --rm --network release-gate \
+            --env POSTGRES_HOSTNAME=release-gate-db \
+            --env POSTGRES_PORT=5432 \
+            --env POSTGRES_USER=memchentic \
+            --env POSTGRES_PASSWORD="${GATE_DB_PASSWORD}" \
+            --volume "${GITHUB_WORKSPACE}/application/api/tests:/opt/memchentic/tests:ro" \
+            memchentic:release-gate pytest -q -p no:cacheprovider
 
   build_amd64:
-    needs: plan
+    needs:
+      - plan
+      - test
     if: needs.plan.outputs.build_amd64 == 'true'
     runs-on: ${{ fromJSON(github.event.inputs.runner == 'self-hosted' && '["self-hosted","linux","memchentic","amd64","build"]' || '["ubuntu-24.04"]') }}
     timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: write
     concurrency:
       group: publish-app-image-amd64
       cancel-in-progress: false
@@ -227,15 +329,13 @@ jobs:
       VERSION: ${{ needs.plan.outputs.version }}
 
     steps:
-      # GitHub-hosted images already have enough free space; prune/rm here burns
-      # ~1–2m on amd64 (larger tool caches + docker prune) while arm64 races ahead.
-      # Self-hosted build nodes accumulate layers — clean only there.
+      # Self-hosted build nodes accumulate BuildKit cache; trim only there.
+      # GitHub-hosted images already have enough free space. The step needs
+      # Docker access only (no root), and it leaves unrelated images on the
+      # host alone.
       - name: Free disk space
         if: github.event.inputs.runner == 'self-hosted'
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-            /opt/hostedtoolcache/CodeQL || true
-          sudo docker image prune -af || true
+        run: docker builder prune --all --force --filter until=168h || true
 
       - name: Isolate Docker CLI config
         run: |
@@ -243,12 +343,12 @@ jobs:
           echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config" >> "$GITHUB_ENV"
 
       - name: Check out the code
-        # actions/checkout@v4.2.2
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
-        # docker/setup-buildx-action@v3.8.0
-        uses: docker/setup-buildx-action@6524bf65af31da8d45b59e8c27de4bd072b392f5
+        uses: docker/setup-buildx-action@6524bf65af31da8d45b59e8c27de4bd072b392f5 # v3.8.0
 
       - name: Build and push native amd64 image
         env:
@@ -260,10 +360,15 @@ jobs:
           scripts/ci/publish_native_image.sh
 
   build_arm64:
-    needs: plan
+    needs:
+      - plan
+      - test
     if: needs.plan.outputs.build_arm64 == 'true'
     runs-on: ${{ fromJSON(github.event.inputs.runner == 'self-hosted' && '["self-hosted","linux","memchentic","ARM64","build"]' || '["ubuntu-24.04-arm"]') }}
     timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: write
     concurrency:
       group: publish-app-image-arm64
       cancel-in-progress: false
@@ -273,12 +378,13 @@ jobs:
       VERSION: ${{ needs.plan.outputs.version }}
 
     steps:
+      # Self-hosted build nodes accumulate BuildKit cache; trim only there.
+      # GitHub-hosted images already have enough free space. The step needs
+      # Docker access only (no root), and it leaves unrelated images on the
+      # host alone.
       - name: Free disk space
         if: github.event.inputs.runner == 'self-hosted'
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-            /opt/hostedtoolcache/CodeQL || true
-          sudo docker image prune -af || true
+        run: docker builder prune --all --force --filter until=168h || true
 
       - name: Isolate Docker CLI config
         run: |
@@ -286,12 +392,12 @@ jobs:
           echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config" >> "$GITHUB_ENV"
 
       - name: Check out the code
-        # actions/checkout@v4.2.2
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
-        # docker/setup-buildx-action@v3.8.0
-        uses: docker/setup-buildx-action@6524bf65af31da8d45b59e8c27de4bd072b392f5
+        uses: docker/setup-buildx-action@6524bf65af31da8d45b59e8c27de4bd072b392f5 # v3.8.0
 
       - name: Build and push native arm64 image
         env:
@@ -314,6 +420,9 @@ jobs:
       (needs.plan.outputs.build_arm64 != 'true' || needs.build_arm64.result == 'success')
     runs-on: ${{ fromJSON(github.event.inputs.runner == 'self-hosted' && '["self-hosted","linux","memchentic","build"]' || '["ubuntu-24.04"]') }}
     timeout-minutes: 15
+    permissions:
+      packages: write
+      id-token: write
     concurrency:
       group: publish-app-image-manifest
       cancel-in-progress: false
@@ -328,8 +437,10 @@ jobs:
           echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config" >> "$GITHUB_ENV"
 
       - name: Set up Docker Buildx
-        # docker/setup-buildx-action@v3.8.0
-        uses: docker/setup-buildx-action@6524bf65af31da8d45b59e8c27de4bd072b392f5
+        uses: docker/setup-buildx-action@6524bf65af31da8d45b59e8c27de4bd072b392f5 # v3.8.0
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
 
       - name: Publish multi-arch to GHCR
         if: contains(fromJSON('["ghcr","both"]'), github.event.inputs.registries)
@@ -355,16 +466,49 @@ jobs:
             exit 1
           fi
 
-          echo "Stitching ${image_base}:${VERSION} (+ latest) from: ${refs[*]}"
-          docker buildx imagetools create \
-            --tag "${image_base}:${VERSION}" \
-            --tag "${image_base}:latest" \
-            "${refs[@]}"
+          # Refuse to overwrite a released version. The check continues only
+          # when the registry answers "not found" for the tag.
+          if inspect_out="$(docker buildx imagetools inspect "${image_base}:${VERSION}" 2>&1)"; then
+            echo "::error::${image_base}:${VERSION} already exists. Refusing to overwrite a released tag."
+            exit 1
+          elif ! printf '%s' "${inspect_out}" | grep -Eqi 'not found|manifest[ _]unknown|name[ _]unknown'; then
+            echo "::error::Could not check whether ${image_base}:${VERSION} exists. Refusing to publish."
+            printf '%s\n' "${inspect_out}" >&2
+            exit 1
+          fi
 
-          echo "### Published (GHCR)" >> "$GITHUB_STEP_SUMMARY"
-          echo "- \`${image_base}:${VERSION}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- \`${image_base}:latest\` (moved to this release)" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Arch refs: \`${refs[*]}\`" >> "$GITHUB_STEP_SUMMARY"
+          tags=(--tag "${image_base}:${VERSION}")
+          latest_note="not moved (single-architecture publish: ${SELECTED_ARCHES})"
+          if [ "${SELECTED_ARCHES}" = "amd64,arm64" ]; then
+            tags+=(--tag "${image_base}:latest")
+            latest_note="moved to this release"
+          fi
+
+          echo "Stitching ${image_base}:${VERSION} from: ${refs[*]} (latest: ${latest_note})"
+          docker buildx imagetools create "${tags[@]}" "${refs[@]}"
+
+          {
+            echo "### Published (GHCR)"
+            echo "- \`${image_base}:${VERSION}\`"
+            echo "- \`${image_base}:latest\`: ${latest_note}"
+            echo "- Arch refs: \`${refs[*]}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Sign the GHCR image (keyless)
+        if: contains(fromJSON('["ghcr","both"]'), github.event.inputs.registries)
+        run: |
+          set -euo pipefail
+          owner="$(printf '%s' "${GHCR_NAMESPACE}" | tr '[:upper:]' '[:lower:]')"
+          image_base="${REGISTRY}/${owner}/${PACKAGE_NAME}"
+          digest="$(docker buildx imagetools inspect "${image_base}:${VERSION}" --format '{{.Manifest.Digest}}')"
+          case "${digest}" in
+            sha256:*) ;;
+            *)
+              echo "::error::Could not resolve the digest of ${image_base}:${VERSION}"
+              exit 1
+              ;;
+          esac
+          cosign sign --yes "${image_base}@${digest}"
 
       - name: Publish multi-arch to Zot
         if: contains(fromJSON('["zot","both"]'), github.event.inputs.registries)
@@ -372,11 +516,13 @@ jobs:
           ZOT_REGISTRY: registry.memchentic.ai
           ZOT_USERNAME: ${{ secrets.ZOT_USERNAME }}
           ZOT_PASSWORD: ${{ secrets.ZOT_PASSWORD }}
+          GH_TOKEN: ${{ github.token }}
+          GH_ACTOR: ${{ github.actor }}
         run: |
           set -euo pipefail
           printf '%s' "${ZOT_PASSWORD}" | docker login "${ZOT_REGISTRY}" --username "${ZOT_USERNAME}" --password-stdin
           # Arch refs always land on GHCR during the build jobs; stitch them onto Zot.
-          printf '%s' "${{ github.token }}" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+          printf '%s' "${GH_TOKEN}" | docker login ghcr.io --username "${GH_ACTOR}" --password-stdin
 
           owner="$(printf '%s' "${GHCR_NAMESPACE}" | tr '[:upper:]' '[:lower:]')"
           source_base="${REGISTRY}/${owner}/${PACKAGE_NAME}"
@@ -394,12 +540,47 @@ jobs:
             exit 1
           fi
 
-          echo "Stitching ${zot_base}:${VERSION} (+ latest) from: ${refs[*]}"
-          docker buildx imagetools create \
-            --tag "${zot_base}:${VERSION}" \
-            --tag "${zot_base}:latest" \
-            "${refs[@]}"
+          # Refuse to overwrite a released version. The check continues only
+          # when the registry answers "not found" for the tag.
+          if inspect_out="$(docker buildx imagetools inspect "${zot_base}:${VERSION}" 2>&1)"; then
+            echo "::error::${zot_base}:${VERSION} already exists. Refusing to overwrite a released tag."
+            exit 1
+          elif ! printf '%s' "${inspect_out}" | grep -Eqi 'not found|manifest[ _]unknown|name[ _]unknown'; then
+            echo "::error::Could not check whether ${zot_base}:${VERSION} exists. Refusing to publish."
+            printf '%s\n' "${inspect_out}" >&2
+            exit 1
+          fi
 
-          echo "### Published (Zot)" >> "$GITHUB_STEP_SUMMARY"
-          echo "- \`${zot_base}:${VERSION}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- \`${zot_base}:latest\` (moved to this release)" >> "$GITHUB_STEP_SUMMARY"
+          tags=(--tag "${zot_base}:${VERSION}")
+          latest_note="not moved (single-architecture publish: ${SELECTED_ARCHES})"
+          if [ "${SELECTED_ARCHES}" = "amd64,arm64" ]; then
+            tags+=(--tag "${zot_base}:latest")
+            latest_note="moved to this release"
+          fi
+
+          echo "Stitching ${zot_base}:${VERSION} from: ${refs[*]} (latest: ${latest_note})"
+          docker buildx imagetools create "${tags[@]}" "${refs[@]}"
+
+          {
+            echo "### Published (Zot)"
+            echo "- \`${zot_base}:${VERSION}\`"
+            echo "- \`${zot_base}:latest\`: ${latest_note}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Sign the Zot image (keyless)
+        if: contains(fromJSON('["zot","both"]'), github.event.inputs.registries)
+        env:
+          ZOT_REGISTRY: registry.memchentic.ai
+        run: |
+          set -euo pipefail
+          owner="$(printf '%s' "${GHCR_NAMESPACE}" | tr '[:upper:]' '[:lower:]')"
+          zot_base="${ZOT_REGISTRY}/${owner}/${PACKAGE_NAME}"
+          digest="$(docker buildx imagetools inspect "${zot_base}:${VERSION}" --format '{{.Manifest.Digest}}')"
+          case "${digest}" in
+            sha256:*) ;;
+            *)
+              echo "::error::Could not resolve the digest of ${zot_base}:${VERSION}"
+              exit 1
+              ;;
+          esac
+          cosign sign --yes "${zot_base}@${digest}"

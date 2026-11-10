@@ -8,6 +8,8 @@ import uuid
 from pathlib import Path
 
 import pytest
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from memchentic.embeddings.loader import (
     DEFAULT_MODEL_DIR,
@@ -15,7 +17,7 @@ from memchentic.embeddings.loader import (
     MAX_SEQUENCE_LENGTH,
     Embedder,
 )
-from memchentic.search.hybrid import rrf_fuse
+from memchentic.search.hybrid import prepare_filtered_vector_scan, rrf_fuse
 
 _ONNX_READY = (DEFAULT_MODEL_DIR / "model.onnx").is_file() and (
     DEFAULT_MODEL_DIR / "tokenizer.json"
@@ -141,3 +143,42 @@ def test_default_model_dir_points_at_api_models() -> None:
     assert DEFAULT_MODEL_DIR.parent.name == "models"
     assert Path(DEFAULT_MODEL_DIR).is_absolute()
     assert DEFAULT_MODEL_DIR.as_posix().endswith("/models/all-MiniLM-L6-v2")
+
+
+async def _hnsw_settings(session: AsyncSession) -> dict[str, str]:
+    """Read the two pgvector HNSW settings of the current session.
+
+    Args:
+        session: Database session.
+
+    Returns:
+        Setting name to value, for the settings that exist.
+    """
+    # current_setting also reads a placeholder that set_config created before
+    # pgvector was loaded in this backend; pg_settings lists only loaded ones.
+    row = (
+        await session.execute(
+            text(
+                "SELECT current_setting('hnsw.iterative_scan', true), "
+                "current_setting('hnsw.ef_search', true)"
+            )
+        )
+    ).one()
+    names = ("hnsw.iterative_scan", "hnsw.ef_search")
+    return {name: value for name, value in zip(names, row, strict=True) if value}
+
+
+async def test_prepare_filtered_vector_scan_sets_transaction_local_setting(
+    session: AsyncSession,
+) -> None:
+    """The helper widens the HNSW scan for the current transaction only."""
+    await prepare_filtered_vector_scan(session)
+    inside = await _hnsw_settings(session)
+    assert (
+        inside.get("hnsw.iterative_scan") == "strict_order"
+        or inside.get("hnsw.ef_search") == "1000"
+    )
+    await session.rollback()
+    after = await _hnsw_settings(session)
+    assert after.get("hnsw.iterative_scan") != "strict_order"
+    assert after.get("hnsw.ef_search") != "1000"

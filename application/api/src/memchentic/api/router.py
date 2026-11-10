@@ -535,6 +535,9 @@ async def users(
     Non-admins only see users who share at least one group space with them.
     """
     rows = await list_directory_users(session, principal)
+    bound_user_ids: set[uuid.UUID] | None = None
+    if principal.is_admin:
+        bound_user_ids = await auth_group_service.idp_bound_user_ids(session)
     out: list[dict] = []
     for u in rows:
         row: dict = {
@@ -546,7 +549,10 @@ async def users(
             row["providers"] = providers_for(u)
             row["created_at"] = u.created_at.isoformat() if u.created_at else None
             deletable, reason = await user_delete_eligibility(
-                session, actor_user_id=principal.user_id, target=u
+                session,
+                actor_user_id=principal.user_id,
+                target=u,
+                bound_user_ids=bound_user_ids,
             )
             row["deletable"] = deletable
             row["delete_blocked_reason"] = reason

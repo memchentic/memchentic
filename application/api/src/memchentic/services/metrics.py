@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import uuid
-from collections import Counter
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
-from sqlalchemy import ColumnElement, func, select
+from sqlalchemy import ColumnElement, String, func, literal_column, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from memchentic.auth.principal import Principal
@@ -105,37 +104,38 @@ async def memory_metrics(
     now = datetime.now(UTC)
     soon = now + timedelta(days=_EXPIRING_DAYS)
 
-    total = await session.scalar(select(func.count()).select_from(Memory).where(base))
-    entries = await session.scalar(
-        select(func.count()).select_from(Memory).where(base, Memory.kind == MemoryKind.entry)
-    )
-    guides = await session.scalar(
-        select(func.count()).select_from(Memory).where(base, Memory.kind == MemoryKind.guide)
-    )
-    expiring = await session.scalar(
-        select(func.count())
-        .select_from(Memory)
-        .where(
-            base,
-            Memory.expires_at.is_not(None),
-            Memory.expires_at >= now,
-            Memory.expires_at <= soon,
-        )
-    )
-    spaces_used = await session.scalar(
-        select(func.count(func.distinct(Memory.space_id))).where(base)
-    )
-
-    kind_rows = (
+    totals_row = (
         await session.execute(
-            select(Memory.kind, func.count())
+            select(
+                func.count().label("total"),
+                func.count().filter(Memory.kind == MemoryKind.entry).label("entries"),
+                func.count().filter(Memory.kind == MemoryKind.guide).label("guides"),
+                func.count()
+                .filter(
+                    Memory.expires_at.is_not(None),
+                    Memory.expires_at >= now,
+                    Memory.expires_at <= soon,
+                )
+                .label("expiring"),
+                func.count(func.distinct(Memory.space_id)).label("spaces_used"),
+            )
+            .select_from(Memory)
             .where(base)
-            .group_by(Memory.kind)
-            .order_by(func.count().desc())
         )
-    ).all()
+    ).one()
+    total = totals_row.total
+    entries = totals_row.entries
+    guides = totals_row.guides
+    expiring = totals_row.expiring
+    spaces_used = totals_row.spaces_used
+
+    # Entry and guide are the only two kinds, so by_kind follows from the
+    # totals. Order: count descending, as before.
+    kind_counts = [(MemoryKind.entry, int(entries)), (MemoryKind.guide, int(guides))]
     by_kind = [
-        {"kind": k.value if hasattr(k, "value") else str(k), "count": int(c)} for k, c in kind_rows
+        {"kind": kind.value, "count": count}
+        for kind, count in sorted(kind_counts, key=lambda pair: pair[1], reverse=True)
+        if count
     ]
 
     type_rows = (
@@ -167,17 +167,21 @@ async def memory_metrics(
     if other:
         by_space.append({"space_id": None, "name": "Other", "count": other})
 
-    tag_lists = (
-        (await session.execute(select(Memory.tags).where(base, func.cardinality(Memory.tags) > 0)))
-        .scalars()
-        .all()
+    tag_sq = (
+        select(func.unnest(Memory.tags, type_=String).label("tag"))
+        .where(base, func.cardinality(Memory.tags) > 0)
+        .subquery()
     )
-    tag_counts: Counter[str] = Counter()
-    for tags in tag_lists:
-        for tag in tags or []:
-            if tag:
-                tag_counts[tag] += 1
-    top_tags = [{"tag": tag, "count": count} for tag, count in tag_counts.most_common(_TOP_TAGS)]
+    tag_rows = (
+        await session.execute(
+            select(tag_sq.c.tag, func.count())
+            .where(tag_sq.c.tag != "")
+            .group_by(tag_sq.c.tag)
+            .order_by(func.count().desc(), tag_sq.c.tag.asc())
+            .limit(_TOP_TAGS)
+        )
+    ).all()
+    top_tags = [{"tag": tag, "count": int(count)} for tag, count in tag_rows]
 
     creator_rows = (
         await session.execute(
@@ -205,7 +209,10 @@ async def memory_metrics(
     ]
 
     days = _RANGE_DAYS[range_token]
-    day_expr = func.date_trunc("day", Memory.created_at)
+    # Three-argument date_trunc truncates in the named zone, so the day
+    # bucket does not depend on the database session time zone. The zone
+    # is a SQL literal so that SELECT and GROUP BY render the same text.
+    day_expr = func.date_trunc("day", Memory.created_at, literal_column("'UTC'"))
     day_filters: list[ColumnElement[bool]] = [base]
     window_start: datetime | None = None
     if days is not None:

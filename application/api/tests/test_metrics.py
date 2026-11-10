@@ -4,8 +4,18 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from fastapi.testclient import TestClient
+from sqlalchemy import event, text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from memchentic.auth.principal import Principal
+from memchentic.auth.users import register_internal_user
+from memchentic.db.session import set_rls_context
+from memchentic.models.entities import EntryType, Memory, MemoryKind
+from memchentic.services.metrics import memory_metrics
+from memchentic.services.spaces import get_personal_space
 
 
 def _user(client: TestClient) -> tuple[str, dict]:
@@ -152,3 +162,91 @@ def test_metrics_empty_corpus(client: TestClient) -> None:
     assert metrics["top_creators"] == []
     assert len(metrics["created_per_day"]) == 30
     assert all(row["entries"] == 0 and row["guides"] == 0 for row in metrics["created_per_day"])
+
+
+async def _user_with_entry(
+    session: AsyncSession, created_at: datetime
+) -> tuple[uuid.UUID, uuid.UUID]:
+    """Create a user and one uncommitted entry in the personal space.
+
+    Args:
+        session: Admin-scoped test session.
+        created_at: Creation time of the entry.
+
+    Returns:
+        ``(user id, personal space id)``.
+    """
+    user = await register_internal_user(
+        session,
+        email=f"metrics-{uuid.uuid4().hex[:10]}@example.com",
+        password="password-ok-12",
+    )
+    # register_internal_user binds the RLS context to the new user.
+    await set_rls_context(session, user_id=None, is_admin=True)
+    personal = await get_personal_space(session, user.id)
+    assert personal is not None
+    session.add(
+        Memory(
+            space_id=personal.id,
+            kind=MemoryKind.entry,
+            entry_type=EntryType.note,
+            title=f"metrics {uuid.uuid4().hex[:8]}",
+            body="x",
+            tags=["zeta", "alpha"],
+            created_by_user_id=user.id,
+            created_at=created_at,
+            updated_at=created_at,
+        )
+    )
+    await session.flush()
+    return user.id, personal.id
+
+
+async def test_metrics_statement_count_and_tag_order(session: AsyncSession) -> None:
+    """Metrics use a bounded number of statements; tag ties sort by tag."""
+    user_id, space_id = await _user_with_entry(session, datetime.now(UTC))
+    statements: list[str] = []
+
+    def before(*args: Any) -> None:
+        statements.append(args[2])
+
+    engine = session.get_bind().engine
+    event.listen(engine, "before_cursor_execute", before)
+    try:
+        payload = await memory_metrics(
+            session,
+            Principal(is_admin=True, user_id=user_id),
+            range_key="7d",
+            space_id=space_id,
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", before)
+        await session.rollback()
+    assert payload["totals"]["memories"] == 1
+    assert payload["by_kind"] == [{"kind": "entry", "count": 1}]
+    assert payload["top_tags"] == [
+        {"tag": "alpha", "count": 1},
+        {"tag": "zeta", "count": 1},
+    ]
+    # Up to 3 statements for the space check plus 6 aggregates.
+    assert len(statements) <= 9
+
+
+async def test_created_per_day_buckets_by_utc_day(session: AsyncSession) -> None:
+    """Day buckets are UTC days even when the session time zone is not UTC."""
+    yesterday = (datetime.now(UTC) - timedelta(days=1)).replace(
+        hour=1, minute=0, second=0, microsecond=0
+    )
+    user_id, space_id = await _user_with_entry(session, yesterday)
+    await session.execute(text("SET LOCAL TIME ZONE 'Asia/Tokyo'"))
+    try:
+        payload = await memory_metrics(
+            session,
+            Principal(is_admin=True, user_id=user_id),
+            range_key="7d",
+            space_id=space_id,
+        )
+    finally:
+        await session.rollback()
+    by_day = {row["day"]: row for row in payload["created_per_day"]}
+    assert by_day[yesterday.date().isoformat()]["entries"] == 1

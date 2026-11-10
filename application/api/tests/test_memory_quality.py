@@ -173,9 +173,14 @@ class _Embedder:
         return [0.0] * 384
 
 
+async def _no_scan_setup(_session: Any) -> None:
+    """Stand-in for prepare_filtered_vector_scan with the fake session."""
+
+
 @pytest.mark.asyncio
 async def test_near_dup_checks_beyond_nearest(monkeypatch: pytest.MonkeyPatch) -> None:
     """Exact title match is found even when outside the nearest-vector window."""
+    monkeypatch.setattr(memory_service, "prepare_filtered_vector_scan", _no_scan_setup)
     monkeypatch.setattr(memory_service, "get_embedder", lambda: _Embedder())
     nearest = _memory(title="Different title")
     twin = _memory(title="Deploy Runbook")
@@ -193,6 +198,7 @@ async def test_near_dup_checks_beyond_nearest(monkeypatch: pytest.MonkeyPatch) -
 @pytest.mark.asyncio
 async def test_near_dup_prefers_similarity_hit(monkeypatch: pytest.MonkeyPatch) -> None:
     """A later candidate above the similarity threshold wins over no title match."""
+    monkeypatch.setattr(memory_service, "prepare_filtered_vector_scan", _no_scan_setup)
     monkeypatch.setattr(memory_service, "get_embedder", lambda: _Embedder())
     far = _memory(title="a")
     close = _memory(title="b")

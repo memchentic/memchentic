@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import ColumnElement, and_, func, or_, select
+from sqlalchemy import ColumnElement, and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
@@ -15,6 +15,38 @@ from memchentic.embeddings import get_embedder
 from memchentic.models.entities import EntryType, Memory, MemoryKind
 from memchentic.services.errors import ValidationError
 from memchentic.settings import get_settings
+
+# None = not probed yet. Filled once per process by prepare_filtered_vector_scan.
+_ITERATIVE_SCAN_SUPPORTED: bool | None = None
+
+
+async def prepare_filtered_vector_scan(session: AsyncSession) -> None:
+    """Let a filtered HNSW scan return LIMIT rows when enough rows qualify.
+
+    Sets a pgvector setting for the current transaction only. Uses
+    ``hnsw.iterative_scan`` when the installed pgvector has it; otherwise
+    raises ``hnsw.ef_search`` to its maximum, which widens the candidate
+    list but does not remove the limit.
+
+    Args:
+        session: Database session; the vector query must run in the same
+            transaction.
+    """
+    global _ITERATIVE_SCAN_SUPPORTED
+    if _ITERATIVE_SCAN_SUPPORTED is None:
+        # pgvector registers its settings when its library is first loaded
+        # in a backend. Using the type forces the load.
+        await session.execute(text("SELECT CAST('[0]' AS vector)"))
+        found = await session.scalar(
+            text("SELECT count(*) FROM pg_settings WHERE name = 'hnsw.iterative_scan'")
+        )
+        _ITERATIVE_SCAN_SUPPORTED = bool(found)
+    if _ITERATIVE_SCAN_SUPPORTED:
+        await session.execute(
+            text("SELECT set_config('hnsw.iterative_scan', 'strict_order', true)")
+        )
+    else:
+        await session.execute(text("SELECT set_config('hnsw.ef_search', '1000', true)"))
 
 
 def escape_ilike(value: str) -> str:
@@ -261,6 +293,7 @@ async def hybrid_search(
         .order_by(distance)
         .limit(fetch_n)
     )
+    await prepare_filtered_vector_scan(session)
     vec_ids = [row[0] for row in (await session.execute(vec_stmt)).all()]
 
     # Keyword branch: three steps, the first that returns rows wins. An

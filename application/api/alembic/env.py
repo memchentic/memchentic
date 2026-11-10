@@ -10,8 +10,14 @@ from memchentic.models import Base
 from memchentic.settings import get_settings
 
 config = context.config
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+# Programmatic runs (application boot, the test suite) set
+# ``attributes["configure_logger"] = False``: the process has configured
+# logging already and must keep it. The Alembic command line leaves the
+# attribute unset and gets the logging setup from alembic.ini.
+# ``disable_existing_loggers=False`` keeps loggers that exist before this
+# call enabled in every case.
+if config.config_file_name is not None and config.attributes.get("configure_logger", True):
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 

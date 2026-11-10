@@ -9,12 +9,14 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from alembic.config import Config
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from alembic import command
 from memchentic.api.oauth import router as oauth_router
 from memchentic.api.router import api_router
 from memchentic.api.security_headers import SecurityHeadersMiddleware
@@ -130,20 +132,28 @@ class McpAuthMiddleware:
                 session_var.reset(s_token)
 
 
-def _run_migrations(database_url: str) -> None:
-    """Apply Alembic migrations to head (blocking; run off the event loop).
+def _alembic_config() -> Config:
+    """Build the Alembic config for a programmatic migration run.
 
-    Args:
-        database_url: SQLAlchemy async database URL.
+    The database URL is not stored here. ``alembic/env.py`` reads it from
+    ``get_settings().migration_database_url``. A ``ConfigParser`` value may
+    not contain a bare ``%``, so a percent-encoded password would raise and
+    the error message would print the whole URL.
+
+    Returns:
+        Config pointing at the bundled ``alembic.ini`` and script directory.
     """
-    from alembic.config import Config
-
-    from alembic import command
-
     cfg = Config(str(API_ROOT / "alembic.ini"))
-    cfg.set_main_option("script_location", str(API_ROOT / "alembic"))
-    cfg.set_main_option("sqlalchemy.url", database_url)
-    command.upgrade(cfg, "head")
+    # ConfigParser interpolation: a literal "%" in a value is written "%%".
+    cfg.set_main_option("script_location", str(API_ROOT / "alembic").replace("%", "%%"))
+    # env.py must not call logging.config.fileConfig in the server process.
+    cfg.attributes["configure_logger"] = False
+    return cfg
+
+
+def _run_migrations() -> None:
+    """Apply Alembic migrations to head (blocking; run off the event loop)."""
+    command.upgrade(_alembic_config(), "head")
 
 
 def create_app() -> FastAPI:
@@ -168,20 +178,18 @@ def create_app() -> FastAPI:
             Control while the app serves requests.
         """
         logging.basicConfig(level=settings.log_level)
-        weak = settings.insecure_secret_names()
-        if weak:
-            raise RuntimeError(
-                f"Refusing to start: set strong values (16+ chars) for {', '.join(weak)}"
-            )
+        problems = settings.insecure_secret_problems()
+        if problems:
+            details = "; ".join(f"{name} {reason}" for name, reason in problems.items())
+            raise RuntimeError(f"Refusing to start: {details}")
         await init_db()
-        await asyncio.to_thread(_run_migrations, settings.migration_database_url)
+        await asyncio.to_thread(_run_migrations)
         logger.info("Migrations applied")
         async with get_session_factory()() as session:
-            from sqlalchemy import CursorResult, text
-
             from memchentic.auth.users import ensure_admin_user
             from memchentic.services.auth_groups import ensure_auth_groups
             from memchentic.services.instance_settings import ensure_instance_settings
+            from memchentic.services.memories import backfill_orphan_creators
 
             await set_rls_context(session, user_id=None, is_admin=True)
             await ensure_admin_user(session, settings)
@@ -189,20 +197,9 @@ def create_app() -> FastAPI:
             await ensure_instance_settings(session, settings)
             # Attribute orphan memories to the space owner only (never silently
             # claim them as the env admin — that hides deleted-owner history).
-            result = await session.execute(
-                text(
-                    """
-                    UPDATE memories AS m
-                    SET created_by_user_id = s.created_by_user_id
-                    FROM spaces AS s
-                    WHERE m.space_id = s.id
-                      AND m.created_by_user_id IS NULL
-                      AND s.created_by_user_id IS NOT NULL
-                    """
-                )
-            )
-            await session.commit()
-            backfilled = result.rowcount if isinstance(result, CursorResult) else 0
+            # The helper binds its own admin RLS context: the calls above rebind
+            # and commit, and every commit clears the context.
+            backfilled = await backfill_orphan_creators(session)
             if backfilled:
                 logger.info("Backfilled created_by on %s memories to space owner", backfilled)
             if settings.oauth_provider == "internal":

@@ -105,7 +105,7 @@ config:
   sessionBrowserHours: "12"
   # Default Secure cookies for non-loopback hosts.
   sessionCookieSecure: "true"
-  # Public self-registration when OAUTH_PROVIDER=internal (System Settings can toggle live).
+  # Public self-registration when OAUTH_PROVIDER=internal. First-boot value only; afterwards System Settings is the source of truth.
   registerEnabled: "true"
   enableApiDocs: "false"
 

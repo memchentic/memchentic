@@ -6,11 +6,23 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import numpy as np
-from sqlalchemy import DateTime, Select, and_, case, func, literal, or_, select, update
+from sqlalchemy import (
+    CursorResult,
+    DateTime,
+    Select,
+    and_,
+    case,
+    func,
+    literal,
+    or_,
+    select,
+    text,
+    update,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from memchentic.auth.principal import Principal
-from memchentic.db.session import commit_with_rls
+from memchentic.db.session import commit_with_rls, set_rls_context
 from memchentic.embeddings import get_embedder
 from memchentic.events import memory_event_from_row, publish_memory_event
 from memchentic.models.entities import EntryType, Memory, MemoryKind, SpaceKind, User
@@ -964,3 +976,38 @@ async def overlap_report(
         "note": "Read-only hygiene report; merge via revise/forget.",
         "near_dup_threshold": settings.near_dup_threshold,
     }
+
+
+async def backfill_orphan_creators(session: AsyncSession) -> int:
+    """Attribute memories that have no creator to the creator of their space.
+
+    A memory loses its creator when that user is deleted. The space creator is
+    used, never the env admin, so deleted-owner history is not hidden.
+
+    Binds its own admin RLS context. Callers at startup have usually committed
+    already, and every commit clears the context; without a context the UPDATE
+    matches no rows and raises no error.
+
+    Args:
+        session: Database session. Any open transaction is committed.
+
+    Returns:
+        Number of memories updated.
+    """
+    await set_rls_context(session, user_id=None, is_admin=True)
+    result = await session.execute(
+        text(
+            """
+            UPDATE memories AS m
+            SET created_by_user_id = s.created_by_user_id
+            FROM spaces AS s
+            WHERE m.space_id = s.id
+              AND m.created_by_user_id IS NULL
+              AND s.created_by_user_id IS NOT NULL
+            """
+        )
+    )
+    # rowcount is typed on CursorResult only; read it before the commit.
+    updated = result.rowcount if isinstance(result, CursorResult) else 0
+    await commit_with_rls(session, user_id=None, is_admin=True)
+    return updated

@@ -128,10 +128,13 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 async def _ensure_test_database(url: str) -> None:
-    """Create the test database if it does not already exist.
+    """Drop and recreate the test database so every run starts empty.
+
+    Rows left by earlier runs slow every query; a reused database made the
+    suite several times slower.
 
     Args:
-        url: Async URL whose database name should exist.
+        url: Async URL whose database name should be recreated.
     """
     parsed = make_url(url)
     assert parsed.database is not None
@@ -140,12 +143,8 @@ async def _ensure_test_database(url: str) -> None:
     engine = create_async_engine(admin_url, isolation_level="AUTOCOMMIT")
     try:
         async with engine.connect() as conn:
-            exists = await conn.scalar(
-                text("SELECT 1 FROM pg_database WHERE datname = :name"),
-                {"name": parsed.database},
-            )
-            if not exists:
-                await conn.execute(text(f'CREATE DATABASE "{parsed.database}"'))
+            await conn.execute(text(f'DROP DATABASE IF EXISTS "{parsed.database}" WITH (FORCE)'))
+            await conn.execute(text(f'CREATE DATABASE "{parsed.database}"'))
     finally:
         await engine.dispose()
 
@@ -154,38 +153,32 @@ def _run_migrations(url: str) -> None:
     """Apply Alembic migrations to head on the isolated test database.
 
     Args:
-        url: Async SQLAlchemy URL (must match ``get_settings().database_url``).
+        url: Owner URL that was checked for isolation. ``alembic/env.py``
+            connects with ``get_settings().migration_database_url``; the two
+            must be the same database.
     """
     from alembic.config import Config
 
     from alembic import command
 
+    assert url == get_settings().migration_database_url
     cfg = Config(str(_API_ROOT / "alembic.ini"))
-    cfg.set_main_option("script_location", str(_API_ROOT / "alembic"))
-    cfg.set_main_option("sqlalchemy.url", url)
+    # The URL is not stored in the config: a percent-encoded password is not
+    # a valid ConfigParser value. A literal "%" in the path is written "%%".
+    cfg.set_main_option("script_location", str(_API_ROOT / "alembic").replace("%", "%%"))
+    cfg.attributes["configure_logger"] = False
     command.upgrade(cfg, "head")
-
-
-async def _reset_signing_keys(url: str) -> None:
-    """Drop signing keys so tests recreate them under the current ENCRYPTION_KEY."""
-    engine = create_async_engine(url, echo=False)
-    try:
-        async with engine.begin() as conn:
-            await conn.execute(text("DELETE FROM internal_signing_keys"))
-    finally:
-        await engine.dispose()
 
 
 @pytest.fixture(scope="session", autouse=True)
 def prepare_test_database() -> None:
-    """Ensure ``memchentic_test`` exists and is migrated once per pytest process."""
+    """Recreate ``memchentic_test`` and migrate it once per pytest process."""
     owner_url = get_settings().migration_database_url
     _assert_isolated(owner_url)
     asyncio.run(_ensure_test_database(owner_url))
     get_settings.cache_clear()
     reset_engine()
     _run_migrations(owner_url)
-    asyncio.run(_reset_signing_keys(owner_url))
 
 
 @pytest.fixture(autouse=True)

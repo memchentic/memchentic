@@ -8,6 +8,9 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 
+from memchentic.db.session import get_session_factory
+from memchentic.services.instance_settings import ensure_instance_settings
+
 ADMIN_KEY = os.environ.get("ADMIN_API_KEY", "")
 
 
@@ -66,3 +69,26 @@ def test_registration_setting_admin_only_and_gates_public_register(
         json={"email": other, "password": password},
     )
     assert ok.status_code == 200, ok.text
+
+
+def test_boot_keeps_registration_toggle_set_in_system_settings(client: TestClient) -> None:
+    """A restart does not re-open registration that an administrator closed."""
+    admin = _admin_auth()
+
+    async def _boot_seed() -> None:
+        # What every process start does (``lifespan`` in ``memchentic.main``).
+        async with get_session_factory()() as session:
+            await ensure_instance_settings(session)
+
+    off = client.put("/api/system/registration", headers=admin, json={"enabled": False})
+    assert off.status_code == 200, off.text
+    try:
+        assert client.portal is not None
+        client.portal.call(_boot_seed)  # run on the application's event loop
+        assert client.get("/api/provider").json()["register_enabled"] is False
+        current = client.get("/api/system/registration", headers=admin)
+        assert current.json()["enabled"] is False
+    finally:
+        # Other tests register users: always re-open registration.
+        on = client.put("/api/system/registration", headers=admin, json={"enabled": True})
+        assert on.status_code == 200, on.text

@@ -1,3 +1,4 @@
+import logging
 import ssl
 from functools import lru_cache
 from typing import Literal
@@ -96,13 +97,16 @@ class Settings(BaseSettings):
     def database_url(self) -> str:
         """Runtime DSN as the non-superuser app role (RLS enforced).
 
-        Falls back to the owner URL only when ``POSTGRES_APP_PASSWORD`` is empty
-        (legacy local) — production must set the app password.
+        Raises:
+            RuntimeError: ``POSTGRES_APP_PASSWORD`` is empty. The owner role
+                bypasses RLS, so there is no fallback to the owner URL.
         """
         app_user = self.postgres_app_user.strip() or "memchentic_app"
         app_password = self.postgres_app_password
         if not app_password:
-            return self.migration_database_url
+            raise RuntimeError(
+                "POSTGRES_APP_PASSWORD is empty; refusing to use the owner role at runtime"
+            )
         return self._dsn(user=app_user, password=app_password)
 
     near_dup_threshold: float = Field(default=0.92, alias="NEAR_DUP_THRESHOLD")
@@ -150,6 +154,21 @@ class Settings(BaseSettings):
     enable_api_docs: bool = Field(default=False, alias="ENABLE_API_DOCS")
     allow_hash_embeddings: bool = Field(default=False, alias="ALLOW_HASH_EMBEDDINGS")
 
+    @field_validator("log_level", mode="before")
+    @classmethod
+    def _normalize_log_level(cls, value: object) -> object:
+        """Accept any letter case for ``LOG_LEVEL``; reject unknown names at load.
+
+        A blank value means the default (Compose often ships ``KEY=``).
+        """
+        name = "" if value is None else str(value).strip().upper()
+        if not name:
+            return "INFO"
+        valid = logging.getLevelNamesMapping()
+        if name not in valid:
+            raise ValueError(f"LOG_LEVEL must be one of {', '.join(sorted(valid))}; got {value!r}")
+        return name
+
     @field_validator("session_cookie_secure", mode="before")
     @classmethod
     def _empty_optional_bool(cls, value: object) -> object:
@@ -172,11 +191,13 @@ class Settings(BaseSettings):
         host = (urlparse(self.base_url).hostname or "").casefold()
         return host not in {"localhost", "127.0.0.1", "::1"}
 
-    def insecure_secret_names(self) -> list[str]:
-        """Name break-glass secrets that are empty, placeholders, or too short.
+    def insecure_secret_problems(self) -> dict[str, str]:
+        """Explain which break-glass secrets are unusable and why.
 
         Returns:
-            Env var names that must be changed before the API may start.
+            Mapping of env var name to a short requirement text, for every
+            secret that is empty, a placeholder, or too short. Never contains
+            the secret values.
         """
         weak_exact = {"", "change-me", "change-me-admin-api-key", "memchentic"}
         checks: dict[str, tuple[str, int]] = {
@@ -186,12 +207,23 @@ class Settings(BaseSettings):
             "POSTGRES_PASSWORD": (self.postgres_password, 16),
             "POSTGRES_APP_PASSWORD": (self.postgres_app_password, 16),
         }
-        bad: list[str] = []
+        problems: dict[str, str] = {}
         for name, (value, min_len) in checks.items():
-            lowered = value.casefold()
-            if value in weak_exact or "change-me" in lowered or len(value) < min_len:
-                bad.append(name)
-        return bad
+            if value == "":
+                problems[name] = f"is empty; needs {min_len}+ characters"
+            elif value in weak_exact or "change-me" in value.casefold():
+                problems[name] = f"is a placeholder; needs a random value of {min_len}+ characters"
+            elif len(value) < min_len:
+                problems[name] = f"is too short; needs {min_len}+ characters"
+        return problems
+
+    def insecure_secret_names(self) -> list[str]:
+        """Name break-glass secrets that are empty, placeholders, or too short.
+
+        Returns:
+            Env var names that must be changed before the API may start.
+        """
+        return list(self.insecure_secret_problems())
 
     @property
     def cors_origin_list(self) -> list[str]:

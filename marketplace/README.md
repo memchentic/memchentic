@@ -47,7 +47,7 @@ copilot plugin install memchentic@memchentic
 codex plugin marketplace add memchentic/memchentic
 ```
 
-Codex loads `hooks/codex-hooks.json` from the plugin manifest. Trust the
+Codex loads `hooks/codex.json` from the plugin manifest. Trust the
 SessionStart hook once (`/hooks` or Settings → Hooks). Re-trust after any
 change to the hook script.
 

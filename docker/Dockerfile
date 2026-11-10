@@ -1,8 +1,8 @@
 # Build the React SPA, then run FastAPI + FastMCP + static GUI in one image.
 FROM node:22-alpine AS gui-build
 WORKDIR /gui
-COPY application/gui/package.json application/gui/package-lock.json* ./
-RUN npm install
+COPY application/gui/package.json application/gui/package-lock.json ./
+RUN npm ci --no-audit --no-fund
 COPY application/gui/ ./
 RUN npm run build
 

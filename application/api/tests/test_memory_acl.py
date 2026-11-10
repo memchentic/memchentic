@@ -178,13 +178,13 @@ def test_creator_and_manager_can_relocate(client: TestClient) -> None:
         client,
         token_b,
         "remember",
-        {"title": f"b-entry {marker}", "body": marker, "space_id": group_id},
+        {"title": f"b-entry {marker}", "body": marker, "space_id": group_id, "force": True},
     )["structuredContent"]["id"]
     by_c = _tool(
         client,
         token_c,
         "remember",
-        {"title": f"c-entry {marker}", "body": marker, "space_id": group_id},
+        {"title": f"c-entry {marker}", "body": marker, "space_id": group_id, "force": True},
     )["structuredContent"]["id"]
 
     assert (

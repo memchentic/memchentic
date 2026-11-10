@@ -2,7 +2,9 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import event, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import (
+    AsyncConnection,
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
@@ -116,16 +118,64 @@ async def commit_with_rls(
     await set_rls_context(session, user_id=user_id, is_admin=is_admin)
 
 
-async def init_db() -> None:
-    """Ensure extensions exist; schema comes from Alembic.
+async def _reconcile_app_role_password(conn: AsyncConnection, *, role: str, password: str) -> None:
+    """Make the app role's password match ``POSTGRES_APP_PASSWORD``.
 
-    Uses the owner DSN because ``CREATE EXTENSION`` requires a superuser / owner
-    and must run before the runtime app role connects.
+    Migration 011 sets the password only once. Without this step, changing
+    ``POSTGRES_APP_PASSWORD`` after the first boot locks the application out.
+
+    Args:
+        conn: Owner-role connection inside a transaction.
+        role: App role name (``POSTGRES_APP_USER``).
+        password: Wanted password. Empty means: leave the role alone.
+
+    Raises:
+        RuntimeError: Postgres refused the change. The message never contains
+            the password.
     """
+    if not password:
+        return
+    try:
+        exists = await conn.scalar(
+            text("SELECT 1 FROM pg_roles WHERE rolname = :role"), {"role": role}
+        )
+        if not exists:
+            # First boot: migration 011 creates the role with this password.
+            return
+        # ALTER ROLE takes no bind parameters. Postgres quotes the identifier
+        # (%I) and the literal (%L); the finished statement goes to the driver
+        # untouched, so ':' or '%' in the password is never read as a parameter.
+        statement = await conn.scalar(
+            text(
+                "SELECT format('ALTER ROLE %I WITH LOGIN PASSWORD %L', "
+                "CAST(:role AS text), CAST(:password AS text))"
+            ),
+            {"role": role, "password": password},
+        )
+        await conn.exec_driver_sql(statement)
+    except DBAPIError:
+        # The driver error quotes the statement and its parameters, which
+        # contain the password. Do not chain it.
+        raise RuntimeError(f"Could not set the password of database role {role!r}") from None
+
+
+async def init_db() -> None:
+    """Ensure extensions exist and the app role password is current.
+
+    The schema itself comes from Alembic. Uses the owner DSN because
+    ``CREATE EXTENSION`` and ``ALTER ROLE`` require a superuser / owner and
+    must run before the runtime app role connects.
+    """
+    settings = get_settings()
     engine = get_engine(migration=True)
     try:
         async with engine.begin() as conn:
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
             await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "pgcrypto"'))
+            await _reconcile_app_role_password(
+                conn,
+                role=settings.postgres_app_user.strip() or "memchentic_app",
+                password=settings.postgres_app_password,
+            )
     finally:
         await engine.dispose()

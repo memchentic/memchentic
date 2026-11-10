@@ -154,8 +154,9 @@ function RegistrationPanel() {
         <h3 className="text-sm font-medium text-ink">Public registration</h3>
         <p className="text-xs text-muted mt-0.5">
           When disabled, the sign-in page hides Register. Administrators can still
-          create users from Users. Deploy default comes from{" "}
-          <code className="text-ink">REGISTER_ENABLED</code> (reseeds on restart).
+          create users from Users.{" "}
+          <code className="text-ink">REGISTER_ENABLED</code> only sets the value on
+          the first boot; after that, this setting is kept across restarts.
         </p>
       </div>
       <div className="settings-group-picker" role="group" aria-label="Registration">

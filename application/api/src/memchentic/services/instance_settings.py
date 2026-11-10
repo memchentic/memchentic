@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from memchentic.models.entities import InstanceSetting
@@ -26,10 +27,11 @@ def _parse_bool(raw: str) -> bool:
 
 
 async def ensure_instance_settings(session: AsyncSession, settings: Settings | None = None) -> None:
-    """Sync ``REGISTER_ENABLED`` from env into the DB on every boot.
+    """Seed missing System Settings rows from env (existing rows are kept).
 
-    Compose/Helm env is the deploy source of truth. Admins can still flip the
-    value live in System Settings until the next process start reseeds it.
+    ``REGISTER_ENABLED`` is only the value for the first boot of a new
+    database. Once the row exists, the value an administrator chose in
+    System Settings is the source of truth and is kept across restarts.
 
     Args:
         session: Database session.
@@ -37,14 +39,12 @@ async def ensure_instance_settings(session: AsyncSession, settings: Settings | N
     """
     settings = settings or get_settings()
     value = "true" if settings.register_enabled else "false"
-    result = await session.execute(
-        select(InstanceSetting).where(InstanceSetting.key == KEY_REGISTER_ENABLED)
+    # One statement, safe when several replicas boot at the same time.
+    await session.execute(
+        pg_insert(InstanceSetting)
+        .values(key=KEY_REGISTER_ENABLED, value=value)
+        .on_conflict_do_nothing(index_elements=["key"])
     )
-    row = result.scalar_one_or_none()
-    if row is None:
-        session.add(InstanceSetting(key=KEY_REGISTER_ENABLED, value=value))
-    else:
-        row.value = value
     await session.commit()
 
 

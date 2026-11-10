@@ -35,6 +35,9 @@ data:
   {{- if .Values.config.sessionCookieSecure }}
   SESSION_COOKIE_SECURE: {{ .Values.config.sessionCookieSecure | quote }}
   {{- end }}
+  {{- if .Values.config.forwardedAllowIps }}
+  FORWARDED_ALLOW_IPS: {{ .Values.config.forwardedAllowIps | quote }}
+  {{- end }}
   REGISTER_ENABLED: {{ .Values.config.registerEnabled | quote }}
   ENABLE_API_DOCS: {{ .Values.config.enableApiDocs | default "false" | quote }}
   POSTGRES_SSLMODE: {{ .Values.config.postgresSslmode | quote }}

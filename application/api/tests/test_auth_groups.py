@@ -57,10 +57,10 @@ def test_groups_from_claims_extracts_ids_and_names() -> None:
 @pytest.mark.asyncio
 async def test_ensure_auth_groups_exclusive_and_locks_admin(session: AsyncSession) -> None:
     settings = get_settings()
-    groups = await ensure_auth_groups(session, settings)
+    admin = await ensure_admin_user(session, settings)
+    groups = await ensure_auth_groups(session, admin)
     assert SLUG_ADMINISTRATORS in groups
     assert SLUG_USERS in groups
-    admin = await ensure_admin_user(session, settings)
     assert await user_is_administrator(session, admin.id)
 
     admin_members = await list_members(
@@ -76,7 +76,7 @@ async def test_ensure_auth_groups_exclusive_and_locks_admin(session: AsyncSessio
         email=f"member-{uuid.uuid4().hex[:8]}@example.com",
         password="password-ok-12",
     )
-    await ensure_auth_groups(session, settings)
+    await ensure_auth_groups(session, admin)
     users_members = await list_members(session, type("P", (), {"is_admin": True})(), SLUG_USERS)
     assert any(m["user_id"] == str(user.id) for m in users_members)
 
@@ -92,7 +92,8 @@ async def test_ensure_auth_groups_exclusive_and_locks_admin(session: AsyncSessio
 @pytest.mark.asyncio
 async def test_idp_sync_administrators_wins(session: AsyncSession) -> None:
     settings = get_settings()
-    await ensure_auth_groups(session, settings)
+    admin = await ensure_admin_user(session, settings)
+    await ensure_auth_groups(session, admin)
     principal = type("P", (), {"is_admin": True})()
     await set_idp_bind(
         session,
@@ -196,3 +197,88 @@ def test_auth_groups_api_bind_and_refuse_edits(client: TestClient) -> None:
         headers=admin_auth,
     )
     assert locked.status_code == 403
+
+
+def test_admin_key_request_cost_does_not_depend_on_user_count(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The admin key is resolved with a lookup, not a re-hash and a roster rebuild."""
+    from sqlalchemy import event
+
+    import memchentic.auth.users as users_module
+    from memchentic.db.session import get_engine
+
+    admin_auth = {"Authorization": f"Bearer {ADMIN_KEY}"}
+    counters = {"bcrypt": 0, "sql": 0}
+    real_verify = users_module.verify_password
+
+    def counting_verify(password: str, password_hash: str) -> bool:
+        counters["bcrypt"] += 1
+        return real_verify(password, password_hash)
+
+    def before_execute(*_args: object) -> None:
+        counters["sql"] += 1
+
+    def measure() -> tuple[int, int]:
+        counters["bcrypt"] = counters["sql"] = 0
+        assert client.get("/api/me", headers=admin_auth).status_code == 200
+        return counters["bcrypt"], counters["sql"]
+
+    monkeypatch.setattr(users_module, "verify_password", counting_verify)
+    engine = get_engine().sync_engine
+    event.listen(engine, "before_cursor_execute", before_execute)
+    try:
+        first_bcrypt, first_sql = measure()
+        for _ in range(5):
+            _user(client)
+        second_bcrypt, second_sql = measure()
+    finally:
+        event.remove(engine, "before_cursor_execute", before_execute)
+
+    assert first_bcrypt == 0
+    assert second_bcrypt == 0
+    assert second_sql <= first_sql
+    assert first_sql < 40
+
+
+def test_unbinding_users_backfills_the_roster(client: TestClient) -> None:
+    """Users created while the roster was IdP-bound are placed when the bind is cleared."""
+    admin_auth = {"Authorization": f"Bearer {ADMIN_KEY}"}
+    bind = client.put(
+        "/api/auth-groups/users/idp-bind",
+        headers=admin_auth,
+        json={"idp_group_id": "g-users-backfill", "idp_group_name": "App Users"},
+    )
+    assert bind.status_code == 200, bind.text
+    try:
+        _token, user_id, _email = _user(client)
+    finally:
+        clear = client.put(
+            "/api/auth-groups/users/idp-bind",
+            headers=admin_auth,
+            json={"idp_group_id": None, "idp_group_name": None},
+        )
+    assert clear.status_code == 200, clear.text
+    members = client.get("/api/auth-groups/users/members", headers=admin_auth).json()
+    assert user_id in {m["user_id"] for m in members}
+
+
+def test_login_does_not_rebuild_rosters(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A user password login neither runs the roster rebuild nor a second verify."""
+    import memchentic.services.auth_groups as auth_groups_module
+
+    email = f"u-{uuid.uuid4().hex[:10]}@example.com"
+    password = "password-ok-12"
+    reg = client.post("/api/auth/register", json={"email": email, "password": password})
+    assert reg.status_code == 200, reg.text
+
+    async def fail(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("ensure_auth_groups ran on a request path")
+
+    monkeypatch.setattr(auth_groups_module, "ensure_auth_groups", fail)
+    resp = client.post("/api/auth/login", json={"email": email, "password": password})
+    assert resp.status_code == 200, resp.text
+    groups = client.get("/api/auth-groups", headers={"Authorization": f"Bearer {ADMIN_KEY}"})
+    assert groups.status_code == 200, groups.text

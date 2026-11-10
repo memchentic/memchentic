@@ -53,8 +53,8 @@ def test_startup_backfill_attributes_orphans(client: TestClient) -> None:
                 await session.commit()
                 # Replay the startup calls that run before the backfill.
                 await set_rls_context(session, user_id=None, is_admin=True)
-                await ensure_admin_user(session, settings)
-                await ensure_auth_groups(session, settings)
+                admin = await ensure_admin_user(session, settings)
+                await ensure_auth_groups(session, admin)
                 updated = await backfill_orphan_creators(session)
                 creator = await session.scalar(
                     text("SELECT created_by_user_id FROM memories WHERE id = :id"),

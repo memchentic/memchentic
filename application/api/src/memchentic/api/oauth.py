@@ -19,7 +19,7 @@ from memchentic.auth.providers import (
     authorization_server_metadata,
     protected_resource_metadata,
 )
-from memchentic.auth.rate_limit import check_rate_limit
+from memchentic.auth.rate_limit import check_rate_limit, client_ip
 from memchentic.auth.tokens import (
     ensure_signing_key,
     hash_token,
@@ -83,10 +83,6 @@ def validate_redirect_uri(uri: str) -> str:
             )
         return uri
     raise HTTPException(400, f"Invalid redirect_uri: scheme {scheme!r} is not allowed")
-
-
-def _client_ip(request: Request) -> str:
-    return request.client.host if request.client else "unknown"
 
 
 # ``path`` is bound by the "/{path:path}" route variant and is not used.
@@ -303,7 +299,7 @@ async def authorize_post(
 ) -> RedirectResponse | HTMLResponse:
     """Authenticate the user and redirect back to the client with a one-time code."""
     _require_internal_provider()
-    check_rate_limit(f"authorize:{_client_ip(request)}", limit=20, window_seconds=60)
+    check_rate_limit(f"authorize:{client_ip(request)}", limit=20, window_seconds=60)
     cookie_csrf = request.cookies.get(_OAUTH_CSRF_COOKIE, "")
     if not csrf_token or not cookie_csrf or not secrets.compare_digest(csrf_token, cookie_csrf):
         raise HTTPException(400, "Invalid CSRF token")
@@ -387,7 +383,7 @@ async def token_endpoint(
     refresh_token: str | None = Form(None),
     session: AsyncSession = Depends(db_session),
 ) -> JSONResponse:
-    check_rate_limit(f"token:{_client_ip(request)}", limit=20, window_seconds=60)
+    check_rate_limit(f"token:{client_ip(request)}", limit=20, window_seconds=60)
     settings = get_settings()
     if grant_type == "authorization_code":
         if not code or not client_id:

@@ -73,3 +73,17 @@ def test_logout_revokes_session(client: TestClient) -> None:
     out = client.post("/api/auth/logout", headers={**GUI, "Cookie": f"memchentic_session={cookie}"})
     assert out.status_code == 200
     assert _refresh(client, cookie).status_code == 401
+
+
+def test_refresh_is_rate_limited_per_client(client: TestClient) -> None:
+    statuses = [
+        client.post(
+            "/api/auth/refresh",
+            headers={**GUI, "Cookie": "memchentic_session=not-a-real-session"},
+        ).status_code
+        for _ in range(125)
+    ]
+    assert statuses[0] == 401
+    assert statuses[119] == 401
+    assert statuses[120] == 429
+    assert statuses[-1] == 429

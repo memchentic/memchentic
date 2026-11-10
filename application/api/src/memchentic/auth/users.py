@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import functools
 import uuid
 from collections.abc import Collection
@@ -36,6 +37,11 @@ def _dummy_hash(rounds: int) -> str:
 def _missing_user_dummy_hash() -> str:
     """Return the timing-pad hash for the current work factor."""
     return _dummy_hash(passwords.BCRYPT_ROUNDS)
+
+
+def _verify_against_dummy(password: str) -> bool:
+    """Spend one verify on the timing-pad hash (call in a worker thread)."""
+    return verify_password(password, _missing_user_dummy_hash())
 
 
 def normalize_email(email: str) -> str:
@@ -198,10 +204,12 @@ async def register_internal_user(
     existing = await get_user_by_email(session, email_n)
     if existing:
         raise ValueError("Email already registered")
+    # bcrypt is CPU-bound: run it off the event loop.
+    password_hash = await asyncio.to_thread(hash_password, password)
     user = User(
         id=uuid.uuid4(),
         email=email_n,
-        password_hash=hash_password(password),
+        password_hash=password_hash,
         provider="internal",
         provider_subject=email_n,
         display_name=display_name or email_n.split("@")[0],
@@ -234,13 +242,13 @@ async def authenticate_internal(session: AsyncSession, *, email: str, password: 
     try:
         email_n = normalize_email(email)
     except ValueError:
-        verify_password(password, _missing_user_dummy_hash())
+        await asyncio.to_thread(_verify_against_dummy, password)
         return None
     user = await get_user_by_email(session, email_n)
     if not user or not user.password_hash:
-        verify_password(password, _missing_user_dummy_hash())
+        await asyncio.to_thread(_verify_against_dummy, password)
         return None
-    if not verify_password(password, user.password_hash):
+    if not await asyncio.to_thread(verify_password, password, user.password_hash):
         return None
     await _ensure_identity(session, user, provider="internal", subject=email_n)
     user.provider = "internal"
@@ -369,7 +377,7 @@ async def ensure_admin_user(
         user = User(
             id=uuid.uuid4(),
             email=email_n,
-            password_hash=hash_password(settings.admin_password),
+            password_hash=await asyncio.to_thread(hash_password, settings.admin_password),
             provider="internal",
             provider_subject=email_n,
             display_name=display,
@@ -380,9 +388,11 @@ async def ensure_admin_user(
         if (
             not user.password_hash
             or password_needs_rehash(user.password_hash)
-            or not verify_password(settings.admin_password, user.password_hash)
+            or not await asyncio.to_thread(
+                verify_password, settings.admin_password, user.password_hash
+            )
         ):
-            user.password_hash = hash_password(settings.admin_password)
+            user.password_hash = await asyncio.to_thread(hash_password, settings.admin_password)
         if user.display_name != display:
             user.display_name = display
     await _ensure_identity(session, user, provider="internal", subject=email_n)

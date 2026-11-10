@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import time
 import uuid
@@ -14,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from memchentic.auth.passwords import password_too_long
 from memchentic.auth.principal import Principal, check_admin_password, resolve_bearer
-from memchentic.auth.rate_limit import check_rate_limit
+from memchentic.auth.rate_limit import check_rate_limit, client_ip
 from memchentic.auth.sessions import (
     SESSION_COOKIE,
     SESSION_COOKIE_PATH,
@@ -90,8 +91,8 @@ class RegisterIn(BaseModel):
 
 
 class LoginIn(BaseModel):
-    email: EmailText
-    password: str = Field(max_length=limits.PASSWORD_INPUT_MAX)
+    email: str = Field(min_length=1, max_length=limits.EMAIL_MAX)
+    password: str = Field(min_length=1, max_length=limits.PASSWORD_INPUT_MAX)
     remember: bool = False
 
 
@@ -293,7 +294,7 @@ async def register(
     principal: Principal | None = Depends(get_optional_principal),
 ) -> dict:
     settings = get_settings()
-    ip = request.client.host if request.client else "unknown"
+    ip = client_ip(request)
     check_rate_limit(f"register:{ip}", limit=10, window_seconds=60)
     if settings.oauth_provider != "internal":
         raise HTTPException(400, "Registration only in internal mode")
@@ -363,14 +364,18 @@ async def login(
     session: AsyncSession = Depends(db_session),
 ) -> dict:
     settings = get_settings()
-    ip = request.client.host if request.client else "unknown"
-    check_rate_limit(f"login:{ip}:{body.email.casefold()}", limit=20, window_seconds=60)
+    ip = client_ip(request)
+    # Per-client cap first: a new email must not give a new allowance.
+    check_rate_limit(f"login-ip:{ip}", limit=60, window_seconds=60)
+    # Per-account cap. Same normalisation as the account lookup
+    # (normalize_email: strip + casefold). Hashed so the key has a fixed size.
+    email_key = hashlib.sha256(body.email.strip().casefold().encode("utf-8", "replace")).hexdigest()
+    check_rate_limit(f"login:{ip}:{email_key}", limit=20, window_seconds=60)
     # Prefer a real DB user when email+password match; break-glass is fallback.
     user = await authenticate_internal(session, email=body.email, password=body.password)
     if user:
-        from memchentic.services.auth_groups import ensure_auth_groups, user_is_administrator
+        from memchentic.services.auth_groups import user_is_administrator
 
-        await ensure_auth_groups(session, settings)
         subject, email, provider, user_id = str(user.id), user.email, user.provider, user.id
         extra = {
             "is_admin": await user_is_administrator(session, user.id),
@@ -383,7 +388,7 @@ async def login(
         from memchentic.services.auth_groups import ensure_auth_groups
 
         admin = await ensure_admin_user(session, settings)
-        await ensure_auth_groups(session, settings)
+        await ensure_auth_groups(session, admin)
         subject, email, provider, user_id = (
             str(admin.id),
             admin.email,
@@ -424,6 +429,11 @@ async def refresh_session(
         session is missing, revoked, or expired.
     """
     _require_gui_header(request)
+    ip = client_ip(request)
+    # The GUI refreshes once per page load and once per stream reconnect.
+    # 120 per minute per client address leaves room for many users behind
+    # one address and still bounds an anonymous loop.
+    check_rate_limit(f"refresh:{ip}", limit=120, window_seconds=60)
     raw = request.cookies.get(SESSION_COOKIE)
     row = await touch_session(session, raw, get_settings()) if raw else None
     if not raw or row is None:

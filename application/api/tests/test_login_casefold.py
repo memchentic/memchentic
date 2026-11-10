@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import uuid
 from types import SimpleNamespace
 
@@ -44,3 +45,40 @@ async def test_internal_login_email_is_case_insensitive(session: AsyncSession) -
         await authenticate_internal(session, email=f"CASE-{suffix}@EXAMPLE.com", password="wrong")
         is None
     )
+
+
+async def test_password_hashing_runs_off_the_event_loop(
+    session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """bcrypt must not block the event loop thread."""
+    import memchentic.auth.users as users_module
+
+    loop_thread = threading.get_ident()
+    calls: list[tuple[str, int]] = []
+    real_hash = users_module.hash_password
+    real_verify = users_module.verify_password
+
+    def spy_hash(password: str) -> str:
+        calls.append(("hash", threading.get_ident()))
+        return real_hash(password)
+
+    def spy_verify(password: str, password_hash: str) -> bool:
+        calls.append(("verify", threading.get_ident()))
+        return real_verify(password, password_hash)
+
+    monkeypatch.setattr(users_module, "hash_password", spy_hash)
+    monkeypatch.setattr(users_module, "verify_password", spy_verify)
+
+    email = f"thread-{uuid.uuid4().hex[:10]}@example.com"
+    await register_internal_user(session, email=email, password="password-ok-12")
+    assert await authenticate_internal(session, email=email, password="password-ok-12")
+    assert await authenticate_internal(session, email=email, password="wrong") is None
+    assert (
+        await authenticate_internal(
+            session, email=f"missing-{uuid.uuid4().hex}@example.com", password="x"
+        )
+        is None
+    )
+
+    assert [name for name, _ in calls] == ["hash", "verify", "verify", "verify"]
+    assert all(thread != loop_thread for _, thread in calls)

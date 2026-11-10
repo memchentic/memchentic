@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   Area,
   AreaChart,
@@ -148,19 +148,24 @@ export default function MetricsPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const loadSeq = useRef(0);
   const load = useCallback(async () => {
+    // Only the newest request may write state; an older, slower response is dropped.
+    const seq = ++loadSeq.current;
     setLoading(true);
     try {
       const qs = new URLSearchParams({ range });
       if (spaceScope) qs.set("space_scope", spaceScope);
       const payload = await api<MemoryMetrics>(`/api/metrics/memories?${qs}`);
+      if (seq !== loadSeq.current) return;
       setData(payload);
       setError(null);
     } catch (err) {
+      if (seq !== loadSeq.current) return;
       setError(err instanceof Error ? err.message : String(err));
       setData(null);
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
   }, [range, spaceScope]);
 

@@ -233,7 +233,13 @@ async def me_payload(
         "provider": principal.provider,
         "is_admin": principal.is_admin,
         "personal_space_id": str(personal.id) if personal else None,
-        "memberships": [space_to_dict(s) for s in spaces],
+        "memberships": [
+            {
+                **space_to_dict(s),
+                "created_by": str(s.created_by_user_id) if s.created_by_user_id else None,
+            }
+            for s in spaces
+        ],
     }
     if invite_details:
         payload["pending_invites"] = invites

@@ -9,7 +9,14 @@ import { ComposerReveal, ErrorNote, NewToggleButton, PageHeader } from "../compo
 type Space = { id: string; name: string; kind: string };
 type SpaceDetail = Space & {
   created_by: string | null;
-  members: { user_id: string; email: string | null; display_name: string | null }[];
+  // `pending` is true for an invitation that is not accepted yet (SEC-001);
+  // only administrators receive such rows.
+  members: {
+    user_id: string;
+    email: string | null;
+    display_name: string | null;
+    pending?: boolean;
+  }[];
 };
 
 export default function GroupsPage() {
@@ -18,6 +25,8 @@ export default function GroupsPage() {
   const [groups, setGroups] = useState<SpaceDetail[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
+  // False until the first load attempt has finished.
+  const [loaded, setLoaded] = useState(false);
   const invites = me?.pending_invites ?? [];
 
   const load = useCallback(async () => {
@@ -30,6 +39,8 @@ export default function GroupsPage() {
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoaded(true);
     }
   }, []);
 
@@ -142,11 +153,13 @@ export default function GroupsPage() {
               }
             >
               <option value="">None</option>
-              {groups.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
+              {groups
+                .filter((t) => t.members.some((m) => m.user_id === me.id && !m.pending))
+                .map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
             </select>
             <span className="text-xs text-faint">
               Agents writing with visibility=shared and no group name land here.
@@ -154,7 +167,11 @@ export default function GroupsPage() {
           </label>
         )}
         {!groups.length ? (
-          <p className="text-sm text-faint">You are not on any groups. Your personal space is always private.</p>
+          <p className="text-sm text-faint">
+            {loaded
+              ? "You are not on any groups. Your personal space is always private."
+              : "Loading…"}
+          </p>
         ) : (
           <div className="panel overflow-x-auto">
             <table className="data-table">
@@ -215,14 +232,21 @@ function NewGroup({
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  const [busy, setBusy] = useState(false);
+
   async function submit(e: FormEvent) {
     e.preventDefault();
+    const trimmed = name.trim();
+    if (busy || !trimmed) return;
+    setBusy(true);
     try {
-      await api("/api/spaces", { method: "POST", body: JSON.stringify({ name }) });
+      await api("/api/spaces", { method: "POST", body: JSON.stringify({ name: trimmed }) });
       await refresh();
       onCreated();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -259,6 +283,7 @@ function NewGroup({
           type="submit"
           title="Save"
           aria-label="Save"
+          disabled={busy || !name.trim()}
         >
           <FontAwesomeIcon icon={faFloppyDisk} />
         </button>

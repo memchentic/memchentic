@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useAuth } from "./auth";
 import Layout from "./components/Layout";
 import ApiKeysPage from "./pages/ApiKeysPage";
@@ -14,6 +14,7 @@ import UsersPage from "./pages/UsersPage";
 
 function Private({ children }: { children: React.ReactNode }) {
   const { me, loading } = useAuth();
+  const location = useLocation();
   if (loading) {
     return (
       <div className="centered-panel">
@@ -21,7 +22,11 @@ function Private({ children }: { children: React.ReactNode }) {
       </div>
     );
   }
-  if (!me) return <Navigate to="/sign-in" replace />;
+  if (!me) {
+    // Remember the requested page; SignInPage returns there after sign-in.
+    const from = `${location.pathname}${location.search}`;
+    return <Navigate to="/sign-in" replace state={{ from }} />;
+  }
   return <>{children}</>;
 }
 

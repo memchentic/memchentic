@@ -1,4 +1,4 @@
-import { getToken, refreshAccessToken } from "./api";
+import { getToken, refreshSession } from "./api";
 import {
   isUnrestrictedTypes,
   type MemoryRow,
@@ -6,6 +6,7 @@ import {
   type SpaceScope,
 } from "./components/ui";
 
+/** Wire shape of one SSE `memory` event (`MemoryEvent` in `events/memory_bus.py`). */
 export type MemoryLiveEvent = {
   action: "created" | "updated" | "deleted";
   id: string;
@@ -17,8 +18,6 @@ export type MemoryLiveEvent = {
   snippet?: string;
   confidence?: number | null;
   created_by?: string | null;
-  created_by_email?: string | null;
-  created_by_display_name?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 };
@@ -27,6 +26,20 @@ type MembershipLite = { id: string; kind: string };
 
 const SAFETY_POLL_MS = 30_000;
 
+/**
+ * Delay before reconnect attempt `attempt` (0-based): 1 s, doubling up to a
+ * 30 s cap, scaled by a random factor between 0.5 and 1 so tabs do not
+ * reconnect in step.
+ */
+export function reconnectDelayMs(attempt: number, random: () => number = Math.random): number {
+  const base = Math.min(30_000, 1_000 * 2 ** Math.max(0, attempt));
+  return Math.round(base * (0.5 + random() / 2));
+}
+
+/**
+ * Row fields carried by a live event. Creator names are not part of the
+ * event, so they are left out and survive the merge in `applyMemoryEvent`.
+ */
 function eventToRow(event: MemoryLiveEvent): MemoryRow {
   return {
     id: event.id,
@@ -38,8 +51,6 @@ function eventToRow(event: MemoryLiveEvent): MemoryRow {
     snippet: event.snippet,
     confidence: event.confidence ?? undefined,
     created_by: event.created_by,
-    created_by_email: event.created_by_email,
-    created_by_display_name: event.created_by_display_name,
     created_at: event.created_at,
     updated_at: event.updated_at,
   };
@@ -140,12 +151,14 @@ export function startMemoryLive(handlers: LiveHandlers): () => void {
     }
   };
 
+  let attempt = 0;
   const scheduleReconnect = () => {
     if (disposed) return;
     clearReconnect();
     reconnectTimer = setTimeout(() => {
       void runStream();
-    }, 2000);
+    }, reconnectDelayMs(attempt));
+    attempt += 1;
   };
 
   async function runStream() {
@@ -154,8 +167,11 @@ export function startMemoryLive(handlers: LiveHandlers): () => void {
     abort = new AbortController();
     let token = getToken();
     if (!token) {
-      const ok = await refreshAccessToken();
-      if (!ok || disposed) {
+      const outcome = await refreshSession();
+      // "denied": the session is gone and api.ts has told the auth provider.
+      // Stop; the page unmounts when the user is sent to /sign-in.
+      if (disposed || outcome === "denied") return;
+      if (outcome !== "ok") {
         scheduleReconnect();
         return;
       }
@@ -173,14 +189,16 @@ export function startMemoryLive(handlers: LiveHandlers): () => void {
         signal: abort.signal,
       });
       if (res.status === 401) {
-        await refreshAccessToken();
-        scheduleReconnect();
+        const outcome = await refreshSession();
+        if (outcome !== "denied") scheduleReconnect();
         return;
       }
       if (!res.ok || !res.body) {
         scheduleReconnect();
         return;
       }
+      // Connected: the next failure starts the backoff from 1 s again.
+      attempt = 0;
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";

@@ -115,7 +115,7 @@ async def me() -> dict[str, Any]:
     subject, email, display_name, provider, is_admin, personal_space_id,
     default_shared_space_id (the group that ``visibility="shared"`` writes to,
     or null), memberships (the spaces you are a member of, each
-    {id, name, kind}; kind is "personal" or "group") and pending_invite_count
+    {id, name, kind, created_by}; kind is "personal" or "group") and pending_invite_count
     (group invitations you have not accepted; the user accepts or declines
     them in the web UI). An admin can read spaces that are not listed in
     memberships.

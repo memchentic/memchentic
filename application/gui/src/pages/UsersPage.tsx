@@ -23,6 +23,8 @@ export default function UsersPage() {
   const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [canCreate, setCanCreate] = useState(false);
+  // False until the first load attempt has finished.
+  const [loaded, setLoaded] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -30,6 +32,8 @@ export default function UsersPage() {
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoaded(true);
     }
   }, []);
 
@@ -146,6 +150,13 @@ export default function UsersPage() {
                   )}
                 </tr>
               ))}
+              {!users.length ? (
+                <tr>
+                  <td colSpan={me?.is_admin ? 5 : 2} className="text-muted">
+                    {loaded ? "No users." : "Loading…"}
+                  </td>
+                </tr>
+              ) : null}
             </tbody>
           </table>
         </div>
@@ -166,8 +177,12 @@ function NewUser({
   const [displayName, setDisplayName] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  const [busy, setBusy] = useState(false);
+
   async function submit(e: FormEvent) {
     e.preventDefault();
+    if (busy) return;
+    setBusy(true);
     try {
       await api("/api/auth/register", {
         method: "POST",
@@ -180,6 +195,8 @@ function NewUser({
       onCreated();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -239,6 +256,7 @@ function NewUser({
           type="submit"
           title="Save"
           aria-label="Save"
+          disabled={busy}
         >
           <FontAwesomeIcon icon={faFloppyDisk} />
         </button>

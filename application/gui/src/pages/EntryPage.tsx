@@ -3,12 +3,31 @@ import { faFloppyDisk, faPen, faTrash, faXmark } from "@fortawesome/free-solid-s
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
-import { ENTRY_TYPES, ErrorNote, PageHeader, useSpaceName, type MemoryRow } from "../components/ui";
+import { useAuth } from "../auth";
+import {
+  ENTRY_TYPES,
+  ErrorNote,
+  PageHeader,
+  canForgetMemory,
+  useSpaceName,
+  type MemoryRow,
+} from "../components/ui";
+
+/** Edit-form values for a memory row. */
+function draftFromRow(row: MemoryRow) {
+  return {
+    title: row.title,
+    body: row.body ?? "",
+    type: row.type ?? "note",
+    tags: row.tags.join(", "),
+  };
+}
 
 export default function EntryPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const spaceName = useSpaceName();
+  const { me } = useAuth();
   const [m, setM] = useState<MemoryRow | null>(null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState({ title: "", body: "", type: "note", tags: "" });
@@ -18,12 +37,16 @@ export default function EntryPage() {
     api<MemoryRow>(`/api/memories/${id}`)
       .then((row) => {
         setM(row);
-        setDraft({ title: row.title, body: row.body ?? "", type: row.type ?? "note", tags: row.tags.join(", ") });
+        setDraft(draftFromRow(row));
       })
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
   }, [id]);
 
+  const [saving, setSaving] = useState(false);
+
   async function save() {
+    if (saving) return;
+    setSaving(true);
     try {
       const row = await api<MemoryRow>(`/api/memories/${id}`, {
         method: "PATCH",
@@ -39,6 +62,8 @@ export default function EntryPage() {
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -73,6 +98,7 @@ export default function EntryPage() {
               type="button"
               title="Save"
               aria-label="Save"
+              disabled={saving}
               onClick={() => void save()}
             >
               <FontAwesomeIcon icon={faFloppyDisk} />
@@ -89,31 +115,39 @@ export default function EntryPage() {
           </>
         ) : (
           <>
-            <button
-              className="btn"
-              type="button"
-              title="Revise"
-              aria-label="Revise"
-              onClick={() => setEditing(true)}
-            >
-              <FontAwesomeIcon icon={faPen} />
-            </button>
-            <button
-              className="btn"
-              type="button"
-              title="Forget"
-              aria-label="Forget"
-              onClick={() => void forget()}
-            >
-              <FontAwesomeIcon icon={faTrash} />
-            </button>
+            {canForgetMemory(m, me) ? (
+              <button
+                className="btn"
+                type="button"
+                title="Revise"
+                aria-label="Revise"
+                onClick={() => {
+                  // Start every edit from the saved memory, not from an abandoned draft.
+                  setDraft(draftFromRow(m));
+                  setEditing(true);
+                }}
+              >
+                <FontAwesomeIcon icon={faPen} />
+              </button>
+            ) : null}
+            {canForgetMemory(m, me) ? (
+              <button
+                className="btn"
+                type="button"
+                title="Forget"
+                aria-label="Forget"
+                onClick={() => void forget()}
+              >
+                <FontAwesomeIcon icon={faTrash} />
+              </button>
+            ) : null}
           </>
         )}
       </PageHeader>
       <div className="page-body">
         <ErrorNote error={error} />
         <p className="mb-4 text-xs text-faint">
-          {m.kind === "guide" ? `guide · confidence ${m.confidence}` : m.type} · {spaceName(m.space_id)} · updated{" "}
+          {m.kind === "guide" ? `guide · confidence ${m.confidence}` : m.type} · {spaceName(m.space_id) || "—"} · updated{" "}
           {m.updated_at ? new Date(m.updated_at).toLocaleString() : "—"}
           {m.path_hint && ` · ${m.path_hint}`}
         </p>

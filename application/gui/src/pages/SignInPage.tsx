@@ -14,10 +14,12 @@ import {
 } from "@fortawesome/free-solid-svg-icons";
 import type { IconDefinition } from "@fortawesome/fontawesome-svg-core";
 import { useEffect, useState, type FormEvent } from "react";
-import { Navigate, useSearchParams } from "react-router-dom";
+import { Navigate, useLocation, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
+import { safeReturnPath } from "../returnPath";
 import { formatDocumentTitle } from "../documentTitle";
+import { oauthErrorMessage } from "../oauthErrors";
 
 type Provider = {
   oauth_provider: string;
@@ -54,6 +56,7 @@ function providerIcon(name: string): IconDefinition {
 export default function SignInPage() {
   const { me, login, register } = useAuth();
   const [searchParams] = useSearchParams();
+  const location = useLocation();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -68,8 +71,8 @@ export default function SignInPage() {
   }, []);
 
   useEffect(() => {
-    const oauthError = searchParams.get("error");
-    if (oauthError) setError(oauthError);
+    const message = oauthErrorMessage(searchParams.get("error"));
+    if (message) setError(message);
   }, [searchParams]);
 
   useEffect(() => {
@@ -84,7 +87,7 @@ export default function SignInPage() {
     );
   }, [mode, provider]);
 
-  if (me) return <Navigate to="/" replace />;
+  if (me) return <Navigate to={safeReturnPath(location.state)} replace />;
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -101,7 +104,8 @@ export default function SignInPage() {
   }
 
   const internal = !provider || provider.oauth_provider === "internal";
-  const registerEnabled = provider?.register_enabled !== false;
+  // Offer registration only after /api/provider has confirmed it is enabled.
+  const registerEnabled = provider?.register_enabled === true;
   const webOauth = Boolean(provider?.web_oauth) && mode === "login";
   const oauthName = provider?.oauth_provider || "generic";
   const oauthLabel = provider?.oauth_label || oauthName;

@@ -298,7 +298,11 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
         expose_headers=["WWW-Authenticate", "Mcp-Session-Id"],
     )
-    app.add_middleware(SecurityHeadersMiddleware, hsts=settings.base_url.startswith("https://"))
+    app.add_middleware(
+        SecurityHeadersMiddleware,
+        hsts=settings.base_url.startswith("https://"),
+        docs_paths=("/docs", "/redoc") if docs_on else (),
+    )
 
     @app.exception_handler(ServiceError)
     async def service_error(_request: Request, exc: ServiceError) -> JSONResponse:

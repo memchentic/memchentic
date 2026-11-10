@@ -10,7 +10,8 @@ import {
 } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api";
-import { useAuth } from "../auth";
+import { spaceLabel, useAuth, writableSpaces } from "../auth";
+import type { Me } from "../auth";
 import { formatDocumentTitle } from "../documentTitle";
 
 /** Matches `--duration-exit` in index.css. */
@@ -145,6 +146,25 @@ export function formatMemoryOwner(
   }
   if (row.created_by) return row.created_by.slice(0, 8);
   return "—";
+}
+
+/**
+ * Whether to offer Forget (and, on the entry page, Revise) for a memory.
+ * Mirrors the server rule (`require_memory_manage`): administrators, the
+ * memory's creator, and the creator of the memory's space may manage it.
+ */
+export function canForgetMemory(
+  row: Pick<MemoryRow, "space_id" | "created_by">,
+  me: Me | null,
+): boolean {
+  if (!me) return false;
+  if (me.is_admin) return true;
+  if (row.created_by && row.created_by === me.id) return true;
+  const space = me.memberships.find((s) => s.id === row.space_id);
+  // Unknown space, or a server that does not report `created_by` yet: keep
+  // the button and let the server decide.
+  if (!space || space.created_by === undefined) return true;
+  return space.created_by !== null && space.created_by === me.id;
 }
 
 export const ENTRY_TYPES = [
@@ -341,9 +361,20 @@ export function SpaceSelect({
   onChange: (v: string) => void;
 }) {
   const { me } = useAuth();
+  const options = writableSpaces(me);
+  // `value` is not one of the options in two cases, and each gets one extra
+  // option that carries `value` itself, so the label and the request agree.
+  // "": `NewMemory.submit` sends `space_id: null` and the server writes to
+  // the caller's personal space, so the option is labelled "Personal".
+  // Any other value is a space the caller can no longer write to: it is sent
+  // unchanged and the server refuses it, so the option says so.
+  const known = options.some((s) => s.id === value);
   return (
     <select className="input w-auto" value={value} onChange={(e) => onChange(e.target.value)}>
-      {me?.memberships.map((s) => (
+      {known ? null : (
+        <option value={value}>{value ? "Unavailable space" : "Personal"}</option>
+      )}
+      {options.map((s) => (
         <option key={s.id} value={s.id}>
           {s.kind === "personal" ? "Personal" : s.name}
         </option>
@@ -354,11 +385,7 @@ export function SpaceSelect({
 
 export function useSpaceName() {
   const { me } = useAuth();
-  return (id?: string) => {
-    const s = me?.memberships.find((m) => m.id === id);
-    if (!s) return "";
-    return s.kind === "personal" ? "Personal" : s.name;
-  };
+  return (id?: string) => spaceLabel(me, id);
 }
 
 function formatWhen(value?: string | null): string {
@@ -499,16 +526,18 @@ export function MemoryList({
                   </td>
                 ) : null}
                 <td className="memory-actions-col">
-                  <button
-                    className="btn memory-row-forget"
-                    type="button"
-                    title="Forget"
-                    aria-label={`Forget ${m.title}`}
-                    disabled={forgettingId === m.id}
-                    onClick={(e) => void forgetRow(e, m.id)}
-                  >
-                    <FontAwesomeIcon icon={faTrash} />
-                  </button>
+                  {canForgetMemory(m, me) ? (
+                    <button
+                      className="btn memory-row-forget"
+                      type="button"
+                      title="Forget"
+                      aria-label={`Forget ${m.title}`}
+                      disabled={forgettingId === m.id}
+                      onClick={(e) => void forgetRow(e, m.id)}
+                    >
+                      <FontAwesomeIcon icon={faTrash} />
+                    </button>
+                  ) : null}
                 </td>
               </tr>
             );

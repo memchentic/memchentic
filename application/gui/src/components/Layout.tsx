@@ -96,7 +96,11 @@ function UserMenu() {
             type="button"
             onClick={() => {
               setOpen(false);
-              void logout();
+              logout().catch(() => {
+                alert(
+                  "Sign-out failed: the server did not confirm it, so this browser is still signed in. Try again.",
+                );
+              });
             }}
           >
             <FontAwesomeIcon icon={faRightFromBracket} className="opacity-70" />

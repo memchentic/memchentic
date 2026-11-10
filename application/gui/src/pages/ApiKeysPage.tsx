@@ -1,8 +1,9 @@
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faCheck, faCopy, faRotate } from "@fortawesome/free-solid-svg-icons";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
+import { copyText } from "../clipboard";
 import { ErrorNote, PageHeader } from "../components/ui";
 
 type Key = {
@@ -29,7 +30,26 @@ export default function ApiKeysPage() {
   const [error, setError] = useState<string | null>(null);
   const [busyUserId, setBusyUserId] = useState<string | null>(null);
   const [mcpUrl, setMcpUrl] = useState("");
+  // False until the first load attempt has finished.
+  const [loaded, setLoaded] = useState(false);
   const isAdmin = Boolean(me?.is_admin);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const secretInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    // A new secret (or dismissing it) resets the copy feedback.
+    setCopyState("idle");
+  }, [secret]);
+
+  async function copySecret(text: string) {
+    if (await copyText(text)) {
+      setCopyState("copied");
+      return;
+    }
+    setCopyState("failed");
+    secretInputRef.current?.focus();
+    secretInputRef.current?.select();
+  }
 
   const load = useCallback(async () => {
     try {
@@ -41,6 +61,8 @@ export default function ApiKeysPage() {
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoaded(true);
     }
   }, [isAdmin]);
 
@@ -125,15 +147,20 @@ export default function ApiKeysPage() {
               {secret.user_id !== me?.id ? " (issued for another user)" : ""}.
             </p>
             <div className="flex items-center gap-2">
-              <code className="flex-1 break-all border border-border bg-surface px-3 py-2 text-sm text-ink">
-                {secret.key}
-              </code>
+              <input
+                ref={secretInputRef}
+                readOnly
+                className="input flex-1 font-mono text-sm"
+                value={secret.key}
+                aria-label="New API key"
+                onFocus={(e) => e.currentTarget.select()}
+              />
               <button
                 className="btn"
                 type="button"
                 title="Copy"
                 aria-label="Copy"
-                onClick={() => void navigator.clipboard?.writeText(secret.key)}
+                onClick={() => void copySecret(secret.key)}
               >
                 <FontAwesomeIcon icon={faCopy} />
               </button>
@@ -147,6 +174,13 @@ export default function ApiKeysPage() {
                 <FontAwesomeIcon icon={faCheck} />
               </button>
             </div>
+            <p className="mt-2 text-xs text-faint" role="status">
+              {copyState === "copied"
+                ? "Copied to the clipboard."
+                : copyState === "failed"
+                  ? "Copy failed. The key is selected: press Ctrl+C (Cmd+C on macOS)."
+                  : ""}
+            </p>
           </div>
         ) : null}
 
@@ -165,7 +199,9 @@ export default function ApiKeysPage() {
                     </span>
                   </p>
                 ) : (
-                  <p className="mt-1 text-sm text-faint">No active key yet.</p>
+                  <p className="mt-1 text-sm text-faint">
+                    {loaded ? "No active key yet." : "Loading…"}
+                  </p>
                 )}
               </div>
               <button
@@ -233,7 +269,7 @@ export default function ApiKeysPage() {
                   {!users.length && (
                     <tr>
                       <td className="text-sm text-faint" colSpan={4}>
-                        No users yet.
+                        {loaded ? "No users yet." : "Loading…"}
                       </td>
                     </tr>
                   )}

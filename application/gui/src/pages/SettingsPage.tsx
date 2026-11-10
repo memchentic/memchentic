@@ -10,7 +10,7 @@ import {
   faUsers,
   faXmark,
 } from "@fortawesome/free-solid-svg-icons";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
@@ -188,13 +188,22 @@ function RegistrationPanel() {
 
 function AuthGroupsPanel() {
   const navigate = useNavigate();
+  const { refresh } = useAuth();
   const [groups, setGroups] = useState<AuthGroup[]>([]);
   const [slug, setSlug] = useState<string>("administrators");
   const [members, setMembers] = useState<AuthMember[]>([]);
+  // Slug that the `members` rows belong to; null until the first roster has loaded.
+  const [membersSlug, setMembersSlug] = useState<string | null>(null);
+  const slugRef = useRef(slug);
+  slugRef.current = slug;
   const [idpCatalog, setIdpCatalog] = useState<IdpGroupsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [bindBusy, setBindBusy] = useState(false);
+  // Value picked in the "Bound IdP group" select but not applied yet; null
+  // means "show the value stored on the server".
+  const [bindDraft, setBindDraft] = useState<string | null>(null);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
 
   const loadGroups = useCallback(async () => {
     const rows = await api<AuthGroup[]>("/api/auth-groups");
@@ -207,31 +216,47 @@ function AuthGroupsPanel() {
   const loadMembers = useCallback(async () => {
     if (!slug) return;
     const rows = await api<AuthMember[]>(`/api/auth-groups/${slug}/members`);
+    // Drop the answer when another group was selected while it was in flight.
+    if (slugRef.current !== slug) return;
     setMembers(rows);
+    setMembersSlug(slug);
   }, [slug]);
-
-  const loadIdpCatalog = useCallback(async () => {
-    const catalog = await api<IdpGroupsResponse>("/api/auth-groups/idp-groups");
-    setIdpCatalog(catalog);
-  }, []);
 
   const reload = useCallback(async () => {
     try {
       await loadGroups();
       await loadMembers();
-      await loadIdpCatalog();
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [loadGroups, loadMembers, loadIdpCatalog]);
+  }, [loadGroups, loadMembers]);
 
   useEffect(() => {
     void reload();
   }, [reload]);
 
+  useEffect(() => {
+    // The IdP directory is an external call: fetch it once per panel mount,
+    // not on every roster reload.
+    let cancelled = false;
+    api<IdpGroupsResponse>("/api/auth-groups/idp-groups")
+      .then((catalog) => {
+        if (!cancelled) setIdpCatalog(catalog);
+      })
+      .catch((err) => {
+        if (!cancelled) setCatalogError(err instanceof Error ? err.message : String(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const active = groups.find((g) => g.slug === slug) ?? null;
   const rosterBound = Boolean(active?.roster_bound);
+  // Show a roster only under the heading of the group it was loaded for.
+  const membersReady = membersSlug === slug;
+  const visibleMembers = membersReady ? members : [];
 
   async function remove(userId: string, label: string) {
     if (!slug || rosterBound) return;
@@ -239,7 +264,7 @@ function AuthGroupsPanel() {
     if (!confirm(`Remove ${label} from ${groupLabel}?`)) return;
     try {
       await api(`/api/auth-groups/${slug}/members/${userId}`, { method: "DELETE" });
-      await reload();
+      await Promise.all([reload(), refresh()]);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -265,6 +290,7 @@ function AuthGroupsPanel() {
         });
       }
       await reload();
+      setBindDraft(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -272,12 +298,26 @@ function AuthGroupsPanel() {
     }
   }
 
+  const boundId = active?.idp_group_id || "";
+  const bindValue = bindDraft ?? boundId;
+  const bindDirty = bindValue !== boundId;
+
+  function applyBind() {
+    if (!active || !bindDirty) return;
+    const target = idpCatalog?.groups.find((g) => g.id === bindValue)?.name || bindValue;
+    const question = bindValue
+      ? `Bind ${active.name} to the IdP group "${target}"? Membership is then synced from the IdP at sign-in, and manual add and remove are disabled.`
+      : `Clear the IdP bind of ${active.name}? Membership becomes manual again.`;
+    if (!confirm(question)) return;
+    void setBind(bindValue);
+  }
+
   return (
     <div className="page-body settings-panel-body">
       <ErrorNote error={error} />
-      {idpCatalog?.error ? (
+      {idpCatalog?.error || catalogError ? (
         <p className="text-xs text-muted mb-3" role="status">
-          IdP groups: {idpCatalog.error}
+          IdP groups: {idpCatalog?.error || catalogError}
         </p>
       ) : null}
       <div className="settings-group-picker">
@@ -289,7 +329,10 @@ function AuthGroupsPanel() {
               key={g.slug}
               type="button"
               className={`settings-group-chip ${selected ? "settings-group-chip-active" : ""}`}
-              onClick={() => setSlug(g.slug)}
+              onClick={() => {
+                setSlug(g.slug);
+                setBindDraft(null);
+              }}
             >
               <FontAwesomeIcon icon={icon} className="opacity-70" />
               <span>{g.name}</span>
@@ -309,13 +352,19 @@ function AuthGroupsPanel() {
                   ? "Synced from IdP — clear bind to edit manually."
                   : "Fixed system roster — add or remove members only."}
               </p>
-              <label className="mt-3 block text-xs font-medium text-ink">
+              <label
+                className="mt-3 block text-xs font-medium text-ink"
+                htmlFor="idp-bind-select"
+              >
                 Bound IdP group
+              </label>
+              <div className="mt-1 flex max-w-md items-center gap-2">
                 <select
-                  className="input mt-1 w-full max-w-md"
+                  id="idp-bind-select"
+                  className="input flex-1"
                   disabled={bindBusy}
-                  value={active.idp_group_id || ""}
-                  onChange={(e) => void setBind(e.target.value)}
+                  value={bindValue}
+                  onChange={(e) => setBindDraft(e.target.value)}
                 >
                   <option value="">None</option>
                   {(idpCatalog?.groups || []).map((g) => (
@@ -330,8 +379,23 @@ function AuthGroupsPanel() {
                     </option>
                   ) : null}
                 </select>
-              </label>
-              {!idpCatalog?.supports_groups ? (
+                <button
+                  className="btn"
+                  type="button"
+                  title="Apply bind"
+                  aria-label="Apply bind"
+                  disabled={bindBusy || !bindDirty}
+                  onClick={applyBind}
+                >
+                  <FontAwesomeIcon icon={faCheck} />
+                </button>
+              </div>
+              {bindDirty ? (
+                <p className="text-xs text-faint mt-1" role="status">
+                  Not applied yet. Select Apply bind to save.
+                </p>
+              ) : null}
+              {idpCatalog && !idpCatalog.supports_groups ? (
                 <p className="text-xs text-faint mt-1">
                   Current OAuth provider has no directory groups to bind.
                 </p>
@@ -359,7 +423,7 @@ function AuthGroupsPanel() {
                 </tr>
               </thead>
               <tbody>
-                {members.map((m) => (
+                {visibleMembers.map((m) => (
                   <tr
                     key={m.user_id}
                     className="cursor-pointer"
@@ -393,10 +457,10 @@ function AuthGroupsPanel() {
                     </td>
                   </tr>
                 ))}
-                {!members.length ? (
+                {!visibleMembers.length ? (
                   <tr>
                     <td colSpan={3} className="text-muted">
-                      No members yet.
+                      {membersReady ? "No members yet." : "Loading…"}
                     </td>
                   </tr>
                 ) : null}
@@ -406,9 +470,9 @@ function AuthGroupsPanel() {
           <AddAuthMembersModal
             open={addOpen && !rosterBound}
             slug={slug}
-            memberIds={new Set(members.map((m) => m.user_id))}
+            memberIds={new Set(visibleMembers.map((m) => m.user_id))}
             onClose={() => setAddOpen(false)}
-            onAdded={() => void reload()}
+            onAdded={() => void Promise.all([reload(), refresh()])}
           />
         </>
       )}
@@ -441,6 +505,8 @@ function AddAuthMembersModal({
     setLookupHit(null);
     setQuery("");
     setSelected(new Set());
+    setError(null);
+    setBusy(false);
     api<DirectoryUser[]>("/api/users")
       .then(setUsers)
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
@@ -506,25 +572,36 @@ function AddAuthMembersModal({
   }
 
   async function done() {
+    if (busy) return;
     if (!selected.size) {
       onClose();
       return;
     }
     setBusy(true);
     setError(null);
+    let added = 0;
     try {
       for (const userId of selected) {
         await api(`/api/auth-groups/${slug}/members`, {
           method: "POST",
           body: JSON.stringify({ user_id: userId }),
         });
+        added += 1;
+        // Drop the user from the selection so a retry after a later failure
+        // does not post them again.
+        setSelected((prev) => {
+          const next = new Set(prev);
+          next.delete(userId);
+          return next;
+        });
       }
-      onAdded();
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
+      // Refresh the roster even after a partial failure.
+      if (added > 0) onAdded();
     }
   }
 
@@ -553,6 +630,11 @@ function AddAuthMembersModal({
           autoFocus
         />
       </div>
+      <p className="px-4 pt-3 text-xs text-muted">
+        {slug === "administrators"
+          ? "A user is in one auth group only. Adding a user here removes them from Users."
+          : "A user is in one auth group only. Adding a user here removes them from Administrators."}
+      </p>
       {error ? (
         <div className="px-4 pt-3">
           <ErrorNote error={error} />

@@ -258,6 +258,9 @@ function AddMembersModal({
     setLookupHit(null);
     setQuery("");
     setSelected(new Set());
+    setError(null);
+    setNotice(null);
+    setBusy(false);
     api<DirectoryUser[]>("/api/users")
       .then(setUsers)
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
@@ -348,24 +351,36 @@ function AddMembersModal({
   }
 
   async function done() {
+    if (busy) return;
     if (!selected.size) {
       onClose();
       return;
     }
     setBusy(true);
     setError(null);
+    let added = 0;
     try {
       for (const userId of selected) {
         await api(`/api/spaces/${groupId}/members`, {
           method: "POST",
           body: JSON.stringify({ user_id: userId }),
         });
+        added += 1;
+        // Drop the user from the selection so a retry after a later failure
+        // does not post them again.
+        setSelected((prev) => {
+          const next = new Set(prev);
+          next.delete(userId);
+          return next;
+        });
       }
-      onAdded();
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
       setBusy(false);
+      // Refresh the roster even after a partial failure.
+      if (added > 0) onAdded();
     }
   }
 

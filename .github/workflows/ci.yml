@@ -246,7 +246,4 @@ jobs:
             rhysd/actionlint:1.7.12 -color
 
       - name: hadolint
-        # Fails today on DL3008 and DL3013. Remove continue-on-error in the
-        # commit that replaces docker/Dockerfile (INFRA-001).
-        continue-on-error: true
         run: docker run --rm --interactive hadolint/hadolint:v2.15.1 < docker/Dockerfile

@@ -1,0 +1,11 @@
+# Build backend for the editable install in docker/Dockerfile
+# (pip install --no-deps --no-build-isolation -e .). It is compiled into
+# requirements.lock so the image build downloads nothing unpinned.
+# 78.1.1 is the first setuptools release with the fix for CVE-2025-47273.
+#
+# Regenerate both lock files from application/api/ after any change to
+# pyproject.toml or to this file:
+#   uv pip compile pyproject.toml requirements-build.in --universal --python-version 3.12 --generate-hashes --output-file requirements.lock
+#   uv pip compile pyproject.toml requirements-build.in --extra dev --universal --python-version 3.12 --generate-hashes --constraint requirements.lock --output-file requirements-dev.lock
+# Add --upgrade to both commands to move to newer versions.
+setuptools>=78.1.1

@@ -1,0 +1,30 @@
+# Optional overlay: apply migrations in a one-shot service so that the
+# long-running application container never holds the owner-role password.
+# Sticky .env example:
+#   COMPOSE_FILE=docker-compose.yaml:migrate.yaml
+#
+# Do not combine with local.yaml: the migrate service runs the image, not the
+# bind-mounted source tree, so it would not see migrations you are editing.
+
+services:
+  migrate:
+    image: ${APPLICATION_IMAGE:-registry.memchentic.ai/memchentic/memchentic:latest}
+    env_file: .env
+    command: ["python", "-m", "memchentic.migrate"]
+    restart: "no"
+    # The image HEALTHCHECK probes port 8080; this container never listens.
+    healthcheck:
+      disable: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  application:
+    environment:
+      RUN_MIGRATIONS_ON_BOOT: "false"
+      # Overrides the value from env_file: the application needs only the
+      # app-role password (POSTGRES_APP_PASSWORD).
+      POSTGRES_PASSWORD: ""
+    depends_on:
+      migrate:
+        condition: service_completed_successfully

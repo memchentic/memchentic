@@ -68,7 +68,7 @@ body {
 }
 
 :where(a, button, input, select, textarea, [tabindex]):focus-visible {
-  outline: 2px solid var(--color-border-strong);
+  outline: 2px solid var(--color-muted);
   outline-offset: 2px;
 }
 
@@ -118,7 +118,6 @@ body {
   width: 1.75rem;
   height: 1.75rem;
   flex-shrink: 0;
-  color: var(--color-ink);
 }
 
 .shell-brand-wordmark {
@@ -376,7 +375,6 @@ body {
   color: var(--color-ink);
   font-size: 1rem;
   font-weight: 400;
-  outline: none;
   transition: border-color var(--duration-micro) ease;
 }
 
@@ -436,6 +434,11 @@ select.input optgroup {
 
 .data-table tbody tr:hover {
   background: var(--color-surface-3);
+}
+
+.row-link {
+  color: inherit;
+  text-decoration: none;
 }
 
 .tag {
@@ -837,10 +840,6 @@ select.input optgroup {
   letter-spacing: 0.02em;
 }
 
-.ml-auto {
-  margin-left: auto;
-}
-
 .flash-error {
   border: var(--border-width) solid
     color-mix(in oklab, oklch(0.72 0.1 25) 45%, var(--color-border));
@@ -928,14 +927,6 @@ select.input optgroup {
   text-decoration: underline;
   text-underline-offset: 0.15em;
   cursor: pointer;
-}
-
-.auth-meta {
-  border-top: var(--border-width) solid var(--color-border);
-  padding-top: 1rem;
-  color: var(--color-faint);
-  font-size: 0.75rem;
-  line-height: 1.5;
 }
 
 .auth-sso {
@@ -1058,10 +1049,6 @@ select.input optgroup {
   min-width: 0;
   flex: 1 1 auto;
   background: var(--color-surface);
-}
-
-.settings-panel-body {
-  padding: var(--content-pad);
 }
 
 .settings-group-picker {

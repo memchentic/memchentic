@@ -2,10 +2,11 @@ import asyncio
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import pool
+from sqlalchemy import pool, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+from memchentic.db.session import MIGRATION_LOCK_ID
 from memchentic.models import Base
 from memchentic.settings import get_settings
 
@@ -41,6 +42,9 @@ def run_migrations_offline() -> None:
 def do_run_migrations(connection: Connection) -> None:
     context.configure(connection=connection, target_metadata=target_metadata)
     with context.begin_transaction():
+        # Serialize concurrent starts. Taken inside Alembic's transaction, so
+        # Alembic's own commit releases it.
+        connection.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": MIGRATION_LOCK_ID})
         context.run_migrations()
 
 

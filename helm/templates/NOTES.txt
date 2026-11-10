@@ -2,14 +2,14 @@ memchentic {{ .Chart.AppVersion }}
 
 Release: {{ .Release.Name }}
 Namespace: {{ .Release.Namespace }}
-Secrets mode: {{ .Values.secrets.mode }}
+Secrets mode: {{ include "memchentic.secretsMode" . }}
 Secret name: {{ include "memchentic.secretName" . }}
 
-{{- if eq (.Values.secrets.mode | default "inline") "inline" }}
+{{- if eq (include "memchentic.secretsMode" .) "inline" }}
 Inline secrets are for local/dev only. Use secrets.mode=existing or
 externalSecret for Vault / AWS Secrets Manager / 1Password.
 {{- end }}
-{{- if eq .Values.secrets.mode "externalSecret" }}
+{{- if eq (include "memchentic.secretsMode" .) "externalSecret" }}
 Ensure External Secrets Operator is installed and SecretStore
 "{{ .Values.secrets.externalSecret.secretStoreRef.name }}" is Ready
 before expecting pods to start.

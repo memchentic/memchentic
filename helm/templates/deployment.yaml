@@ -13,6 +13,9 @@ spec:
     metadata:
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if eq (include "memchentic.secretsMode" .) "inline" }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -27,6 +30,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: {{ include "memchentic.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automount }}
       {{- with .Values.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
@@ -53,7 +57,7 @@ spec:
             - name: POSTGRES_HOSTNAME
               value: {{ include "memchentic.postgresHostname" . | quote }}
             - name: POSTGRES_PORT
-              value: {{ .Values.config.postgresPort | quote }}
+              value: {{ ternary .Values.postgres.service.port .Values.config.postgresPort .Values.postgres.enabled | quote }}
             - name: POSTGRES_USER
               value: {{ .Values.config.postgresUser | quote }}
             - name: POSTGRES_APP_USER
@@ -85,7 +89,7 @@ spec:
             - name: POSTGRES_HOSTNAME
               value: {{ include "memchentic.postgresHostname" . | quote }}
             - name: POSTGRES_PORT
-              value: {{ .Values.config.postgresPort | quote }}
+              value: {{ ternary .Values.postgres.service.port .Values.config.postgresPort .Values.postgres.enabled | quote }}
             - name: POSTGRES_USER
               value: {{ .Values.config.postgresUser | quote }}
             - name: POSTGRES_APP_USER
@@ -112,10 +116,11 @@ spec:
             timeoutSeconds: 5
           readinessProbe:
             httpGet:
-              path: /api/health
+              path: {{ .Values.probes.readinessPath | quote }}
               port: http
             periodSeconds: 10
             timeoutSeconds: 5
+            failureThreshold: 3
           {{- with .Values.resources }}
           resources:
             {{- toYaml . | nindent 12 }}

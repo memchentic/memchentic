@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -11,6 +12,8 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, EmailStr, Field, StringConstraints, field_validator
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from memchentic.auth.passwords import password_too_long
@@ -55,6 +58,7 @@ from memchentic.services.validation import parse_datetime, parse_uuid, require_u
 from memchentic.settings import get_settings
 
 api_router = APIRouter(prefix="/api")
+logger = logging.getLogger("memchentic")
 
 GUI_CLIENT_HEADER = "X-Memchentic-Client"
 
@@ -191,6 +195,48 @@ async def health() -> dict[str, str]:
         "embedder": backend,
         "events": events,
     }
+
+
+_READY_DB_TIMEOUT_SECONDS = 3.0
+
+
+@api_router.get("/ready")
+async def ready() -> JSONResponse:
+    """Readiness probe: 200 only when Postgres answers and the embedder is usable.
+
+    ``/api/health`` stays a liveness check that never touches the database, so a
+    database outage removes the pod from the Service without restarting it.
+
+    Returns:
+        JSON with ``status`` (``ready`` or ``not_ready``), ``database`` and
+        ``embedder``. HTTP 503 when not ready.
+    """
+    from memchentic.embeddings import get_embedder
+
+    settings = get_settings()
+    database = "ok"
+    try:
+        async with asyncio.timeout(_READY_DB_TIMEOUT_SECONDS), get_session_factory()() as session:
+            await session.execute(text("SELECT 1"))
+    except (SQLAlchemyError, OSError, TimeoutError) as exc:
+        logger.warning("Readiness: database unavailable (%s)", type(exc).__name__)
+        database = "unavailable"
+    try:
+        backend = get_embedder().backend
+        embedder_ok = backend == "onnx" or settings.allow_hash_embeddings
+    except RuntimeError:
+        backend = "unavailable"
+        embedder_ok = False
+    is_ready = database == "ok" and embedder_ok
+    return JSONResponse(
+        {
+            "status": "ready" if is_ready else "not_ready",
+            "service": "memchentic",
+            "database": database,
+            "embedder": backend,
+        },
+        status_code=200 if is_ready else 503,
+    )
 
 
 _SSE_REAUTH_SECONDS = 10.0

@@ -23,9 +23,7 @@ export default [
   },
   {
     // auth.tsx: the provider and its hook share a private context (permanent).
-    // components/ui.tsx: mixes components, hooks and constants until GUI-023
-    // splits it; GUI-023 removes that entry.
-    files: ["src/auth.tsx", "src/components/ui.tsx"],
+    files: ["src/auth.tsx"],
     rules: { "react-refresh/only-export-components": "off" },
   },
   {

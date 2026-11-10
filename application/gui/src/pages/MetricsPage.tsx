@@ -1,9 +1,7 @@
-import { useState, type CSSProperties, type ReactNode } from "react";
+import { useState } from "react";
 import {
   Area,
   AreaChart,
-  Bar,
-  BarChart,
   CartesianGrid,
   Cell,
   Pie,
@@ -13,13 +11,13 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import {
-  ErrorNote,
-  PageHeader,
-  SpaceScopeSelect,
-  type SpaceScope,
-} from "../components/ui";
+import { ErrorNote, PageHeader } from "../components/page";
+import { SpaceScopeSelect } from "../memory/MemoryFilters";
+import type { SpaceScope } from "../memory/types";
 import { useApiResource } from "../hooks/useAsyncResource";
+import { CHROME, SERIES, typeFill, kindFill, categoryFill, tooltipStyle } from "./metrics/palette";
+import { ChartCard } from "./metrics/ChartCard";
+import { HorizontalBarChart } from "./metrics/HorizontalBarChart";
 
 type MetricRange = "7d" | "30d" | "90d" | "all";
 
@@ -46,61 +44,6 @@ type MemoryMetrics = {
   }[];
 };
 
-/** Axis/tooltip chrome stays greyscale; series use kind-chip hues. */
-const CHROME = {
-  ink: "oklch(0.985 0 0)",
-  muted: "oklch(0.708 0 0)",
-  grid: "oklch(0.269 0 0)",
-};
-
-/** Matches `.kind-chip-*` hues in index.css, bumped chroma for chart fills. */
-const TYPE_FILL: Record<string, string> = {
-  guide: "oklch(0.68 0.12 230)",
-  fact: "oklch(0.68 0.12 250)",
-  preference: "oklch(0.68 0.13 310)",
-  decision: "oklch(0.72 0.14 85)",
-  instruction: "oklch(0.68 0.13 165)",
-  feedback: "oklch(0.68 0.14 25)",
-  insight: "oklch(0.68 0.14 295)",
-  note: "oklch(0.66 0.04 260)",
-  entry: "oklch(0.7 0.08 250)",
-};
-
-const SERIES = {
-  entries: TYPE_FILL.entry,
-  guides: TYPE_FILL.guide,
-  warn: "oklch(0.72 0.14 55)",
-  spaces: "oklch(0.68 0.12 200)",
-};
-
-/** Distinct categorical hues for spaces / tags / creators. */
-const CATEGORY_FILLS = [
-  "oklch(0.68 0.12 230)",
-  "oklch(0.72 0.14 85)",
-  "oklch(0.68 0.13 165)",
-  "oklch(0.68 0.13 310)",
-  "oklch(0.68 0.14 25)",
-  "oklch(0.68 0.14 295)",
-  "oklch(0.68 0.12 250)",
-  "oklch(0.7 0.1 145)",
-  "oklch(0.7 0.1 40)",
-  "oklch(0.66 0.1 200)",
-];
-
-function typeFill(type: string): string {
-  return TYPE_FILL[type] ?? TYPE_FILL.note;
-}
-
-function kindFill(kind: string): string {
-  if (kind === "guide" || kind === "guides") return SERIES.guides;
-  if (kind === "entry" || kind === "entries") return SERIES.entries;
-  return typeFill(kind);
-}
-
-function categoryFill(index: number): string {
-  return CATEGORY_FILLS[index % CATEGORY_FILLS.length];
-}
-
 const RANGES: { value: MetricRange; label: string }[] = [
   { value: "7d", label: "7 days" },
   { value: "30d", label: "30 days" },
@@ -114,45 +57,9 @@ function shortDay(day: string): string {
   return `${parts[1]}/${parts[2]}`;
 }
 
-function ChartCard({
-  title,
-  summary,
-  empty,
-  children,
-}: {
-  title: string;
-  /** Text alternative read instead of the chart. */
-  summary: string;
-  empty?: boolean;
-  children: ReactNode;
-}) {
-  return (
-    <section className="metrics-chart panel">
-      <h3 className="metrics-chart-title">{title}</h3>
-      {empty ? (
-        <p className="text-sm text-muted">No data yet.</p>
-      ) : (
-        <div role="img" aria-label={`${title}: ${summary}`}>
-          {children}
-        </div>
-      )}
-    </section>
-  );
-}
-
 /** "fact 3, note 2" text for a chart summary. */
 function summarize<T extends { count: number }>(rows: T[], name: (row: T) => string): string {
   return rows.map((row) => `${name(row)} ${row.count}`).join(", ");
-}
-
-function tooltipStyle(): CSSProperties {
-  return {
-    background: "oklch(0.205 0 0)",
-    border: "1px solid oklch(0.269 0 0)",
-    borderRadius: 0,
-    color: CHROME.ink,
-    fontSize: 12,
-  };
 }
 
 export default function MetricsPage() {
@@ -333,111 +240,40 @@ export default function MetricsPage() {
               </ChartCard>
 
               <ChartCard title="By entry type" summary={summarize(byType, (r) => r.type)} empty={byType.length === 0}>
-                <div className="metrics-chart-body">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart
-                      data={byType}
-                      layout="vertical"
-                      margin={{ top: 4, right: 12, left: 8, bottom: 4 }}
-                    >
-                      <CartesianGrid stroke={CHROME.grid} strokeDasharray="3 3" horizontal={false} />
-                      <XAxis type="number" allowDecimals={false} tick={{ fill: CHROME.muted, fontSize: 11 }} />
-                      <YAxis
-                        type="category"
-                        dataKey="type"
-                        width={88}
-                        tick={{ fill: CHROME.muted, fontSize: 11 }}
-                      />
-                      <Tooltip contentStyle={tooltipStyle()} />
-                      <Bar dataKey="count" isAnimationActive={false}>
-                        {byType.map((row) => (
-                          <Cell key={row.type} fill={typeFill(row.type)} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
+                <HorizontalBarChart
+                  data={byType}
+                  categoryKey="type"
+                  categoryWidth={88}
+                  rowKey={(row) => row.type}
+                  fill={(row) => typeFill(row.type)}
+                />
               </ChartCard>
 
               <ChartCard title="By space" summary={summarize(bySpace, (r) => r.name)} empty={bySpace.length === 0}>
-                <div className="metrics-chart-body">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart
-                      data={bySpace}
-                      layout="vertical"
-                      margin={{ top: 4, right: 12, left: 8, bottom: 4 }}
-                    >
-                      <CartesianGrid stroke={CHROME.grid} strokeDasharray="3 3" horizontal={false} />
-                      <XAxis type="number" allowDecimals={false} tick={{ fill: CHROME.muted, fontSize: 11 }} />
-                      <YAxis
-                        type="category"
-                        dataKey="name"
-                        width={96}
-                        tick={{ fill: CHROME.muted, fontSize: 11 }}
-                      />
-                      <Tooltip contentStyle={tooltipStyle()} />
-                      <Bar dataKey="count" isAnimationActive={false}>
-                        {bySpace.map((row, idx) => (
-                          <Cell key={row.space_id ?? row.name} fill={categoryFill(idx)} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
+                <HorizontalBarChart
+                  data={bySpace}
+                  categoryKey="name"
+                  rowKey={(row) => row.space_id ?? row.name}
+                  fill={(_row, index) => categoryFill(index)}
+                />
               </ChartCard>
 
               <ChartCard title="Top tags" summary={summarize(topTags, (r) => r.tag)} empty={topTags.length === 0}>
-                <div className="metrics-chart-body">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart
-                      data={topTags}
-                      layout="vertical"
-                      margin={{ top: 4, right: 12, left: 8, bottom: 4 }}
-                    >
-                      <CartesianGrid stroke={CHROME.grid} strokeDasharray="3 3" horizontal={false} />
-                      <XAxis type="number" allowDecimals={false} tick={{ fill: CHROME.muted, fontSize: 11 }} />
-                      <YAxis
-                        type="category"
-                        dataKey="tag"
-                        width={96}
-                        tick={{ fill: CHROME.muted, fontSize: 11 }}
-                      />
-                      <Tooltip contentStyle={tooltipStyle()} />
-                      <Bar dataKey="count" isAnimationActive={false}>
-                        {topTags.map((row, idx) => (
-                          <Cell key={row.tag} fill={categoryFill(idx)} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
+                <HorizontalBarChart
+                  data={topTags}
+                  categoryKey="tag"
+                  rowKey={(row) => row.tag}
+                  fill={(_row, index) => categoryFill(index)}
+                />
               </ChartCard>
 
               <ChartCard title="Top creators" summary={summarize(topCreators, (r) => r.label)} empty={topCreators.length === 0}>
-                <div className="metrics-chart-body">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart
-                      data={topCreators}
-                      layout="vertical"
-                      margin={{ top: 4, right: 12, left: 8, bottom: 4 }}
-                    >
-                      <CartesianGrid stroke={CHROME.grid} strokeDasharray="3 3" horizontal={false} />
-                      <XAxis type="number" allowDecimals={false} tick={{ fill: CHROME.muted, fontSize: 11 }} />
-                      <YAxis
-                        type="category"
-                        dataKey="label"
-                        width={96}
-                        tick={{ fill: CHROME.muted, fontSize: 11 }}
-                      />
-                      <Tooltip contentStyle={tooltipStyle()} />
-                      <Bar dataKey="count" isAnimationActive={false}>
-                        {topCreators.map((row, idx) => (
-                          <Cell key={row.user_id} fill={categoryFill(idx)} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
+                <HorizontalBarChart
+                  data={topCreators}
+                  categoryKey="label"
+                  rowKey={(row) => row.user_id}
+                  fill={(_row, index) => categoryFill(index)}
+                />
               </ChartCard>
             </div>
           </>

@@ -11,7 +11,7 @@ import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
-import { ErrorNote, PageHeader } from "../components/ui";
+import { ErrorNote, PageHeader } from "../components/page";
 import type { SpaceDetail } from "../apiTypes";
 import { UserPickerModal } from "../components/UserPickerModal";
 import { useApiResource } from "../hooks/useAsyncResource";

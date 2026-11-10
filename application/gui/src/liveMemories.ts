@@ -4,7 +4,7 @@ import {
   type MemoryRow,
   type MemoryTypeToken,
   type SpaceScope,
-} from "./components/ui";
+} from "./memory/types";
 
 /** Wire shape of one SSE `memory` event (`MemoryEvent` in `events/memory_bus.py`). */
 export type MemoryLiveEvent = {

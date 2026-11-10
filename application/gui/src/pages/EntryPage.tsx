@@ -4,14 +4,10 @@ import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
-import {
-  ENTRY_TYPES,
-  ErrorNote,
-  PageHeader,
-  canForgetMemory,
-  useSpaceName,
-  type MemoryRow,
-} from "../components/ui";
+import { ENTRY_TYPES, type MemoryRow } from "../memory/types";
+import { ErrorNote, PageHeader } from "../components/page";
+import { canForgetMemory } from "../memory/rowFormat";
+import { useSpaceName } from "../memory/useSpaceName";
 import { formatDateTime } from "../format";
 import { errorMessage } from "../errors";
 

@@ -12,7 +12,7 @@ import {
 import { useEffect, useId, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../auth";
-import { usePresence } from "./ui";
+import { usePresence } from "../hooks/usePresence";
 import { ErrorBoundary } from "./ErrorBoundary";
 
 const links = [

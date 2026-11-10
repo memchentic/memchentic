@@ -5,7 +5,8 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import type { DirectoryUser } from "../apiTypes";
 import { errorMessage } from "../errors";
-import { ErrorNote, Modal } from "./ui";
+import { ErrorNote } from "./page";
+import { Modal } from "./overlay";
 
 /**
  * Dialog that lists directory users, lets the caller select several, and

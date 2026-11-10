@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { copyText } from "../clipboard";
-import { ErrorNote, PageHeader } from "../components/ui";
+import { ErrorNote, PageHeader } from "../components/page";
 import type { DirectoryUser } from "../apiTypes";
 import { formatDateTime } from "../format";
 import { errorMessage } from "../errors";

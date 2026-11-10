@@ -12,6 +12,7 @@ data:
   OAUTH_AUDIENCE: {{ .Values.config.oauthAudience | quote }}
   OAUTH_JWKS_URI: {{ .Values.config.oauthJwksUri | quote }}
   OAUTH_SCOPES: {{ .Values.config.oauthScopes | quote }}
+  OAUTH_NATIVE_REDIRECT_SCHEMES: {{ .Values.config.oauthNativeRedirectSchemes | quote }}
   ADMIN_EMAIL: {{ .Values.config.adminEmail | quote }}
   ADMIN_DISPLAY_NAME: {{ .Values.config.adminDisplayName | quote }}
   NEAR_DUP_THRESHOLD: {{ .Values.config.nearDupThreshold | quote }}

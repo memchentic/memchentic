@@ -33,7 +33,13 @@ class Settings(BaseSettings):
     oauth_issuer: str = Field(default="", alias="OAUTH_ISSUER")
     oauth_audience: str = Field(default="", alias="OAUTH_AUDIENCE")
     oauth_jwks_uri: str = Field(default="", alias="OAUTH_JWKS_URI")
-    oauth_scopes: str = Field(default="openid,profile,email", alias="OAUTH_SCOPES")
+    # Blank means "use the provider preset's default scopes" (see resolve_scopes).
+    oauth_scopes: str = Field(default="", alias="OAUTH_SCOPES")
+    # Comma-separated private-use URI schemes (RFC 8252 section 7.1) that
+    # /oauth/register accepts as redirect URIs for native clients.
+    oauth_native_redirect_schemes: str = Field(
+        default="cursor", alias="OAUTH_NATIVE_REDIRECT_SCHEMES"
+    )
 
     admin_display_name: str = Field(default="Admin", alias="ADMIN_DISPLAY_NAME")
     admin_email: str = Field(default="admin@example.com", alias="ADMIN_EMAIL")

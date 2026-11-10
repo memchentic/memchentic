@@ -10,13 +10,18 @@ import httpx
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
-from jwt.exceptions import InvalidTokenError
+from jwt.exceptions import InvalidAudienceError, InvalidTokenError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from memchentic.auth import providers
 from memchentic.auth.principal import resolve_bearer
-from memchentic.auth.providers import clear_jwks_cache, fetch_jwks_and_decode
+from memchentic.auth.providers import (
+    clear_discovery_cache,
+    clear_jwks_cache,
+    exchange_code_for_profile,
+    fetch_jwks_and_decode,
+)
 from memchentic.settings import get_settings
 
 ISSUER = "https://idp.example.com"
@@ -49,6 +54,7 @@ def idp_settings(monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.setenv("OAUTH_PROVIDER", "generic")
     monkeypatch.setenv("OAUTH_ISSUER", ISSUER)
     monkeypatch.setenv("OAUTH_AUDIENCE", AUDIENCE)
+    monkeypatch.setenv("OAUTH_JWKS_URI", f"{ISSUER}/jwks")
     monkeypatch.setenv("BASE_URL", "http://memchentic.test")
     get_settings.cache_clear()
     clear_jwks_cache()
@@ -259,3 +265,89 @@ async def test_kid_with_nul_is_a_bad_token_not_a_database_error(
     assert await resolve_bearer(session, token, idp_settings) is None
     # The session is still usable: no statement failed inside its transaction.
     assert (await session.execute(text("SELECT 1"))).scalar_one() == 1
+
+
+async def test_id_token_verified_against_client_id(
+    monkeypatch: pytest.MonkeyPatch,
+    rsa_material: tuple[Any, dict[str, Any]],
+    idp_settings: Any,
+) -> None:
+    private_key, jwk = rsa_material
+    _seed_jwks(monkeypatch, jwk)
+    token = jwt.encode(
+        _base_claims(aud="web-client"), private_key, algorithm="RS256", headers={"kid": KID}
+    )
+    decoded = await fetch_jwks_and_decode(token, idp_settings, audience="web-client")
+    assert decoded["aud"] == "web-client"
+    # Without the override the API audience applies, so a client-audience token is refused.
+    with pytest.raises(InvalidAudienceError):
+        await fetch_jwks_and_decode(token, idp_settings)
+
+
+async def test_oidc_exchange_uses_client_id_audience_and_discovered_jwks(
+    monkeypatch: pytest.MonkeyPatch,
+    rsa_material: tuple[Any, dict[str, Any]],
+) -> None:
+    private_key, jwk = rsa_material
+    monkeypatch.setenv("OAUTH_PROVIDER", "generic")
+    monkeypatch.setenv("OAUTH_ISSUER", ISSUER)
+    monkeypatch.setenv("OAUTH_CLIENT_ID", "web-client")
+    monkeypatch.setenv("OAUTH_CLIENT_SECRET", "web-secret")
+    monkeypatch.setenv("OAUTH_AUDIENCE", AUDIENCE)
+    monkeypatch.setenv("OAUTH_JWKS_URI", "")
+    monkeypatch.setenv("BASE_URL", "http://memchentic.test")
+    get_settings.cache_clear()
+    clear_jwks_cache()
+    clear_discovery_cache()
+    settings = get_settings()
+
+    certs_url = f"{ISSUER}/protocol/openid-connect/certs"
+    token_url = f"{ISSUER}/protocol/openid-connect/token"
+    id_token = jwt.encode(
+        _base_claims(aud="web-client", nonce="n-1", email="kc@example.com", email_verified=True),
+        private_key,
+        algorithm="RS256",
+        headers={"kid": KID},
+    )
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        seen.append(url)
+        if url == f"{ISSUER}/.well-known/openid-configuration":
+            return httpx.Response(
+                200,
+                json={
+                    "issuer": ISSUER,
+                    "authorization_endpoint": f"{ISSUER}/protocol/openid-connect/auth",
+                    "token_endpoint": token_url,
+                    "jwks_uri": certs_url,
+                },
+            )
+        if url == token_url:
+            return httpx.Response(200, json={"id_token": id_token, "access_token": "at"})
+        if url == certs_url:
+            return httpx.Response(200, json={"keys": [jwk]})
+        return httpx.Response(404)
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        "memchentic.auth.providers.httpx.AsyncClient",
+        lambda *args, **kwargs: real_client(
+            *args, **{**kwargs, "transport": httpx.MockTransport(handler)}
+        ),
+    )
+    try:
+        profile = await exchange_code_for_profile(
+            settings, code="abc", code_verifier="v" * 43, nonce="n-1"
+        )
+    finally:
+        get_settings.cache_clear()
+        clear_jwks_cache()
+        clear_discovery_cache()
+
+    assert profile.subject == "user-1"
+    assert profile.email == "kc@example.com"
+    assert profile.email_verified is True
+    assert certs_url in seen
+    assert f"{ISSUER}/.well-known/jwks.json" not in seen

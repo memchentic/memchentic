@@ -99,6 +99,10 @@ def pytest_configure(config: pytest.Config) -> None:
         os.environ["ENCRYPTION_KEY"] = "pytest-memchentic-encryption-key-01"
     # Tests may run without ONNX files; hash fallback is allowed in pytest only.
     os.environ.setdefault("ALLOW_HASH_EMBEDDINGS", "true")
+    # The in-process client speaks http://testserver. Pin a loopback http
+    # BASE_URL so cookies are issued without Secure and round-trip through the
+    # client's cookie jar, whatever BASE_URL the container environment carries.
+    os.environ["BASE_URL"] = "http://127.0.0.1:8080"
     # Strong owner + app role passwords so insecure_secret_names() and RLS role
     # creation succeed under pytest (Compose .env may still be placeholders).
     if (

@@ -265,7 +265,13 @@ async def verify_access_token(
         if settings.oauth_provider == "internal":
             raise
 
-    from memchentic.auth.providers import fetch_jwks_and_decode
+    from memchentic.auth.providers import fetch_jwks_and_decode, resolve_issuer
+
+    # resolve_bearer tells the two signers apart by ``iss``. Refuse a
+    # configuration in which the external issuer equals this instance's own
+    # issuer, so an IdP token can never be read as a memchentic token.
+    if resolve_issuer(settings).rstrip("/") == settings.session_issuer:
+        raise InvalidTokenError("OAUTH_ISSUER must differ from BASE_URL")
 
     return await fetch_jwks_and_decode(token, settings)
 

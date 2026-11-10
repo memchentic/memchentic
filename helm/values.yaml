@@ -70,7 +70,10 @@ config:
   oauthIssuer: ""
   oauthAudience: ""
   oauthJwksUri: ""
-  oauthScopes: openid,profile,email
+  # Comma-separated. Blank = the provider preset's default scopes.
+  oauthScopes: ""
+  # Private-use redirect schemes native MCP clients may register (comma-separated).
+  oauthNativeRedirectSchemes: cursor
   adminEmail: admin@example.com
   adminDisplayName: Admin
   postgresUser: memchentic
@@ -110,7 +113,11 @@ config:
   # pod CIDR of the ingress controller. Empty = trust only 127.0.0.1 (uvicorn
   # default), which makes every client share one rate-limit bucket.
   forwardedAllowIps: ""
-  # Public self-registration when OAUTH_PROVIDER=internal. First-boot value only; afterwards System Settings is the source of truth.
+  # Public self-registration when OAUTH_PROVIDER=internal. With an external
+  # provider it gates first-time sign-in instead. A person in an IdP group that
+  # an auth group is bound to is always admitted. When the Users auth group is
+  # bound, nobody else is admitted and this value is ignored.
+  # First-boot value only; afterwards System Settings is the source of truth.
   registerEnabled: "true"
   enableApiDocs: "false"
 

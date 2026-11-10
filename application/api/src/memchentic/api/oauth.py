@@ -5,10 +5,12 @@ import hashlib
 import html
 import re
 import secrets
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode, urlparse
 
+import httpx
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy import select, text, update
@@ -21,6 +23,7 @@ from memchentic.auth.providers import (
 )
 from memchentic.auth.rate_limit import check_rate_limit, client_ip
 from memchentic.auth.tokens import (
+    ACCESS_TOKEN_SECONDS,
     ensure_signing_key,
     hash_token,
     issue_access_token,
@@ -36,6 +39,54 @@ router = APIRouter(tags=["oauth"])
 
 _OAUTH_CSRF_COOKIE = "memchentic_oauth_csrf"
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+_SCHEME_NAME = re.compile(r"^[a-z][a-z0-9+.-]*$")
+_MAX_REDIRECT_URI_LEN = 1024  # auth_codes.redirect_uri is String(1024)
+_MAX_REDIRECT_URIS = 10
+_MAX_CLIENT_NAME_LEN = 255  # oauth_clients.name is String(255)
+_MAX_SCOPE_LEN = 512  # auth_codes.scope is String(512)
+_UNUSED_CLIENT_RETENTION = timedelta(hours=24)
+_EXPIRED_CODE_RETENTION = timedelta(days=1)
+_PRUNE_INTERVAL_SECONDS = 3600.0
+_prune_state = {"last": 0.0}
+
+
+async def prune_stale_oauth_rows(session: AsyncSession, *, force: bool = False) -> None:
+    """Delete expired authorization codes and clients that never completed a sign-in.
+
+    Runs at most once per ``_PRUNE_INTERVAL_SECONDS`` per process. A client is
+    stale when it is older than ``_UNUSED_CLIENT_RETENTION`` and no refresh
+    token and no authorization code references it. Refresh-token rows are never
+    deleted, so a client that has completed one sign-in is never stale. The
+    caller commits.
+
+    Args:
+        session: Database session.
+        force: Ignore the once-per-interval guard (tests).
+    """
+    now = time.monotonic()
+    if not force and _prune_state["last"] and now - _prune_state["last"] < _PRUNE_INTERVAL_SECONDS:
+        return
+    _prune_state["last"] = now
+    wall = datetime.now(UTC)
+    await session.execute(
+        text("DELETE FROM auth_codes WHERE expires_at < :cutoff"),
+        {"cutoff": wall - _EXPIRED_CODE_RETENTION},
+    )
+    await session.execute(
+        text(
+            """
+            DELETE FROM oauth_clients AS c
+            WHERE c.created_at < :cutoff
+              AND NOT EXISTS (
+                  SELECT 1 FROM auth_refresh_tokens r WHERE r.client_id = c.client_id
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM auth_codes a WHERE a.client_id = c.client_id
+              )
+            """
+        ),
+        {"cutoff": wall - _UNUSED_CLIENT_RETENTION},
+    )
 
 
 def validate_redirect_uri(uri: str) -> str:
@@ -43,6 +94,8 @@ def validate_redirect_uri(uri: str) -> str:
 
     Allows ``https://`` URLs without userinfo or fragment, and loopback
     ``http://`` only for hosts in {127.0.0.1, localhost, [::1], ::1}.
+    Private-use schemes listed in ``OAUTH_NATIVE_REDIRECT_SCHEMES`` are
+    accepted for native clients.
 
     Args:
         uri: Candidate redirect URI string.
@@ -51,11 +104,21 @@ def validate_redirect_uri(uri: str) -> str:
         The same URI when valid.
 
     Raises:
-        HTTPException: 400 when the URI is empty, relative, or uses a
-            disallowed scheme/host/userinfo/fragment.
+        HTTPException: 400 when the URI is empty, not a string, too long,
+            contains whitespace, control characters or a backslash, is
+            relative, or uses a disallowed scheme/host/userinfo/fragment.
     """
     if not uri or not isinstance(uri, str) or not uri.strip():
         raise HTTPException(400, "Invalid redirect_uri: empty")
+    if len(uri) > _MAX_REDIRECT_URI_LEN:
+        raise HTTPException(
+            400, f"Invalid redirect_uri: longer than {_MAX_REDIRECT_URI_LEN} characters"
+        )
+    if any(ch.isspace() or ch == "\\" or ord(ch) < 0x20 or ord(ch) == 0x7F for ch in uri):
+        raise HTTPException(
+            400,
+            "Invalid redirect_uri: whitespace, control characters and backslashes are not allowed",
+        )
     try:
         parsed = urlparse(uri)
     except ValueError as exc:
@@ -82,6 +145,19 @@ def validate_redirect_uri(uri: str) -> str:
                 "(127.0.0.1, localhost, ::1)",
             )
         return uri
+    native_schemes = {
+        name
+        for name in (
+            part.strip().lower() for part in get_settings().oauth_native_redirect_schemes.split(",")
+        )
+        if _SCHEME_NAME.match(name)
+    }
+    if scheme in native_schemes:
+        if not (parsed.netloc or parsed.path):
+            raise HTTPException(
+                400, "Invalid redirect_uri: a private-use URI needs a host or a path"
+            )
+        return uri
     raise HTTPException(400, f"Invalid redirect_uri: scheme {scheme!r} is not allowed")
 
 
@@ -94,7 +170,13 @@ async def prm(path: str = "") -> dict:  # noqa: ARG001
 
 @router.get("/.well-known/oauth-authorization-server")
 async def as_meta() -> dict:
-    return authorization_server_metadata(get_settings())
+    """Serve RFC 8414 metadata; relays the external IdP's endpoints when one is configured."""
+    try:
+        return await authorization_server_metadata(get_settings())
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(503, "Identity provider discovery is unavailable") from exc
 
 
 @router.get("/oauth/jwks")
@@ -105,29 +187,61 @@ async def oauth_jwks(session: AsyncSession = Depends(db_session)) -> dict:
 
 @router.post("/oauth/register")
 async def dynamic_client_register(
+    request: Request,
     body: dict,
     session: AsyncSession = Depends(db_session),
 ) -> dict:
+    """Register a public OAuth client (RFC 7591) with the built-in authorization server.
+
+    Args:
+        request: Incoming request (client address for the rate limit).
+        body: Client metadata; ``redirect_uris`` is required, ``client_name`` optional.
+        session: Database session.
+
+    Returns:
+        The registered client metadata including the generated ``client_id``.
+
+    Raises:
+        HTTPException: 400 for an external provider or invalid metadata; 429 when
+            the caller registers too often.
+    """
+    if get_settings().oauth_provider != "internal":
+        raise HTTPException(
+            400, "Dynamic client registration is only available when OAUTH_PROVIDER=internal"
+        )
+    check_rate_limit(f"dcr:{client_ip(request)}", limit=10, window_seconds=60)
+
+    raw_uris = body.get("redirect_uris")
+    if isinstance(raw_uris, str):
+        raw_uris = [raw_uris]
+    if not isinstance(raw_uris, list) or not raw_uris:
+        raise HTTPException(400, "redirect_uris must be a non-empty array of strings")
+    if len(raw_uris) > _MAX_REDIRECT_URIS:
+        raise HTTPException(400, f"redirect_uris: at most {_MAX_REDIRECT_URIS} entries")
+    validated = [validate_redirect_uri(u) for u in raw_uris]
+
+    raw_name = body.get("client_name")
+    if raw_name is not None and not isinstance(raw_name, str):
+        raise HTTPException(400, "client_name must be a string")
+    name = (raw_name or "").strip()[:_MAX_CLIENT_NAME_LEN] or "MCP Client"
+
+    await prune_stale_oauth_rows(session)
     client_id = f"mcp_{secrets.token_urlsafe(12)}"
-    redirect_uris = body.get("redirect_uris") or []
-    if isinstance(redirect_uris, str):
-        redirect_uris = [redirect_uris]
-    if not redirect_uris:
-        raise HTTPException(400, "redirect_uris required")
-    validated = [validate_redirect_uri(u) for u in redirect_uris]
-    client = OAuthClient(
-        id=uuid.uuid4(),
-        client_id=client_id,
-        client_secret_hash=None,
-        redirect_uris=list(validated),
-        is_public=True,
-        name=body.get("client_name") or "MCP Client",
+    session.add(
+        OAuthClient(
+            id=uuid.uuid4(),
+            client_id=client_id,
+            client_secret_hash=None,
+            redirect_uris=list(validated),
+            is_public=True,
+            name=name,
+        )
     )
-    session.add(client)
     await session.commit()
     return {
         "client_id": client_id,
         "client_id_issued_at": int(datetime.now(UTC).timestamp()),
+        "client_name": name,
         "token_endpoint_auth_method": "none",
         "redirect_uris": validated,
         "grant_types": ["authorization_code", "refresh_token"],
@@ -201,9 +315,12 @@ def _authorize_html(
         status_code=status_code,
         headers=_FRAME_DENY,
     )
-    # Prefer the request scheme so http://testserver round-trips; otherwise
-    # follow cookie_secure (https BASE_URL / explicit SESSION_COOKIE_SECURE).
-    secure = request.url.scheme == "https" if request is not None else settings.cookie_secure
+    # Secure when this request arrived over https, or when the public BASE_URL
+    # is https (TLS terminated at a reverse proxy, so the socket scheme seen
+    # here is http). A plain-http BASE_URL keeps the cookie usable over http.
+    secure = (
+        request is not None and request.url.scheme == "https"
+    ) or settings.base_url.lower().startswith("https://")
     response.set_cookie(
         _OAUTH_CSRF_COOKIE,
         csrf,
@@ -239,7 +356,11 @@ async def _require_registered_client(
     """
     result = await session.execute(select(OAuthClient).where(OAuthClient.client_id == client_id))
     client = result.scalar_one_or_none()
-    if not client or redirect_uri not in (client.redirect_uris or []):
+    if (
+        not client
+        or len(redirect_uri) > _MAX_REDIRECT_URI_LEN
+        or redirect_uri not in (client.redirect_uris or [])
+    ):
         raise HTTPException(400, "Unknown client_id or unregistered redirect_uri")
     if client.is_public and (
         code_challenge_method != "S256" or not _PKCE_CHALLENGE.match(code_challenge)
@@ -259,7 +380,7 @@ async def authorize_get(
     response_type: str = Query("code"),
     client_id: str = Query(...),
     redirect_uri: str = Query(...),
-    scope: str = Query("openid profile email"),
+    scope: str = Query("openid profile email", max_length=_MAX_SCOPE_LEN),
     state: str | None = None,
     code_challenge: str | None = None,
     code_challenge_method: str | None = None,
@@ -290,7 +411,7 @@ async def authorize_post(
     password: str = Form(...),
     client_id: str = Form(...),
     redirect_uri: str = Form(...),
-    scope: str = Form("openid profile email"),
+    scope: str = Form("openid profile email", max_length=_MAX_SCOPE_LEN),
     state: str = Form(""),
     code_challenge: str = Form(""),
     code_challenge_method: str = Form(""),
@@ -301,7 +422,15 @@ async def authorize_post(
     _require_internal_provider()
     check_rate_limit(f"authorize:{client_ip(request)}", limit=20, window_seconds=60)
     cookie_csrf = request.cookies.get(_OAUTH_CSRF_COOKIE, "")
-    if not csrf_token or not cookie_csrf or not secrets.compare_digest(csrf_token, cookie_csrf):
+    # Compare bytes: compare_digest raises TypeError on non-ASCII str input.
+    if (
+        not csrf_token
+        or not cookie_csrf
+        or not secrets.compare_digest(
+            csrf_token.encode("utf-8", "surrogatepass"),
+            cookie_csrf.encode("utf-8", "surrogatepass"),
+        )
+    ):
         raise HTTPException(400, "Invalid CSRF token")
 
     settings = get_settings()
@@ -372,10 +501,30 @@ async def _revoke_refresh_family(session: AsyncSession, family_id: uuid.UUID) ->
     )
 
 
+_NO_STORE = {"Cache-Control": "no-store", "Pragma": "no-cache"}
+
+
+def _token_error(error: str, description: str) -> JSONResponse:
+    """Build an RFC 6749 section 5.2 error response for the token endpoint.
+
+    Args:
+        error: Registered error code, for example ``invalid_grant``.
+        description: Human-readable detail for the client developer.
+
+    Returns:
+        JSON 400 response that must not be cached.
+    """
+    return JSONResponse(
+        {"error": error, "error_description": description},
+        status_code=400,
+        headers=_NO_STORE,
+    )
+
+
 @router.post("/oauth/token")
 async def token_endpoint(
     request: Request,
-    grant_type: str = Form(...),
+    grant_type: str | None = Form(None),
     code: str | None = Form(None),
     redirect_uri: str | None = Form(None),
     client_id: str | None = Form(None),
@@ -383,11 +532,15 @@ async def token_endpoint(
     refresh_token: str | None = Form(None),
     session: AsyncSession = Depends(db_session),
 ) -> JSONResponse:
+    """Exchange an authorization code or a refresh token for tokens (RFC 6749 section 5)."""
     check_rate_limit(f"token:{client_ip(request)}", limit=20, window_seconds=60)
     settings = get_settings()
+    if not grant_type:
+        return _token_error("invalid_request", "grant_type is required")
+
     if grant_type == "authorization_code":
         if not code or not client_id:
-            raise HTTPException(400, "code and client_id required")
+            return _token_error("invalid_request", "code and client_id are required")
         result = await session.execute(
             text(
                 """
@@ -404,17 +557,21 @@ async def token_endpoint(
         )
         row = result.mappings().first()
         if not row:
-            raise HTTPException(400, "Invalid code")
+            await session.rollback()
+            return _token_error("invalid_grant", "Invalid code")
         if row["client_id"] != client_id:
-            raise HTTPException(400, "client_id mismatch")
+            await session.rollback()
+            return _token_error("invalid_grant", "client_id mismatch")
         if row["redirect_uri"] != redirect_uri:
-            raise HTTPException(400, "redirect_uri mismatch")
+            await session.rollback()
+            return _token_error("invalid_grant", "redirect_uri mismatch")
         client_row = await session.execute(
             select(OAuthClient).where(OAuthClient.client_id == client_id)
         )
         client = client_row.scalar_one_or_none()
         if not client:
-            raise HTTPException(400, "Unknown client_id")
+            await session.rollback()
+            return _token_error("invalid_client", "Unknown client_id")
         if (client.is_public or row["code_challenge"]) and not (
             row["code_challenge"]
             and code_verifier
@@ -422,9 +579,11 @@ async def token_endpoint(
                 code_verifier, row["code_challenge"], row["code_challenge_method"] or ""
             )
         ):
-            raise HTTPException(400, "PKCE verification failed")
+            await session.rollback()
+            return _token_error("invalid_grant", "PKCE verification failed")
         if row["user_id"] is None:
-            raise HTTPException(400, "Invalid code")
+            await session.rollback()
+            return _token_error("invalid_grant", "Invalid code")
         subject, email_claim, provider = str(row["user_id"]), None, "internal"
         token_user_id = row["user_id"]
         access = await issue_access_token(
@@ -452,15 +611,16 @@ async def token_endpoint(
             {
                 "access_token": access,
                 "token_type": "Bearer",
-                "expires_in": 3600,
+                "expires_in": ACCESS_TOKEN_SECONDS,
                 "refresh_token": refresh,
                 "scope": row["scope"],
-            }
+            },
+            headers=_NO_STORE,
         )
 
     if grant_type == "refresh_token":
         if not refresh_token or not client_id:
-            raise HTTPException(400, "refresh_token and client_id required")
+            return _token_error("invalid_request", "refresh_token and client_id are required")
         token_h = hash_token(refresh_token)
         # Peek first for reuse detection (already-revoked presented again).
         existing = (
@@ -475,7 +635,7 @@ async def token_endpoint(
         ):
             await _revoke_refresh_family(session, existing.family_id)
             await session.commit()
-            raise HTTPException(400, "Invalid refresh token")
+            return _token_error("invalid_grant", "Invalid refresh token")
 
         # Atomic consume: only one concurrent refresh wins the row.
         consumed = (
@@ -500,7 +660,7 @@ async def token_endpoint(
         )
         if not consumed or consumed["user_id"] is None:
             await session.rollback()
-            raise HTTPException(400, "Invalid refresh token")
+            return _token_error("invalid_grant", "Invalid refresh token")
 
         new_refresh = new_opaque_token()
         session.add(
@@ -526,10 +686,11 @@ async def token_endpoint(
             {
                 "access_token": access,
                 "token_type": "Bearer",
-                "expires_in": 3600,
+                "expires_in": ACCESS_TOKEN_SECONDS,
                 "refresh_token": new_refresh,
                 "scope": consumed["scope"],
-            }
+            },
+            headers=_NO_STORE,
         )
 
-    raise HTTPException(400, f"Unsupported grant_type: {grant_type}")
+    return _token_error("unsupported_grant_type", f"Unsupported grant_type: {grant_type}")

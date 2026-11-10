@@ -1,0 +1,251 @@
+name: CI
+
+# Runs on every pull request and every push to main. Other workflows can call
+# it (workflow_call) to require a green run before they continue.
+# Every job uses a GitHub-hosted runner. Do not route pull_request jobs to a
+# self-hosted runner.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  backend:
+    name: Backend (image build, ruff, pytest, alembic)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      IMAGE: memchentic:ci
+      # Keep equal to the Postgres image in docker/docker-compose.yaml.
+      POSTGRES_IMAGE: pgvector/pgvector:0.8.7-pg16
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Build the application image with the dev extra
+        run: |
+          docker build \
+            --build-arg INSTALL_DEV=1 \
+            --file docker/Dockerfile \
+            --tag "${IMAGE}" \
+            .
+
+      - name: Check that the image runs as uid 10001
+        run: test "$(docker run --rm --entrypoint id "${IMAGE}" -u)" = "10001"
+
+      - name: Start Postgres with pgvector
+        run: |
+          set -euo pipefail
+          # Random per-run password: nothing static to leak, and 16+ characters
+          # so tests/conftest.py keeps it instead of substituting its own.
+          POSTGRES_PASSWORD="$(openssl rand -hex 24)"
+          echo "::add-mask::${POSTGRES_PASSWORD}"
+          echo "POSTGRES_PASSWORD=${POSTGRES_PASSWORD}" >> "${GITHUB_ENV}"
+          export POSTGRES_PASSWORD
+          docker network create ci
+          docker run --detach --name postgres --network ci \
+            --env POSTGRES_USER=memchentic \
+            --env POSTGRES_PASSWORD \
+            --env POSTGRES_DB=memchentic \
+            "${POSTGRES_IMAGE}"
+          # -h 127.0.0.1: the init-time server listens on the socket only.
+          for _ in $(seq 1 30); do
+            if docker exec postgres pg_isready -h 127.0.0.1 -U memchentic -d memchentic; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs postgres
+          exit 1
+
+      - name: ruff check
+        run: |
+          docker run --rm \
+            --volume "${GITHUB_WORKSPACE}/application/api/tests:/opt/memchentic/tests:ro" \
+            "${IMAGE}" \
+            ruff check --no-cache src tests
+
+      - name: ruff format --check
+        run: |
+          docker run --rm \
+            --volume "${GITHUB_WORKSPACE}/application/api/tests:/opt/memchentic/tests:ro" \
+            "${IMAGE}" \
+            ruff format --check --no-cache src tests
+
+      - name: mypy
+        run: docker run --rm "${IMAGE}" mypy --cache-dir=/tmp/mypy_cache
+
+      - name: pytest with coverage
+        # tests/conftest.py forces POSTGRES_DB=memchentic_test, creates that
+        # database and migrates it to head.
+        run: |
+          docker run --rm --network ci \
+            --env POSTGRES_HOSTNAME=postgres \
+            --env POSTGRES_USER=memchentic \
+            --env POSTGRES_PASSWORD \
+            --env COVERAGE_FILE=/tmp/.coverage \
+            --volume "${GITHUB_WORKSPACE}/application/api/tests:/opt/memchentic/tests:ro" \
+            "${IMAGE}" \
+            pytest -q -p no:cacheprovider --cov=memchentic --cov-report=term-missing
+
+      - name: alembic check
+        # Compares the models with memchentic_test, which the pytest step
+        # migrated to head. Fails today: models and migrations disagree.
+        # Remove continue-on-error when PERF-002 is fixed.
+        continue-on-error: true
+        run: |
+          docker run --rm --network ci \
+            --env POSTGRES_HOSTNAME=postgres \
+            --env POSTGRES_USER=memchentic \
+            --env POSTGRES_PASSWORD \
+            --env POSTGRES_DB=memchentic_test \
+            "${IMAGE}" \
+            alembic check
+
+      - name: Build the production image variant
+        run: docker build --file docker/Dockerfile --tag memchentic:ci-prod .
+
+      - name: Postgres logs on failure
+        if: failure()
+        run: docker logs postgres || true
+
+  gui:
+    name: GUI (typecheck, build)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: application/gui
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: application/gui/package-lock.json
+
+      - name: Install dependencies from the lockfile
+        run: npm ci --no-audit --no-fund
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  helm:
+    name: Helm (lint, render, assertions)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Show the Helm version
+        run: helm version --short
+
+      - name: helm lint
+        run: |
+          helm lint helm \
+            --set config.baseUrl=https://memchentic.example.com \
+            --set secrets.existingSecret=memchentic-env
+
+      - name: Render every supported mode
+        # The values below are render-only placeholders, not credentials.
+        run: |
+          set -euo pipefail
+          base=(--set config.baseUrl=https://memchentic.example.com)
+          existing=(--set secrets.existingSecret=memchentic-env)
+          inline=(
+            --set secrets.mode=inline
+            --set secrets.inline.ADMIN_PASSWORD=render-only-not-a-secret-01
+            --set secrets.inline.ADMIN_API_KEY=render-only-not-a-secret-02
+            --set secrets.inline.POSTGRES_PASSWORD=render-only-not-a-secret-03
+            --set secrets.inline.POSTGRES_APP_PASSWORD=render-only-not-a-secret-04
+            --set secrets.inline.ENCRYPTION_KEY=render-only-not-a-secret-key-0000005
+          )
+          external=(
+            --set secrets.mode=externalSecret
+            --set secrets.externalSecret.secretStoreRef.name=render-only-store
+            --set secrets.externalSecret.data.ADMIN_PASSWORD.key=memchentic/render
+            --set secrets.externalSecret.data.ADMIN_API_KEY.key=memchentic/render
+            --set secrets.externalSecret.data.POSTGRES_PASSWORD.key=memchentic/render
+            --set secrets.externalSecret.data.POSTGRES_APP_PASSWORD.key=memchentic/render
+            --set secrets.externalSecret.data.ENCRYPTION_KEY.key=memchentic/render
+            --set secrets.externalSecret.data.OAUTH_CLIENT_SECRET.key=memchentic/render
+          )
+          helm template ci helm "${base[@]}" "${existing[@]}" > /dev/null
+          helm template ci helm "${base[@]}" "${inline[@]}" > /dev/null
+          helm template ci helm "${base[@]}" "${external[@]}" > /dev/null
+          helm template ci helm "${base[@]}" "${existing[@]}" \
+            --set postgres.enabled=false \
+            --set config.postgresHostname=db.example.com \
+            --set ingress.enabled=true > /dev/null
+
+      - name: Chart assertions
+        # One line per chart finding, appended at the end of this script.
+        # Use grep -c: it exits 1 when the count is 0, which fails the step.
+        # Do not use grep -q: it closes the pipe early and helm then fails
+        # under pipefail.
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC2120 # extra --set flags are optional
+          render() {
+            helm template ci helm \
+              --set config.baseUrl=https://memchentic.example.com \
+              --set secrets.existingSecret=memchentic-env "$@"
+          }
+          # shellcheck disable=SC2119
+          render | grep -c '^kind: Deployment$'
+
+  lint:
+    name: Lint (actionlint, hadolint)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: actionlint
+        # Fails today on publish-app-image.yml: one expression error
+        # (SEC-075) and three SC2129 reports (INFRA-015). Remove
+        # continue-on-error when both are fixed.
+        continue-on-error: true
+        run: |
+          docker run --rm \
+            --volume "${GITHUB_WORKSPACE}:/repo" \
+            --workdir /repo \
+            rhysd/actionlint:1.7.12 -color
+
+      - name: hadolint
+        # Fails today on DL3008 and DL3013. Remove continue-on-error in the
+        # commit that replaces docker/Dockerfile (INFRA-001).
+        continue-on-error: true
+        run: docker run --rm --interactive hadolint/hadolint:v2.15.1 < docker/Dockerfile

@@ -183,3 +183,34 @@ def test_health_exposes_embedder(client: TestClient) -> None:
     assert body["service"] == "memchentic"
     assert "embedder" in body
     assert body["status"] in {"ok", "degraded"}
+
+
+def test_admin_memberships_list_only_own_spaces(client: TestClient) -> None:
+    """Admin `memberships` are the admin's own spaces, not every space."""
+    other = _user(client)
+    other_personal = client.get("/api/me", headers=other).json()["personal_space_id"]
+    admin = {"Authorization": f"Bearer {ADMIN_KEY}"}
+
+    me = client.get("/api/me", headers=admin).json()
+    personals = [m["id"] for m in me["memberships"] if m["kind"] == "personal"]
+    assert personals == [me["personal_space_id"]]
+    assert other_personal not in {m["id"] for m in me["memberships"]}
+
+    mcp = client.post(
+        "/mcp",
+        headers={**admin, "Accept": "application/json, text/event-stream"},
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "me", "arguments": {}},
+        },
+    )
+    mcp.raise_for_status()
+    mcp_me = mcp.json()["result"]["structuredContent"]
+    assert other_personal not in {m["id"] for m in mcp_me["memberships"]}
+    assert mcp_me["is_admin"] is True
+
+    # The admin directory is unchanged: every space is still listed there.
+    directory = {s["id"] for s in client.get("/api/spaces", headers=admin).json()}
+    assert other_personal in directory

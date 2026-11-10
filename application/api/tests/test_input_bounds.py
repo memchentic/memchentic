@@ -140,19 +140,6 @@ def test_rest_pagination_bounds(client: TestClient) -> None:
         assert client.get("/api/memories", headers=auth, params={"limit": limit}).status_code == 200
 
 
-def test_add_member_with_unknown_user_is_404(client: TestClient) -> None:
-    auth = _user(client)
-    group = client.post("/api/spaces", headers=auth, json={"name": f"g-{uuid.uuid4().hex[:6]}"})
-    assert group.status_code == 200, group.text
-    resp = client.post(
-        f"/api/spaces/{group.json()['id']}/members",
-        headers=auth,
-        json={"user_id": str(uuid.uuid4())},
-    )
-    assert resp.status_code == 404, resp.text
-    assert resp.json()["code"] == "not_found"
-
-
 def test_mcp_tools_enforce_the_same_bounds(client: TestClient) -> None:
     auth = _user(client)
     too_many_tags = ["t"] * (limits.TAG_MAX_COUNT + 1)

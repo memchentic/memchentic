@@ -19,6 +19,12 @@ export type Me = {
   personal_space_id?: string | null;
   default_shared_space_id?: string | null;
   memberships: { id: string; name: string; kind: string }[];
+  pending_invites?: {
+    id: string;
+    name: string;
+    creator_email: string | null;
+    creator_display_name: string | null;
+  }[];
 };
 
 type AuthState = {

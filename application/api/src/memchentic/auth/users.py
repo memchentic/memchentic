@@ -517,7 +517,9 @@ async def directory_user_visible(
         .join(caller_m, caller_m.space_id == Space.id)
         .where(
             other_m.user_id == user_id,
+            other_m.accepted_at.is_not(None),
             caller_m.user_id == principal.user_id,
+            caller_m.accepted_at.is_not(None),
             Space.kind == SpaceKind.group,
             Space.archived_at.is_(None),
         )
@@ -553,6 +555,8 @@ async def list_directory_users(session: AsyncSession, principal: Principal) -> l
         .join(caller_m, caller_m.space_id == Space.id)
         .where(
             caller_m.user_id == principal.user_id,
+            caller_m.accepted_at.is_not(None),
+            other_m.accepted_at.is_not(None),
             Space.kind == SpaceKind.group,
             Space.archived_at.is_(None),
         )
@@ -564,10 +568,11 @@ async def list_directory_users(session: AsyncSession, principal: Principal) -> l
 async def lookup_user_by_email(
     session: AsyncSession, principal: Principal, email: str
 ) -> User | None:
-    """Exact email lookup for roster managers (and admins).
+    """Exact email lookup, for admins only.
 
-    Returns None for a miss and for callers who are not admins and do not
-    manage any group — callers should map both to the same 404.
+    Returns None for a miss and for every non-admin caller. The route maps
+    both to the same 404, so the lookup cannot be used to test whether an
+    address is registered.
 
     Args:
         session: Database session.
@@ -577,28 +582,12 @@ async def lookup_user_by_email(
     Returns:
         The matching user, or None when not found / not authorized.
     """
+    if not principal.is_admin:
+        return None
     try:
-        user = await get_user_by_email(session, email)
+        return await get_user_by_email(session, email)
     except ValueError:
         return None
-    if not user:
-        return None
-    if principal.is_admin:
-        return user
-    if not principal.user_id:
-        return None
-    managed = await session.execute(
-        select(Space.id)
-        .where(
-            Space.kind == SpaceKind.group,
-            Space.archived_at.is_(None),
-            Space.created_by_user_id == principal.user_id,
-        )
-        .limit(1)
-    )
-    if managed.scalar_one_or_none() is None:
-        return None
-    return user
 
 
 async def user_delete_eligibility(

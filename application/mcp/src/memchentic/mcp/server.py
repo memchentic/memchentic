@@ -47,7 +47,7 @@ async def me() -> dict[str, Any]:
     """Who am I (subject, provider, personal space, memberships)?"""
     principal = require_principal()
     session = require_session()
-    spaces = await space_service.list_spaces(session, principal)
+    spaces = await space_service.list_member_spaces(session, principal)
     personal = (
         await space_service.get_personal_space(session, principal.user_id)
         if principal.user_id
@@ -65,13 +65,19 @@ async def me() -> dict[str, Any]:
         "is_admin": principal.is_admin,
         "personal_space_id": str(personal.id) if personal else None,
         "memberships": [{"id": str(s.id), "name": s.name, "kind": s.kind.value} for s in spaces],
+        "pending_invite_count": len(await space_service.list_pending_invites(session, principal)),
     }
 
 
 @mcp.tool
 @_reported
 async def space_list() -> list[dict[str, Any]]:
-    """Personal + groups I belong to."""
+    """Spaces I can read: my personal space and my groups.
+
+    For an administrator this is every space on the instance. ``me`` lists
+    only the spaces the caller belongs to; write to those unless the user
+    names another space.
+    """
     principal = require_principal()
     session = require_session()
     spaces = await space_service.list_spaces(session, principal)
@@ -107,8 +113,9 @@ async def space_show(space_id: str) -> dict[str, Any]:
                 "user_id": str(m.user_id),
                 "email": m.user.email if m.user else None,
                 "display_name": m.user.display_name if m.user else None,
+                "pending": m.accepted_at is None,
             }
-            for m in space.members
+            for m in space_service.visible_members(space, principal)
         ],
     }
 
@@ -232,7 +239,11 @@ async def revise(
     path_hint: str | None = None,
     repo_hint: str | None = None,
 ) -> dict[str, Any]:
-    """Patch title/body/type/tags/expiry."""
+    """Patch title/body/type/tags/expiry.
+
+    Allowed for the creator, the group creator, or an admin. Other group
+    members get an error.
+    """
     principal = require_principal()
     session = require_session()
     memory = await memory_service.revise(
@@ -359,7 +370,7 @@ async def guide_write(
     ttl_days: int | None = None,
     permanent: bool = False,
 ) -> dict[str, Any]:
-    """Upsert a guide; duplicate content strengthens confidence and renews it.
+    """Upsert one of your own guides; repeating it strengthens confidence and renews it.
 
     Target resolves like remember: space_id, then group name, then
     visibility="shared", else personal. Lifetime like remember: omit for the

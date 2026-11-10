@@ -20,7 +20,12 @@ type SpaceDetail = {
   name: string;
   kind: string;
   created_by: string | null;
-  members: { user_id: string; email: string | null; display_name: string | null }[];
+  members: {
+    user_id: string;
+    email: string | null;
+    display_name: string | null;
+    pending?: boolean;
+  }[];
 };
 
 type DirectoryUser = {
@@ -185,6 +190,9 @@ export default function GroupDetailPage() {
                       {m.user_id === group.created_by && (
                         <span className="ml-2 text-xs text-faint">creator</span>
                       )}
+                      {m.pending && (
+                        <span className="ml-2 text-xs text-faint">invited</span>
+                      )}
                     </td>
                     <td className="text-muted">{m.email ?? "—"}</td>
                     <td className="text-right">
@@ -243,6 +251,7 @@ function AddMembersModal({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -313,6 +322,31 @@ function AddMembersModal({
     });
   }
 
+  const emailQuery = query.trim();
+  const canInviteByEmail =
+    emailQuery.includes("@") &&
+    !emailQuery.includes(" ") &&
+    !filtered.some((u) => u.email.toLowerCase() === emailQuery.toLowerCase());
+
+  async function inviteByEmail() {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await api(`/api/spaces/${groupId}/members`, {
+        method: "POST",
+        body: JSON.stringify({ email: emailQuery }),
+      });
+      setNotice(`If ${emailQuery} has an account, an invitation is waiting for them.`);
+      setQuery("");
+      onAdded();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function done() {
     if (!selected.size) {
       onClose();
@@ -361,8 +395,23 @@ function AddMembersModal({
         </div>
       )}
       <ul className="min-h-0 flex-1 overflow-y-auto divide-y divide-border">
-        {!filtered.length && (
+        {notice && <li className="px-4 py-3 text-sm text-muted">{notice}</li>}
+        {!filtered.length && !canInviteByEmail && (
           <li className="px-4 py-6 text-center text-sm text-faint">No users to add.</li>
+        )}
+        {canInviteByEmail && (
+          <li className="flex items-center justify-between gap-3 px-4 py-3">
+            <div className="min-w-0 truncate text-sm text-ink">Invite {emailQuery}</div>
+            <button
+              className="btn shrink-0"
+              type="button"
+              aria-label={`Invite ${emailQuery}`}
+              onClick={() => void inviteByEmail()}
+              disabled={busy}
+            >
+              <FontAwesomeIcon icon={faPlus} />
+            </button>
+          </li>
         )}
         {filtered.map((u) => {
           const picked = selected.has(u.id);

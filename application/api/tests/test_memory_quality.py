@@ -236,3 +236,16 @@ def test_overlap_report_scans_past_old_window_and_flags_near_dup(client: TestCli
     assert "near_dup" in reasons
     pair_ids = {frozenset((p["a"], p["b"])) for p in report["near_duplicates"]}
     assert len(pair_ids) == len(report["near_duplicates"])
+
+
+def test_rerank_caps_guide_confidence() -> None:
+    """Confidence above the cap does not buy more rank."""
+    now = datetime.now(UTC)
+    base = {"kind": MemoryKind.guide, "entry_type": None, "created_at": now, "updated_at": now}
+    capped = _memory(confidence=5.0, **base)
+    inflated = _memory(confidence=500.0, **base)
+    weak = _memory(confidence=1.0, **base)
+    assert rerank_score(inflated, 0.03, now=now) == pytest.approx(
+        rerank_score(capped, 0.03, now=now)
+    )
+    assert rerank_score(capped, 0.03, now=now) > rerank_score(weak, 0.03, now=now)

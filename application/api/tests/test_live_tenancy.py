@@ -45,6 +45,20 @@ def _user(client: TestClient) -> tuple[str, str, str]:
     return token, user_id, email
 
 
+def _join(
+    client: TestClient, owner_token: str, member_token: str, member_id: str, group_id: str
+) -> None:
+    """Owner invites ``member_id``; the member accepts."""
+    owner = {"Authorization": f"Bearer {owner_token}"}
+    member = {"Authorization": f"Bearer {member_token}"}
+    added = client.post(
+        f"/api/spaces/{group_id}/members", headers=owner, json={"user_id": member_id}
+    )
+    assert added.status_code == 200, added.text
+    accepted = client.post(f"/api/spaces/{group_id}/accept", headers=member)
+    assert accepted.status_code == 200, accepted.text
+
+
 def _tool(client: TestClient, token: str, name: str, args: dict[str, Any]) -> dict[str, Any]:
     """Call an MCP tool over streamable HTTP.
 
@@ -136,6 +150,7 @@ def test_personal_isolation_and_group_lifecycle(client: TestClient) -> None:
         ).status_code
         == 200
     )
+    assert client.post(f"/api/spaces/{group['id']}/accept", headers=auth_b).status_code == 200
     shared = _tool(
         client,
         token_a,
@@ -161,19 +176,12 @@ def test_personal_isolation_and_group_lifecycle(client: TestClient) -> None:
 def test_authenticated_user_directory_omits_admin_fields(client: TestClient) -> None:
     """Non-admins see shared-group peers without providers/created_at."""
     token_a, user_a, _ = _user(client)
-    _token_b, user_b, email_b = _user(client)
+    token_b, user_b, email_b = _user(client)
     auth_a = {"Authorization": f"Bearer {token_a}"}
     group = client.post(
         "/api/spaces", headers=auth_a, json={"name": f"dir-{uuid.uuid4().hex[:8]}"}
     ).json()
-    assert (
-        client.post(
-            f"/api/spaces/{group['id']}/members",
-            headers=auth_a,
-            json={"user_id": user_b},
-        ).status_code
-        == 200
-    )
+    _join(client, token_a, token_b, user_b, group["id"])
     rows = client.get("/api/users", headers=auth_a).json()
     assert isinstance(rows, list)
     by_id = {r["id"]: r for r in rows}
@@ -206,12 +214,7 @@ def test_user_detail_groups_are_acl_scoped(client: TestClient) -> None:
     private = client.post(
         "/api/spaces", headers=auth_a, json={"name": f"private-{uuid.uuid4().hex[:8]}"}
     ).json()
-    assert (
-        client.post(
-            f"/api/spaces/{shared['id']}/members", headers=auth_a, json={"user_id": user_b}
-        ).status_code
-        == 200
-    )
+    _join(client, token_a, token_b, user_b, shared["id"])
 
     detail_b = client.get(f"/api/users/{user_b}", headers=auth_a).json()
     assert detail_b["id"] == user_b
@@ -263,12 +266,7 @@ def test_user_detail_acl_edges(client: TestClient) -> None:
     solo = client.post(
         "/api/spaces", headers=auth_a, json={"name": f"solo-{uuid.uuid4().hex[:6]}"}
     ).json()
-    assert (
-        client.post(
-            f"/api/spaces/{both['id']}/members", headers=auth_a, json={"user_id": user_b}
-        ).status_code
-        == 200
-    )
+    _join(client, token_a, token_b, user_b, both["id"])
 
     mutual = client.get(f"/api/users/{user_b}", headers=auth_a).json()
     assert {t["id"] for t in mutual["groups"]} == {both["id"]}
@@ -583,7 +581,7 @@ def test_roster_rules_and_no_email_enumeration(client: TestClient) -> None:
 
     for email in (email_b, email_c):
         assert client.post(members, headers=auth[token_a], json={"email": email}).status_code == 200
-    assert client.delete(f"{members}/{user_c}", headers=auth[token_b]).status_code == 403
+    assert client.delete(f"{members}/{user_c}", headers=auth[token_b]).status_code == 404
     if ADMIN_KEY:
         admin = {"Authorization": f"Bearer {ADMIN_KEY}"}
         assert client.delete(f"{members}/{user_a}", headers=admin).status_code in (400, 403)
@@ -599,3 +597,125 @@ def test_non_admin_cannot_issue_keys_for_another_user(client: TestClient) -> Non
         json={"name": "steal", "user_id": user_b},
     )
     assert issued.status_code == 403
+
+
+def test_shared_write_is_refused_for_a_group_the_caller_did_not_join(
+    client: TestClient,
+) -> None:
+    """Being added to a group must not redirect visibility=shared writes."""
+    token_a, _, _ = _user(client)
+    token_b, user_b, _ = _user(client)
+    auth_a = {"Authorization": f"Bearer {token_a}"}
+    auth_b = {"Authorization": f"Bearer {token_b}"}
+    group = client.post(
+        "/api/spaces", headers=auth_a, json={"name": f"capture-{uuid.uuid4().hex[:8]}"}
+    ).json()
+    assert (
+        client.post(
+            f"/api/spaces/{group['id']}/members", headers=auth_a, json={"user_id": user_b}
+        ).status_code
+        == 200
+    )
+    write = client.post(
+        "/api/memories",
+        headers=auth_b,
+        json={"title": f"t {uuid.uuid4().hex}", "body": "b", "visibility": "shared", "force": True},
+    )
+    assert write.status_code == 422, write.text
+
+
+def test_added_member_must_accept_before_group_is_visible(client: TestClient) -> None:
+    """An invite grants nothing until the invited user accepts it."""
+    token_a, user_a, _ = _user(client)
+    token_b, user_b, email_b = _user(client)
+    auth_a = {"Authorization": f"Bearer {token_a}"}
+    auth_b = {"Authorization": f"Bearer {token_b}"}
+    marker = uuid.uuid4().hex
+    group = client.post("/api/spaces", headers=auth_a, json={"name": f"invite {marker}"}).json()
+    gid = group["id"]
+    assert (
+        client.post(
+            f"/api/spaces/{gid}/members", headers=auth_a, json={"email": email_b}
+        ).status_code
+        == 200
+    )
+    guide = client.post(
+        "/api/guides",
+        headers=auth_a,
+        json={"title": f"guide {marker}", "body": f"body {marker}", "space_id": gid},
+    ).json()
+
+    def b_guide_ids() -> set[str]:
+        found = _tool(client, token_b, "guide_find", {"query": f"guide {marker}"})
+        return {d["id"] for d in found["structuredContent"]["result"]}
+
+    def b_write(**target: Any) -> int:
+        return client.post(
+            "/api/memories",
+            headers=auth_b,
+            json={"title": f"t {uuid.uuid4().hex}", "body": marker, "force": True, **target},
+        ).status_code
+
+    # Before accept: nothing from the group reaches B, and B cannot write into it.
+    me_b = client.get("/api/me", headers=auth_b).json()
+    assert gid not in {m["id"] for m in me_b["memberships"]}
+    assert [i["id"] for i in me_b["pending_invites"]] == [gid]
+    assert guide["id"] not in b_guide_ids()
+    assert _tool(client, token_b, "open", {"id": guide["id"]}).get("isError") is True
+    assert client.get(f"/api/spaces/{gid}", headers=auth_b).status_code == 404
+    assert b_write(visibility="shared") == 422
+    assert b_write(space_id=gid) == 404
+    mcp_me = _tool(client, token_b, "me", {})["structuredContent"]
+    assert mcp_me["pending_invite_count"] == 1
+    assert "pending_invites" not in mcp_me
+    roster = client.get(f"/api/spaces/{gid}", headers=auth_a).json()["members"]
+    assert {m["user_id"] for m in roster} == {user_a}
+    assert user_b not in {u["id"] for u in client.get("/api/users", headers=auth_a).json()}
+
+    # Accept (idempotent): the group opens up.
+    for _ in range(2):
+        accepted = client.post(f"/api/spaces/{gid}/accept", headers=auth_b)
+        assert accepted.status_code == 200, accepted.text
+        assert accepted.json()["id"] == gid
+    me_b = client.get("/api/me", headers=auth_b).json()
+    assert gid in {m["id"] for m in me_b["memberships"]}
+    assert me_b["pending_invites"] == []
+    assert guide["id"] in b_guide_ids()
+    shared = client.post(
+        "/api/memories",
+        headers=auth_b,
+        json={"title": f"s {marker}", "body": marker, "visibility": "shared", "force": True},
+    )
+    assert shared.status_code == 200, shared.text
+    assert shared.json()["space_id"] == gid
+    roster = client.get(f"/api/spaces/{gid}", headers=auth_a).json()["members"]
+    assert {m["user_id"] for m in roster} == {user_a, user_b}
+    assert all(m["pending"] is False for m in roster)
+
+
+def test_invite_can_be_declined_and_cannot_be_accepted_by_others(client: TestClient) -> None:
+    """Only the invited user can accept; declining removes the invite."""
+    token_a, _, _ = _user(client)
+    token_b, user_b, _ = _user(client)
+    token_c, _, _ = _user(client)
+    auth_a = {"Authorization": f"Bearer {token_a}"}
+    auth_b = {"Authorization": f"Bearer {token_b}"}
+    auth_c = {"Authorization": f"Bearer {token_c}"}
+    group = client.post(
+        "/api/spaces", headers=auth_a, json={"name": f"decline-{uuid.uuid4().hex[:8]}"}
+    ).json()
+    gid = group["id"]
+    assert (
+        client.post(
+            f"/api/spaces/{gid}/members", headers=auth_a, json={"user_id": user_b}
+        ).status_code
+        == 200
+    )
+
+    assert client.post(f"/api/spaces/{gid}/accept", headers=auth_c).status_code == 404
+    # C cannot see the group: SEC-051 maps "Group not found" to 404.
+    assert client.delete(f"/api/spaces/{gid}/members/{user_b}", headers=auth_c).status_code == 404
+
+    assert client.delete(f"/api/spaces/{gid}/members/{user_b}", headers=auth_b).status_code == 200
+    assert client.get("/api/me", headers=auth_b).json()["pending_invites"] == []
+    assert client.post(f"/api/spaces/{gid}/accept", headers=auth_b).status_code == 404

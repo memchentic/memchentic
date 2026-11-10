@@ -176,3 +176,16 @@ def test_rerank_rewards_recall_count() -> None:
     cold = Memory(**base, recall_count=0)
     hot = Memory(**{**base, "id": uuid.uuid4()}, recall_count=20)
     assert rerank_score(hot, 0.02, now=now) > rerank_score(cold, 0.02, now=now)
+
+
+def test_guide_confidence_is_capped(client: TestClient) -> None:
+    """Repeating guide_write stops raising confidence at the cap."""
+    auth = _user(client)
+    marker = uuid.uuid4().hex[:12]
+    args = {"title": f"cap {marker}", "body": f"cap body {marker}"}
+    last = None
+    for _ in range(8):
+        last = _tool(client, auth, "guide_write", args)
+    assert last is not None
+    assert last["confidence"] == 5.0
+    assert last["recall_count"] == 7

@@ -27,6 +27,7 @@ from memchentic.embeddings import get_embedder
 from memchentic.events import memory_event_from_row, publish_memory_event
 from memchentic.models.entities import EntryType, Memory, MemoryKind, User
 from memchentic.search.hybrid import (
+    GUIDE_CONFIDENCE_MAX,
     Digest,
     active_memory_clause,
     escape_ilike,
@@ -108,6 +109,7 @@ def memory_to_dict(m: Memory, *, full: bool = False) -> dict[str, Any]:
         "recall_count": m.recall_count or 0,
         "last_recalled_at": m.last_recalled_at.isoformat() if m.last_recalled_at else None,
         "created_by": str(m.created_by_user_id) if m.created_by_user_id else None,
+        "updated_by": str(m.updated_by_user_id) if m.updated_by_user_id else None,
         "created_at": m.created_at.isoformat() if m.created_at else None,
         "updated_at": m.updated_at.isoformat() if m.updated_at else None,
         "provenance": m.provenance or {},
@@ -248,6 +250,7 @@ def digest_to_dict(d: Digest) -> dict[str, Any]:
         "space_id": d.space_id,
         "kind": d.kind,
         "created_by": d.created_by,
+        "updated_by": d.updated_by,
         "updated_at": d.updated_at,
         "expires_at": d.expires_at,
     }
@@ -256,32 +259,40 @@ def digest_to_dict(d: Digest) -> dict[str, Any]:
 async def enrich_creator_fields(
     session: AsyncSession, rows: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
-    """Attach ``created_by_email`` / ``created_by_display_name`` from users.
+    """Attach creator and last-editor labels from users.
+
+    Adds ``created_by_email`` / ``created_by_display_name`` and
+    ``updated_by_email`` / ``updated_by_display_name``.
 
     Args:
         session: DB session.
-        rows: Memory or digest dicts that may include ``created_by``.
+        rows: Memory or digest dicts that may include ``created_by`` and
+            ``updated_by``.
 
     Returns:
-        The same list, mutated in place with creator label fields.
+        The same list, mutated in place with the label fields.
     """
     raw_ids: set[uuid.UUID] = set()
     for row in rows:
-        cid = row.get("created_by")
-        if not cid:
-            continue
-        try:
-            raw_ids.add(uuid.UUID(str(cid)))
-        except ValueError:
-            continue
+        for key in ("created_by", "updated_by"):
+            value = row.get(key)
+            if not value:
+                continue
+            try:
+                raw_ids.add(uuid.UUID(str(value)))
+            except ValueError:
+                continue
     by_id: dict[str, User] = {}
     if raw_ids:
         result = await session.execute(select(User).where(User.id.in_(raw_ids)))
         by_id = {str(u.id): u for u in result.scalars().all()}
     for row in rows:
-        user = by_id.get(str(row.get("created_by") or ""))
-        row["created_by_email"] = user.email if user else None
-        row["created_by_display_name"] = user.display_name if user else None
+        creator = by_id.get(str(row.get("created_by") or ""))
+        row["created_by_email"] = creator.email if creator else None
+        row["created_by_display_name"] = creator.display_name if creator else None
+        editor = by_id.get(str(row.get("updated_by") or ""))
+        row["updated_by_email"] = editor.email if editor else None
+        row["updated_by_display_name"] = editor.display_name if editor else None
     return rows
 
 
@@ -365,12 +376,26 @@ async def find_near_duplicate(
     title: str,
     body: str,
     kind: MemoryKind,
+    created_by: uuid.UUID | None = None,
 ) -> Memory | None:
     """Find an active near-duplicate by embedding similarity or exact title.
 
     Past-due rows are ignored so expired memories do not block ``remember`` or
     become silent ``guide_write`` upsert targets. Exact title is checked across
     the whole space (not only the nearest-vector window).
+
+    Args:
+        session: Database session.
+        space_id: Space to search.
+        title: Candidate title.
+        body: Candidate body.
+        kind: Entry or guide.
+        created_by: When set, only memories created by this user match.
+            ``guide_write`` passes the caller so an upsert never replaces
+            another member's guide.
+
+    Returns:
+        The matching memory, or None.
     """
     settings = get_settings()
     active = active_memory_clause(include_expired=False)
@@ -386,6 +411,8 @@ async def find_near_duplicate(
         .order_by(Memory.updated_at.desc())
         .limit(1)
     )
+    if created_by is not None:
+        title_stmt = title_stmt.where(Memory.created_by_user_id == created_by)
     if active is not None:
         title_stmt = title_stmt.where(active)
     title_hit = (await session.execute(title_stmt)).scalar_one_or_none()
@@ -405,6 +432,8 @@ async def find_near_duplicate(
         .order_by(distance)
         .limit(settings.near_dup_candidates)
     )
+    if created_by is not None:
+        stmt = stmt.where(Memory.created_by_user_id == created_by)
     if active is not None:
         stmt = stmt.where(active)
     candidates = (await session.execute(stmt)).all()
@@ -538,11 +567,12 @@ async def open_memory(
 async def require_memory_manage(
     session: AsyncSession, principal: Principal, memory: Memory
 ) -> None:
-    """Raise unless the principal may forget/relocate ``memory``.
+    """Raise unless the principal may change, forget or relocate ``memory``.
 
     Allowed when the caller is an admin, the memory creator, or a manager of
-    the memory's group (``can_manage_group``). Member-level revise/guide_write
-    stay on ``open_memory`` only.
+    the memory's group (``can_manage_group``). ``revise``, ``forget`` and
+    ``relocate`` all call this. ``guide_write`` only upserts guides that the
+    caller created.
 
     Args:
         session: Database session.
@@ -591,6 +621,8 @@ async def revise(
     memory = await open_memory(session, principal, memory_id=memory_id)
     if not memory:
         raise NotFoundError("Memory not found")
+    # Same rule as forget/relocate: creator, group manager, or admin.
+    await require_memory_manage(session, principal, memory)
     new_type: EntryType | None = None
     if entry_type is not None:
         # Validate before any field is changed, so a refused call edits nothing.
@@ -619,6 +651,7 @@ async def revise(
     if text_changed:
         memory.embedding = await get_embedder().aembed_memory_text(memory.title, memory.body)
     memory.updated_at = datetime.now(UTC)
+    memory.updated_by_user_id = principal.user_id
     await publish_memory_event(session, memory_event_from_row("updated", memory))
     await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
     await session.refresh(memory)
@@ -674,6 +707,7 @@ def _digest_from_memory(m: Memory, *, score: float = 1.0) -> Digest:
         space_id=str(m.space_id),
         kind=m.kind.value,
         created_by=_creator_id(m),
+        updated_by=str(m.updated_by_user_id) if m.updated_by_user_id else None,
         updated_at=m.updated_at.isoformat() if m.updated_at else None,
         expires_at=m.expires_at.isoformat() if m.expires_at else None,
     )
@@ -749,6 +783,7 @@ async def relocate(
     left = memory_event_from_row("deleted", memory)
     memory.space_id = target.id
     memory.updated_at = datetime.now(UTC)
+    memory.updated_by_user_id = principal.user_id
     await publish_memory_event(session, left)
     await publish_memory_event(session, memory_event_from_row("created", memory))
     await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
@@ -845,10 +880,13 @@ async def guide_write(
     ttl_days: int | None = None,
     permanent: bool = False,
 ) -> Memory:
-    """Create a guide, or reinforce a near-duplicate one.
+    """Create a guide, or reinforce a near-duplicate guide of the caller.
 
     Reinforcement raises confidence, counts as a recall, and slides the expiry
     (an explicit ``expires_at`` / ``ttl_days`` / ``permanent`` replaces it).
+    Only guides created by the caller are upsert targets. A title or text
+    match on another member's guide creates a separate guide; use ``revise``
+    by id (creator, group manager, or admin) to change someone else's guide.
     """
     title = check_title(title)
     body = check_body(body)
@@ -859,11 +897,16 @@ async def guide_write(
     )
     explicit_ttl = expires_at is not None or ttl_days is not None or permanent
     dup = await find_near_duplicate(
-        session, space_id=space.id, title=title, body=body, kind=MemoryKind.guide
+        session,
+        space_id=space.id,
+        title=title,
+        body=body,
+        kind=MemoryKind.guide,
+        created_by=principal.user_id,
     )
     if dup:
         now = datetime.now(UTC)
-        dup.confidence = float(dup.confidence or 1.0) + 1.0
+        dup.confidence = min(GUIDE_CONFIDENCE_MAX, float(dup.confidence or 1.0) + 1.0)
         dup.body = body
         dup.title = title.strip()
         if tags is not None:
@@ -880,6 +923,7 @@ async def guide_write(
         dup.last_recalled_at = now
         dup.embedding = await get_embedder().aembed_memory_text(dup.title, dup.body)
         dup.updated_at = now
+        dup.updated_by_user_id = principal.user_id
         await publish_memory_event(session, memory_event_from_row("updated", dup))
         await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
         await session.refresh(dup)
@@ -972,6 +1016,8 @@ async def trace(
         "kind": memory.kind.value,
         "created_by": str(memory.created_by_user_id) if memory.created_by_user_id else None,
         "created_at": memory.created_at.isoformat() if memory.created_at else None,
+        "updated_by": str(memory.updated_by_user_id) if memory.updated_by_user_id else None,
+        "updated_at": memory.updated_at.isoformat() if memory.updated_at else None,
         "provenance": memory.provenance or {},
         "space_id": str(memory.space_id),
     }

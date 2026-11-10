@@ -20,11 +20,10 @@ import { useAuth } from "../auth";
 import { safeReturnPath } from "../returnPath";
 import { formatDocumentTitle } from "../documentTitle";
 import { oauthErrorMessage } from "../oauthErrors";
+import { errorMessage } from "../errors";
 
 type Provider = {
   oauth_provider: string;
-  base_url: string;
-  mcp_url: string;
   web_oauth?: boolean;
   oauth_label?: string;
   register_enabled?: boolean;
@@ -97,7 +96,7 @@ export default function SignInPage() {
       if (mode === "login" || !registerEnabled) await login(email, password, remember);
       else await register(email, password, displayName || undefined, remember);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setBusy(false);
     }

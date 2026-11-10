@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 import {
   Area,
   AreaChart,
@@ -13,13 +13,13 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { api } from "../api";
 import {
   ErrorNote,
   PageHeader,
   SpaceScopeSelect,
   type SpaceScope,
 } from "../components/ui";
+import { useApiResource } from "../hooks/useAsyncResource";
 
 type MetricRange = "7d" | "30d" | "90d" | "all";
 
@@ -116,19 +116,33 @@ function shortDay(day: string): string {
 
 function ChartCard({
   title,
+  summary,
   empty,
   children,
 }: {
   title: string;
+  /** Text alternative read instead of the chart. */
+  summary: string;
   empty?: boolean;
   children: ReactNode;
 }) {
   return (
     <section className="metrics-chart panel">
       <h3 className="metrics-chart-title">{title}</h3>
-      {empty ? <p className="text-sm text-muted">No data yet.</p> : children}
+      {empty ? (
+        <p className="text-sm text-muted">No data yet.</p>
+      ) : (
+        <div role="img" aria-label={`${title}: ${summary}`}>
+          {children}
+        </div>
+      )}
     </section>
   );
+}
+
+/** "fact 3, note 2" text for a chart summary. */
+function summarize<T extends { count: number }>(rows: T[], name: (row: T) => string): string {
+  return rows.map((row) => `${name(row)} ${row.count}`).join(", ");
 }
 
 function tooltipStyle(): CSSProperties {
@@ -144,34 +158,12 @@ function tooltipStyle(): CSSProperties {
 export default function MetricsPage() {
   const [range, setRange] = useState<MetricRange>("30d");
   const [spaceScope, setSpaceScope] = useState<SpaceScope>("");
-  const [data, setData] = useState<MemoryMetrics | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  const loadSeq = useRef(0);
-  const load = useCallback(async () => {
-    // Only the newest request may write state; an older, slower response is dropped.
-    const seq = ++loadSeq.current;
-    setLoading(true);
-    try {
-      const qs = new URLSearchParams({ range });
-      if (spaceScope) qs.set("space_scope", spaceScope);
-      const payload = await api<MemoryMetrics>(`/api/metrics/memories?${qs}`);
-      if (seq !== loadSeq.current) return;
-      setData(payload);
-      setError(null);
-    } catch (err) {
-      if (seq !== loadSeq.current) return;
-      setError(err instanceof Error ? err.message : String(err));
-      setData(null);
-    } finally {
-      if (seq === loadSeq.current) setLoading(false);
-    }
-  }, [range, spaceScope]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const qs = new URLSearchParams({ range });
+  if (spaceScope) qs.set("space_scope", spaceScope);
+  const { data, error, loading } = useApiResource<MemoryMetrics>(
+    `/api/metrics/memories?${qs}`,
+    { clearOnError: true },
+  );
 
   const totals = data?.totals;
   const created = (data?.created_per_day ?? []).map((row) => ({
@@ -260,6 +252,7 @@ export default function MetricsPage() {
             <div className="metrics-chart-grid">
               <ChartCard
                 title="Created over time"
+                summary={`${created.reduce((n, r) => n + r.entries, 0)} entries and ${created.reduce((n, r) => n + r.guides, 0)} guides created in the selected range`}
                 empty={created.every((r) => r.entries === 0 && r.guides === 0)}
               >
                 <div className="metrics-chart-body metrics-chart-body-wide">
@@ -303,7 +296,7 @@ export default function MetricsPage() {
                 </div>
               </ChartCard>
 
-              <ChartCard title="Entries vs guides" empty={byKind.length === 0}>
+              <ChartCard title="Entries vs guides" summary={summarize(byKind, (r) => r.kind)} empty={byKind.length === 0}>
                 <div className="metrics-chart-body">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
@@ -339,7 +332,7 @@ export default function MetricsPage() {
                 </ul>
               </ChartCard>
 
-              <ChartCard title="By entry type" empty={byType.length === 0}>
+              <ChartCard title="By entry type" summary={summarize(byType, (r) => r.type)} empty={byType.length === 0}>
                 <div className="metrics-chart-body">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart
@@ -366,7 +359,7 @@ export default function MetricsPage() {
                 </div>
               </ChartCard>
 
-              <ChartCard title="By space" empty={bySpace.length === 0}>
+              <ChartCard title="By space" summary={summarize(bySpace, (r) => r.name)} empty={bySpace.length === 0}>
                 <div className="metrics-chart-body">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart
@@ -393,7 +386,7 @@ export default function MetricsPage() {
                 </div>
               </ChartCard>
 
-              <ChartCard title="Top tags" empty={topTags.length === 0}>
+              <ChartCard title="Top tags" summary={summarize(topTags, (r) => r.tag)} empty={topTags.length === 0}>
                 <div className="metrics-chart-body">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart
@@ -420,7 +413,7 @@ export default function MetricsPage() {
                 </div>
               </ChartCard>
 
-              <ChartCard title="Top creators" empty={topCreators.length === 0}>
+              <ChartCard title="Top creators" summary={summarize(topCreators, (r) => r.label)} empty={topCreators.length === 0}>
                 <div className="metrics-chart-body">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart

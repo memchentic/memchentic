@@ -8,13 +8,15 @@ import {
   faUserGroup,
   faUserPlus,
   faUsers,
-  faXmark,
 } from "@fortawesome/free-solid-svg-icons";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
-import { ErrorNote, Modal, PageHeader } from "../components/ui";
+import { ErrorNote, PageHeader } from "../components/ui";
+import { UserPickerModal } from "../components/UserPickerModal";
+import { useApiResource } from "../hooks/useAsyncResource";
+import { errorMessage } from "../errors";
 
 type AuthGroup = {
   id: string;
@@ -33,12 +35,6 @@ type AuthMember = {
   display_name: string | null;
   locked: boolean;
   source?: string;
-};
-
-type DirectoryUser = {
-  id: string;
-  email: string;
-  display_name: string | null;
 };
 
 type IdpGroupOption = { id: string; name: string };
@@ -85,6 +81,7 @@ export default function SettingsPage() {
                   <button
                     type="button"
                     className={`settings-rail-row ${active ? "settings-rail-row-active" : ""}`}
+                    aria-current={active ? "page" : undefined}
                     onClick={() => setParams({ category: c.id })}
                   >
                     <FontAwesomeIcon icon={c.icon} className="settings-rail-icon" />
@@ -113,23 +110,11 @@ export default function SettingsPage() {
 }
 
 function RegistrationPanel() {
-  const [enabled, setEnabled] = useState<boolean | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-
-  const reload = useCallback(async () => {
-    try {
-      const row = await api<{ enabled: boolean }>("/api/system/registration");
-      setEnabled(row.enabled);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }, []);
-
-  useEffect(() => {
-    void reload();
-  }, [reload]);
+  const { data, error, setData, setError } = useApiResource<{ enabled: boolean }>(
+    "/api/system/registration",
+  );
+  const enabled = data ? data.enabled : null;
 
   async function setRegistration(next: boolean) {
     setBusy(true);
@@ -138,17 +123,17 @@ function RegistrationPanel() {
         method: "PUT",
         body: JSON.stringify({ enabled: next }),
       });
-      setEnabled(row.enabled);
+      setData(row);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <div className="page-body settings-panel-body">
+    <div className="page-body">
       <ErrorNote error={error} />
       <div className="mb-3">
         <h3 className="text-sm font-medium text-ink">Public registration</h3>
@@ -166,6 +151,7 @@ function RegistrationPanel() {
         <button
           type="button"
           className={`settings-group-chip ${enabled === true ? "settings-group-chip-active" : ""}`}
+          aria-pressed={enabled === true}
           disabled={busy || enabled === null}
           onClick={() => void setRegistration(true)}
         >
@@ -175,6 +161,7 @@ function RegistrationPanel() {
         <button
           type="button"
           className={`settings-group-chip ${enabled === false ? "settings-group-chip-active" : ""}`}
+          aria-pressed={enabled === false}
           disabled={busy || enabled === null}
           onClick={() => void setRegistration(false)}
         >
@@ -228,7 +215,7 @@ function AuthGroupsPanel() {
       await loadMembers();
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     }
   }, [loadGroups, loadMembers]);
 
@@ -245,7 +232,7 @@ function AuthGroupsPanel() {
         if (!cancelled) setIdpCatalog(catalog);
       })
       .catch((err) => {
-        if (!cancelled) setCatalogError(err instanceof Error ? err.message : String(err));
+        if (!cancelled) setCatalogError(errorMessage(err));
       });
     return () => {
       cancelled = true;
@@ -266,7 +253,7 @@ function AuthGroupsPanel() {
       await api(`/api/auth-groups/${slug}/members/${userId}`, { method: "DELETE" });
       await Promise.all([reload(), refresh()]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     }
   }
 
@@ -292,7 +279,7 @@ function AuthGroupsPanel() {
       await reload();
       setBindDraft(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setBindBusy(false);
     }
@@ -313,7 +300,7 @@ function AuthGroupsPanel() {
   }
 
   return (
-    <div className="page-body settings-panel-body">
+    <div className="page-body">
       <ErrorNote error={error} />
       {idpCatalog?.error || catalogError ? (
         <p className="text-xs text-muted mb-3" role="status">
@@ -329,6 +316,7 @@ function AuthGroupsPanel() {
               key={g.slug}
               type="button"
               className={`settings-group-chip ${selected ? "settings-group-chip-active" : ""}`}
+              aria-pressed={selected}
               onClick={() => {
                 setSlug(g.slug);
                 setBindDraft(null);
@@ -430,7 +418,13 @@ function AuthGroupsPanel() {
                     onClick={() => navigate(`/users/${m.user_id}`)}
                   >
                     <td className="text-ink">
-                      {m.display_name || m.email || m.user_id}
+                      <Link
+                        to={`/users/${m.user_id}`}
+                        className="row-link"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {m.display_name || m.email || m.user_id}
+                      </Link>
                       {m.locked ? (
                         <span className="ml-2 text-xs text-faint">locked</span>
                       ) : null}
@@ -467,232 +461,27 @@ function AuthGroupsPanel() {
               </tbody>
             </table>
           </div>
-          <AddAuthMembersModal
+          <UserPickerModal
             open={addOpen && !rosterBound}
-            slug={slug}
-            memberIds={new Set(visibleMembers.map((m) => m.user_id))}
+            titleId="add-auth-members-title"
+            excludeIds={new Set(visibleMembers.map((m) => m.user_id))}
+            addIcon={faUserPlus}
+            note={
+              slug === "administrators"
+                ? "A user is in one auth group only. Adding a user here removes them from Users."
+                : "A user is in one auth group only. Adding a user here removes them from Administrators."
+            }
+            addUser={(userId) =>
+              api(`/api/auth-groups/${slug}/members`, {
+                method: "POST",
+                body: JSON.stringify({ user_id: userId }),
+              })
+            }
             onClose={() => setAddOpen(false)}
             onAdded={() => void Promise.all([reload(), refresh()])}
           />
         </>
       )}
     </div>
-  );
-}
-
-function AddAuthMembersModal({
-  open,
-  slug,
-  memberIds,
-  onClose,
-  onAdded,
-}: {
-  open: boolean;
-  slug: string;
-  memberIds: Set<string>;
-  onClose: () => void;
-  onAdded: () => void;
-}) {
-  const [users, setUsers] = useState<DirectoryUser[]>([]);
-  const [lookupHit, setLookupHit] = useState<DirectoryUser | null>(null);
-  const [query, setQuery] = useState("");
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    setLookupHit(null);
-    setQuery("");
-    setSelected(new Set());
-    setError(null);
-    setBusy(false);
-    api<DirectoryUser[]>("/api/users")
-      .then(setUsers)
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const q = query.trim();
-    const looksLikeEmail = q.includes("@") && !q.includes(" ");
-    if (!looksLikeEmail) {
-      setLookupHit(null);
-      return;
-    }
-    const already = users.some((u) => u.email.toLowerCase() === q.toLowerCase());
-    if (already) {
-      setLookupHit(null);
-      return;
-    }
-    let cancelled = false;
-    const timer = window.setTimeout(() => {
-      void api<DirectoryUser>(`/api/users/lookup?email=${encodeURIComponent(q)}`)
-        .then((hit) => {
-          if (!cancelled) setLookupHit(hit);
-        })
-        .catch(() => {
-          if (!cancelled) setLookupHit(null);
-        });
-    }, 250);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [open, query, users]);
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const rows = users
-      .filter((u) => !memberIds.has(u.id))
-      .filter((u) => {
-        if (!q) return true;
-        return (
-          u.email.toLowerCase().includes(q) ||
-          (u.display_name ?? "").toLowerCase().includes(q)
-        );
-      });
-    if (
-      lookupHit &&
-      !memberIds.has(lookupHit.id) &&
-      !rows.some((u) => u.id === lookupHit.id)
-    ) {
-      return [...rows, lookupHit];
-    }
-    return rows;
-  }, [users, memberIds, query, lookupHit]);
-
-  function toggle(userId: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(userId)) next.delete(userId);
-      else next.add(userId);
-      return next;
-    });
-  }
-
-  async function done() {
-    if (busy) return;
-    if (!selected.size) {
-      onClose();
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    let added = 0;
-    try {
-      for (const userId of selected) {
-        await api(`/api/auth-groups/${slug}/members`, {
-          method: "POST",
-          body: JSON.stringify({ user_id: userId }),
-        });
-        added += 1;
-        // Drop the user from the selection so a retry after a later failure
-        // does not post them again.
-        setSelected((prev) => {
-          const next = new Set(prev);
-          next.delete(userId);
-          return next;
-        });
-      }
-      onClose();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-      // Refresh the roster even after a partial failure.
-      if (added > 0) onAdded();
-    }
-  }
-
-  return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      labelledBy="add-auth-members-title"
-      closeDisabled={busy}
-    >
-      <div className="flex items-center justify-between border-b border-border px-4 py-3">
-        <h3 id="add-auth-members-title" className="font-medium text-ink">
-          Add members
-        </h3>
-        <button className="btn" type="button" onClick={onClose} disabled={busy} aria-label="Close">
-          <FontAwesomeIcon icon={faXmark} />
-        </button>
-      </div>
-      <div className="border-b border-border px-4 py-3">
-        <input
-          className="input"
-          type="search"
-          placeholder="Search users…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          autoFocus
-        />
-      </div>
-      <p className="px-4 pt-3 text-xs text-muted">
-        {slug === "administrators"
-          ? "A user is in one auth group only. Adding a user here removes them from Users."
-          : "A user is in one auth group only. Adding a user here removes them from Administrators."}
-      </p>
-      {error ? (
-        <div className="px-4 pt-3">
-          <ErrorNote error={error} />
-        </div>
-      ) : null}
-      <ul className="min-h-0 flex-1 overflow-y-auto divide-y divide-border">
-        {!filtered.length ? (
-          <li className="px-4 py-6 text-center text-sm text-faint">No users to add.</li>
-        ) : null}
-        {filtered.map((u) => {
-          const picked = selected.has(u.id);
-          return (
-            <li key={u.id} className="flex items-center justify-between gap-3 px-4 py-3">
-              <div className="min-w-0">
-                <div className="truncate text-sm text-ink">{u.display_name || u.email}</div>
-                {u.display_name ? (
-                  <div className="truncate text-xs text-faint">{u.email}</div>
-                ) : null}
-              </div>
-              <button
-                className="btn shrink-0"
-                type="button"
-                aria-label={picked ? `Deselect ${u.email}` : `Add ${u.email}`}
-                onClick={() => toggle(u.id)}
-                disabled={busy}
-              >
-                <FontAwesomeIcon icon={picked ? faCheck : faUserPlus} />
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-      <div className="flex justify-end gap-2 border-t border-border px-4 py-3">
-        <button
-          className="btn"
-          type="button"
-          onClick={onClose}
-          disabled={busy}
-          title="Cancel"
-          aria-label="Cancel"
-        >
-          <FontAwesomeIcon icon={faXmark} />
-        </button>
-        <button
-          className="btn"
-          type="button"
-          onClick={() => void done()}
-          disabled={busy}
-          title={
-            busy ? "Adding…" : selected.size ? `Done (${selected.size})` : "Done"
-          }
-          aria-label={
-            busy ? "Adding…" : selected.size ? `Done (${selected.size})` : "Done"
-          }
-        >
-          <FontAwesomeIcon icon={faCheck} />
-        </button>
-      </div>
-    </Modal>
   );
 }

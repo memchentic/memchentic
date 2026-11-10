@@ -13,6 +13,8 @@ import { api } from "../api";
 import { spaceLabel, useAuth, writableSpaces } from "../auth";
 import type { Me } from "../auth";
 import { formatDocumentTitle } from "../documentTitle";
+import { formatWhen } from "../format";
+import { errorMessage } from "../errors";
 
 /** Matches `--duration-exit` in index.css. */
 const MOTION_EXIT_MS = 120;
@@ -41,7 +43,15 @@ export function usePresence(open: boolean, exitMs = MOTION_EXIT_MS) {
   return { mounted: phase !== "out", leaving: phase === "leaving" };
 }
 
-/** Shared overlay dialog with enter/exit motion. */
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/**
+ * Shared overlay dialog with enter/exit motion.
+ *
+ * Focus moves into the panel when it opens, Tab stays inside it, Escape
+ * closes it, and focus returns to the opener when it closes.
+ */
 export function Modal({
   open,
   onClose,
@@ -56,11 +66,53 @@ export function Modal({
   closeDisabled?: boolean;
 }) {
   const { mounted, leaving } = usePresence(open);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // Remember what had focus when the dialog opened; give it back on close.
+  useEffect(() => {
+    if (!open) return undefined;
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    return () => {
+      if (opener && opener.isConnected) opener.focus();
+    };
+  }, [open]);
+
+  // The panel mounts one render after `open` turns true. Focus it unless a
+  // child with autoFocus already took focus.
+  useEffect(() => {
+    if (!open || !mounted) return;
+    const panel = panelRef.current;
+    if (panel && !panel.contains(document.activeElement)) panel.focus();
+  }, [open, mounted]);
 
   useEffect(() => {
     if (!open) return undefined;
     function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape" && !closeDisabled) onClose();
+      if (event.key === "Escape") {
+        if (!closeDisabled) onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const panel = panelRef.current;
+      if (!panel) return;
+      const items = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE));
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (!first || !last) {
+        event.preventDefault();
+        panel.focus();
+        return;
+      }
+      const current = document.activeElement;
+      if (event.shiftKey) {
+        if (current === first || current === panel || !panel.contains(current)) {
+          event.preventDefault();
+          last.focus();
+        }
+      } else if (current === last || !panel.contains(current)) {
+        event.preventDefault();
+        first.focus();
+      }
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
@@ -71,14 +123,20 @@ export function Modal({
   return (
     <div
       className={`overlay-backdrop${leaving ? " overlay-backdrop-leave" : ""}`}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby={labelledBy}
       onClick={(e) => {
         if (e.target === e.currentTarget && !closeDisabled) onClose();
       }}
     >
-      <div className="overlay-panel">{children}</div>
+      <div
+        ref={panelRef}
+        className="overlay-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={labelledBy}
+        tabIndex={-1}
+      >
+        {children}
+      </div>
     </div>
   );
 }
@@ -134,7 +192,7 @@ export type MemoryRow = {
 };
 
 /** Prefer display name, then email, then a short id. */
-export function formatMemoryOwner(
+function formatMemoryOwner(
   row: MemoryRow,
   me?: { id?: string | null; email?: string | null; display_name?: string | null } | null,
 ): string {
@@ -266,7 +324,6 @@ export function TypeFilterMenu({
         <button
           aria-controls={menuId}
           aria-expanded={open}
-          aria-haspopup="menu"
           aria-labelledby={labelId}
           className="input w-auto filter-menu-trigger"
           onClick={() => setOpen((v) => !v)}
@@ -286,7 +343,7 @@ export function TypeFilterMenu({
           <div
             className={`filter-menu-panel${leaving ? " filter-menu-panel-leave" : ""}`}
             id={menuId}
-            role="menu"
+            role="group"
             aria-labelledby={labelId}
           >
             {MEMORY_TYPE_TOKENS.map((token) => {
@@ -295,8 +352,6 @@ export function TypeFilterMenu({
                 <label
                   key={token}
                   className="filter-menu-item"
-                  role="menuitemcheckbox"
-                  aria-checked={checked}
                 >
                   <input type="checkbox" checked={checked} onChange={() => toggle(token)} />
                   <span className={`type-tint kind-chip-${token}`}>{token}</span>
@@ -388,19 +443,6 @@ export function useSpaceName() {
   return (id?: string) => spaceLabel(me, id);
 }
 
-function formatWhen(value?: string | null): string {
-  if (!value) return "—";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
-
 const TAG_PREVIEW = 6;
 
 /** Skip snippets that only repeat the title (common when title is the first sentence). */
@@ -438,7 +480,7 @@ export function MemoryList({
       await api(`/api/memories/${id}`, { method: "DELETE" });
       onDeleted?.(id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setForgettingId(null);
     }

@@ -10,9 +10,10 @@ import {
   faUserGroup,
 } from "@fortawesome/free-solid-svg-icons";
 import { useEffect, useId, useRef, useState } from "react";
-import { Link, NavLink, Outlet } from "react-router-dom";
+import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../auth";
 import { usePresence } from "./ui";
+import { ErrorBoundary } from "./ErrorBoundary";
 
 const links = [
   { to: "/", label: "Memories", icon: faBook, end: true },
@@ -20,6 +21,24 @@ const links = [
   { to: "/groups", label: "Groups", icon: faUserGroup },
   { to: "/users", label: "Users", icon: faUsers },
 ];
+
+function PrimaryNavLinks() {
+  return (
+    <>
+      {links.map((l) => (
+        <NavLink
+          key={l.to}
+          to={l.to}
+          end={l.end}
+          className={({ isActive }) => `nav-link ${isActive ? "nav-link-active" : ""}`}
+        >
+          <FontAwesomeIcon icon={l.icon} className="opacity-70" />
+          {l.label}
+        </NavLink>
+      ))}
+    </>
+  );
+}
 
 function UserMenu() {
   const { me, logout } = useAuth();
@@ -52,7 +71,6 @@ function UserMenu() {
       <button
         aria-controls={menuId}
         aria-expanded={open}
-        aria-haspopup="menu"
         className="nav-control user-menu-trigger"
         onClick={() => setOpen((value) => !value)}
         type="button"
@@ -67,13 +85,12 @@ function UserMenu() {
         <div
           className={`user-menu-panel${leaving ? " user-menu-panel-leave" : ""}`}
           id={menuId}
-          role="menu"
+          role="group"
           aria-label="Account"
         >
           {me?.is_admin ? (
             <Link
               className="user-menu-item"
-              role="menuitem"
               to="/settings"
               onClick={() => setOpen(false)}
             >
@@ -83,7 +100,6 @@ function UserMenu() {
           ) : null}
           <Link
             className="user-menu-item"
-            role="menuitem"
             to="/api-keys"
             onClick={() => setOpen(false)}
           >
@@ -92,7 +108,6 @@ function UserMenu() {
           </Link>
           <button
             className="user-menu-item"
-            role="menuitem"
             type="button"
             onClick={() => {
               setOpen(false);
@@ -113,6 +128,7 @@ function UserMenu() {
 }
 
 export default function Layout() {
+  const location = useLocation();
   return (
     <div className="app-shell">
       <nav className="shell-nav" aria-label="Main">
@@ -127,19 +143,7 @@ export default function Layout() {
         </Link>
 
         <div className="nav-primary max-md:hidden">
-          {links.map((l) => (
-            <NavLink
-              key={l.to}
-              to={l.to}
-              end={l.end}
-              className={({ isActive }) =>
-                `nav-link ${isActive ? "nav-link-active" : ""}`
-              }
-            >
-              <FontAwesomeIcon icon={l.icon} className="opacity-70" />
-              {l.label}
-            </NavLink>
-          ))}
+          <PrimaryNavLinks />
         </div>
 
         <div className="nav-actions">
@@ -149,24 +153,14 @@ export default function Layout() {
 
       {/* Mobile: primary links as a second hairline strip (still one chrome language). */}
       <div className="flex flex-wrap gap-1 border-b border-border px-3 py-1.5 md:hidden">
-        {links.map((l) => (
-          <NavLink
-            key={l.to}
-            to={l.to}
-            end={l.end}
-            className={({ isActive }) =>
-              `nav-link ${isActive ? "nav-link-active" : ""}`
-            }
-          >
-            <FontAwesomeIcon icon={l.icon} className="opacity-70" />
-            {l.label}
-          </NavLink>
-        ))}
+        <PrimaryNavLinks />
       </div>
 
       <main className="shell-main">
         <div className="page">
-          <Outlet />
+          <ErrorBoundary resetKey={location.pathname}>
+            <Outlet />
+          </ErrorBoundary>
         </div>
       </main>
     </div>

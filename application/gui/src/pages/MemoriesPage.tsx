@@ -27,6 +27,7 @@ import {
   type SpaceScope,
 } from "../components/ui";
 import { applyMemoryEvent, startMemoryLive } from "../liveMemories";
+import { errorMessage } from "../errors";
 
 const PAGE = 25;
 
@@ -99,7 +100,7 @@ export default function MemoriesPage() {
       setError(null);
     } catch (err) {
       if (seq !== loadSeq.current) return;
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       if (seq === loadSeq.current) setLoaded(true);
     }
@@ -359,7 +360,7 @@ function NewMemory({
       }
       onCreated();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setBusy(false);
     }

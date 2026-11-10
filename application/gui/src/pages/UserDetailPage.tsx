@@ -7,30 +7,16 @@ import {
   faUserPlus,
   faXmark,
 } from "@fortawesome/free-solid-svg-icons";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { ErrorNote, Modal, PageHeader } from "../components/ui";
-
-type UserDetail = {
-  id: string;
-  email: string;
-  display_name: string | null;
-  providers?: string[];
-  created_at?: string | null;
-  deletable?: boolean;
-  delete_blocked_reason?: string | null;
-  groups: { id: string; name: string; kind: string }[];
-};
-
-type SpaceDetail = {
-  id: string;
-  name: string;
-  kind: string;
-  created_by: string | null;
-  members: { user_id: string }[];
-};
+import type { UserDetail } from "../apiTypes";
+import { formatDate } from "../format";
+import { useApiResource } from "../hooks/useAsyncResource";
+import { useGroupDetails } from "../hooks/useGroupDetails";
+import { errorMessage } from "../errors";
 
 /** OAuth / IdP names that usually carry a human profile name. */
 const PROFILE_PROVIDERS = new Set([
@@ -70,56 +56,21 @@ export default function UserDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { me } = useAuth();
-  const [user, setUser] = useState<UserDetail | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   // Text shown after a successful revoke; null before.
   const [revokedNote, setRevokedNote] = useState<string | null>(null);
-  const [manageableCount, setManageableCount] = useState(0);
 
-  const load = useCallback(async () => {
-    if (!id) return;
-    try {
-      const row = await api<UserDetail>(`/api/users/${id}`);
-      setUser(row);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setUser(null);
-    }
-  }, [id]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  useEffect(() => {
-    if (!me?.id && !me?.is_admin) {
-      setManageableCount(0);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        const spaces = await api<{ id: string; kind: string }[]>("/api/spaces");
-        const groups = await Promise.all(
-          spaces
-            .filter((s) => s.kind === "group")
-            .map((s) => api<SpaceDetail>(`/api/spaces/${s.id}`)),
-        );
-        if (cancelled) return;
-        const n = groups.filter(
-          (t) => me?.is_admin || t.created_by === me?.id,
-        ).length;
-        setManageableCount(n);
-      } catch {
-        if (!cancelled) setManageableCount(0);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [me?.id, me?.is_admin]);
+  const {
+    data: user,
+    error,
+    reload: load,
+    setError,
+  } = useApiResource<UserDetail>(id ? `/api/users/${id}` : null, { clearOnError: true });
+  const canLoadGroups = Boolean(me?.id || me?.is_admin);
+  const manageable = useGroupDetails(canLoadGroups, { clearOnError: true });
+  const manageableCount = canLoadGroups
+    ? (manageable.data ?? []).filter((t) => me?.is_admin || t.created_by === me?.id).length
+    : 0;
 
   if (!user && !error) {
     return <p className="text-sm text-muted">Loading…</p>;
@@ -137,7 +88,7 @@ export default function UserDetailPage() {
       await api(`/api/users/${user.id}`, { method: "DELETE" });
       navigate("/users");
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     }
   }
 
@@ -158,7 +109,7 @@ export default function UserDetailPage() {
       setError(null);
     } catch (err) {
       setRevokedNote(null);
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     }
   }
 
@@ -234,9 +185,7 @@ export default function UserDetailPage() {
                       <tr>
                         <th className="text-faint">Joined</th>
                         <td className="text-faint">
-                          {user.created_at
-                            ? new Date(user.created_at).toLocaleDateString()
-                            : "—"}
+                          {formatDate(user.created_at)}
                         </td>
                       </tr>
                     </>
@@ -277,7 +226,15 @@ export default function UserDetailPage() {
                         className="cursor-pointer"
                         onClick={() => navigate(`/groups/${t.id}`)}
                       >
-                        <td className="text-ink">{t.name}</td>
+                        <td className="text-ink">
+                          <Link
+                            to={`/groups/${t.id}`}
+                            className="row-link"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {t.name}
+                          </Link>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -312,37 +269,17 @@ function AddToGroupModal({
   onAdded: () => void;
 }) {
   const { me } = useAuth();
-  const [groups, setGroups] = useState<SpaceDetail[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  const loadGroups = useCallback(async () => {
-    setLoading(true);
-    try {
-      const spaces = await api<{ id: string; kind: string }[]>("/api/spaces");
-      const details = await Promise.all(
-        spaces
-          .filter((s) => s.kind === "group")
-          .map((s) => api<SpaceDetail>(`/api/spaces/${s.id}`)),
-      );
-      setGroups(details);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setGroups([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!open) return;
-    void loadGroups();
-  }, [open, loadGroups]);
+  const {
+    data: groups,
+    error,
+    loading,
+    reload: loadGroups,
+    setError,
+  } = useGroupDetails(open, { clearOnError: true });
 
   const candidates = useMemo(() => {
-    return groups
+    return (groups ?? [])
       .filter((t) => me?.is_admin || t.created_by === me?.id)
       .filter((t) => !t.members.some((m) => m.user_id === userId))
       .sort((a, b) => a.name.localeCompare(b.name));
@@ -359,7 +296,7 @@ function AddToGroupModal({
       onAdded();
       await loadGroups();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setBusyId(null);
     }

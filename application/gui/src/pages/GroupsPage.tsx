@@ -1,59 +1,29 @@
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faCheck, faFloppyDisk, faTrash, faXmark } from "@fortawesome/free-solid-svg-icons";
-import { useCallback, useEffect, useState, type FormEvent, type MouseEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState, type FormEvent, type MouseEvent } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { ComposerReveal, ErrorNote, NewToggleButton, PageHeader } from "../components/ui";
-
-type Space = { id: string; name: string; kind: string };
-type SpaceDetail = Space & {
-  created_by: string | null;
-  // `pending` is true for an invitation that is not accepted yet (SEC-001);
-  // only administrators receive such rows.
-  members: {
-    user_id: string;
-    email: string | null;
-    display_name: string | null;
-    pending?: boolean;
-  }[];
-};
+import type { SpaceDetail } from "../apiTypes";
+import { useGroupDetails } from "../hooks/useGroupDetails";
+import { errorMessage } from "../errors";
 
 export default function GroupsPage() {
   const { me, refresh } = useAuth();
   const navigate = useNavigate();
-  const [groups, setGroups] = useState<SpaceDetail[]>([]);
-  const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
-  // False until the first load attempt has finished.
-  const [loaded, setLoaded] = useState(false);
   const invites = me?.pending_invites ?? [];
 
-  const load = useCallback(async () => {
-    try {
-      const spaces = await api<Space[]>("/api/spaces");
-      const details = await Promise.all(
-        spaces.filter((s) => s.kind === "group").map((s) => api<SpaceDetail>(`/api/spaces/${s.id}`)),
-      );
-      setGroups(details);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoaded(true);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const { data, error, loaded, reload: load, setError } = useGroupDetails(true);
+  const groups = data ?? [];
 
   async function run(fn: () => Promise<unknown>) {
     try {
       await fn();
       await Promise.all([load(), refresh()]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     }
   }
 
@@ -65,7 +35,7 @@ export default function GroupsPage() {
       await Promise.all([load(), refresh()]);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     }
   }
 
@@ -191,7 +161,15 @@ export default function GroupsPage() {
                   const canDelete = !!me?.is_admin || isCreator;
                   return (
                     <tr key={t.id} className="cursor-pointer" onClick={() => navigate(`/groups/${t.id}`)}>
-                      <td className="font-medium text-ink">{t.name}</td>
+                      <td className="font-medium text-ink">
+                        <Link
+                          to={`/groups/${t.id}`}
+                          className="row-link"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {t.name}
+                        </Link>
+                      </td>
                       <td className="text-muted">{t.members.length}</td>
                       <td className="text-muted">
                         {me?.is_admin ? "admin" : isCreator ? "creator" : "member"}
@@ -244,7 +222,7 @@ function NewGroup({
       await refresh();
       onCreated();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setBusy(false);
     }

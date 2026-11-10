@@ -5,19 +5,15 @@ import { api } from "../api";
 import { useAuth } from "../auth";
 import { copyText } from "../clipboard";
 import { ErrorNote, PageHeader } from "../components/ui";
+import type { DirectoryUser } from "../apiTypes";
+import { formatDateTime } from "../format";
+import { errorMessage } from "../errors";
 
 type Key = {
   id: string;
-  name: string;
   prefix: string;
   created_at: string | null;
   user_id: string;
-};
-
-type DirectoryUser = {
-  id: string;
-  email: string;
-  display_name: string | null;
 };
 
 type CycleResult = { key: string; prefix: string; user_id: string };
@@ -60,7 +56,7 @@ export default function ApiKeysPage() {
       }
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setLoaded(true);
     }
@@ -113,7 +109,7 @@ export default function ApiKeysPage() {
       setSecret(res);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setBusyUserId(null);
     }
@@ -194,7 +190,7 @@ export default function ApiKeysPage() {
                     <code className="text-ink">{ownKey.prefix}…</code>
                     <span className="ml-3 text-xs text-faint">
                       {ownKey.created_at
-                        ? `issued ${new Date(ownKey.created_at).toLocaleString()}`
+                        ? `issued ${formatDateTime(ownKey.created_at)}`
                         : ""}
                     </span>
                   </p>
@@ -247,9 +243,7 @@ export default function ApiKeysPage() {
                           {key ? <code>{key.prefix}…</code> : "—"}
                         </td>
                         <td className="text-faint">
-                          {key?.created_at
-                            ? new Date(key.created_at).toLocaleString()
-                            : "—"}
+                          {formatDateTime(key?.created_at)}
                         </td>
                         <td className="text-right">
                           <button

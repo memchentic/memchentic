@@ -12,6 +12,8 @@ import {
   useSpaceName,
   type MemoryRow,
 } from "../components/ui";
+import { formatDateTime } from "../format";
+import { errorMessage } from "../errors";
 
 /** Edit-form values for a memory row. */
 function draftFromRow(row: MemoryRow) {
@@ -39,7 +41,7 @@ export default function EntryPage() {
         setM(row);
         setDraft(draftFromRow(row));
       })
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+      .catch((err) => setError(errorMessage(err)));
   }, [id]);
 
   const [saving, setSaving] = useState(false);
@@ -61,7 +63,7 @@ export default function EntryPage() {
       setEditing(false);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -73,7 +75,7 @@ export default function EntryPage() {
       await api(`/api/memories/${id}`, { method: "DELETE" });
       navigate("/");
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     }
   }
 
@@ -148,19 +150,19 @@ export default function EntryPage() {
         <ErrorNote error={error} />
         <p className="mb-4 text-xs text-faint">
           {m.kind === "guide" ? `guide · confidence ${m.confidence}` : m.type} · {spaceName(m.space_id) || "—"} · updated{" "}
-          {m.updated_at ? new Date(m.updated_at).toLocaleString() : "—"}
+          {formatDateTime(m.updated_at)}
           {m.path_hint && ` · ${m.path_hint}`}
         </p>
         {editing ? (
           <div key="revise" className="panel reveal-fade grid gap-3 p-4">
-            <input className="input" value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} />
+            <input className="input" aria-label="Title" value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} />
             {m.kind === "entry" && (
-              <select className="input w-auto" value={draft.type} onChange={(e) => setDraft({ ...draft, type: e.target.value })}>
+              <select className="input w-auto" aria-label="Type" value={draft.type} onChange={(e) => setDraft({ ...draft, type: e.target.value })}>
                 {ENTRY_TYPES.map((t) => <option key={t}>{t}</option>)}
               </select>
             )}
-            <textarea className="input min-h-64" value={draft.body} onChange={(e) => setDraft({ ...draft, body: e.target.value })} />
-            <input className="input" value={draft.tags} onChange={(e) => setDraft({ ...draft, tags: e.target.value })} />
+            <textarea className="input min-h-64" aria-label="Body" value={draft.body} onChange={(e) => setDraft({ ...draft, body: e.target.value })} />
+            <input className="input" aria-label="Tags, comma-separated" value={draft.tags} onChange={(e) => setDraft({ ...draft, tags: e.target.value })} />
           </div>
         ) : (
           <div key="view" className="panel reveal-fade p-4">

@@ -1,45 +1,22 @@
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faFloppyDisk, faTrash, faXmark } from "@fortawesome/free-solid-svg-icons";
-import { useCallback, useEffect, useState, type FormEvent, type MouseEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useState, type FormEvent, type MouseEvent } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { ComposerReveal, ErrorNote, NewToggleButton, PageHeader } from "../components/ui";
-
-type User = {
-  id: string;
-  email: string;
-  display_name: string | null;
-  providers?: string[];
-  created_at?: string | null;
-  deletable?: boolean;
-  delete_blocked_reason?: string | null;
-};
+import type { User } from "../apiTypes";
+import { formatDate } from "../format";
+import { useApiResource } from "../hooks/useAsyncResource";
+import { errorMessage } from "../errors";
 
 export default function UsersPage() {
   const { me } = useAuth();
   const navigate = useNavigate();
-  const [users, setUsers] = useState<User[]>([]);
-  const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [canCreate, setCanCreate] = useState(false);
-  // False until the first load attempt has finished.
-  const [loaded, setLoaded] = useState(false);
-
-  const load = useCallback(async () => {
-    try {
-      setUsers(await api<User[]>("/api/users"));
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoaded(true);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const { data, error, loaded, reload: load, setError } = useApiResource<User[]>("/api/users");
+  const users = data ?? [];
 
   useEffect(() => {
     if (!me?.is_admin) {
@@ -60,7 +37,7 @@ export default function UsersPage() {
       await load();
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     }
   }
 
@@ -112,7 +89,15 @@ export default function UsersPage() {
                   className="cursor-pointer"
                   onClick={() => navigate(`/users/${u.id}`)}
                 >
-                  <td className="text-ink">{u.email}</td>
+                  <td className="text-ink">
+                    <Link
+                      to={`/users/${u.id}`}
+                      className="row-link"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {u.email}
+                    </Link>
+                  </td>
                   <td className="text-muted">{u.display_name ?? "—"}</td>
                   {me?.is_admin && (
                     <>
@@ -120,7 +105,7 @@ export default function UsersPage() {
                         {u.providers?.length ? u.providers.join(", ") : "—"}
                       </td>
                       <td className="text-faint">
-                        {u.created_at ? new Date(u.created_at).toLocaleDateString() : "—"}
+                        {formatDate(u.created_at)}
                       </td>
                       <td className="table-actions-col">
                         {u.deletable ? (
@@ -194,7 +179,7 @@ function NewUser({
       });
       onCreated();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setBusy(false);
     }

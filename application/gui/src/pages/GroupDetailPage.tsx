@@ -1,69 +1,40 @@
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faArrowLeft,
-  faCheck,
   faPen,
   faPlus,
   faRightFromBracket,
   faTrash,
   faUserPlus,
-  faXmark,
 } from "@fortawesome/free-solid-svg-icons";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
-import { ErrorNote, Modal, PageHeader } from "../components/ui";
-
-type SpaceDetail = {
-  id: string;
-  name: string;
-  kind: string;
-  created_by: string | null;
-  members: {
-    user_id: string;
-    email: string | null;
-    display_name: string | null;
-    pending?: boolean;
-  }[];
-};
-
-type DirectoryUser = {
-  id: string;
-  email: string;
-  display_name: string | null;
-};
+import { ErrorNote, PageHeader } from "../components/ui";
+import type { SpaceDetail } from "../apiTypes";
+import { UserPickerModal } from "../components/UserPickerModal";
+import { useApiResource } from "../hooks/useAsyncResource";
+import { errorMessage } from "../errors";
 
 export default function GroupDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { me, refresh } = useAuth();
-  const [group, setGroup] = useState<SpaceDetail | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
-
-  const load = useCallback(async () => {
-    if (!id) return;
-    try {
-      const row = await api<SpaceDetail>(`/api/spaces/${id}`);
-      setGroup(row);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setGroup(null);
-    }
-  }, [id]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const {
+    data: group,
+    error,
+    reload: load,
+    setError,
+  } = useApiResource<SpaceDetail>(id ? `/api/spaces/${id}` : null, { clearOnError: true });
 
   async function run(fn: () => Promise<unknown>) {
     try {
       await fn();
       await Promise.all([load(), refresh()]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     }
   }
 
@@ -116,7 +87,7 @@ export default function GroupDetailPage() {
                   await refresh();
                   navigate("/groups");
                 } catch (err) {
-                  setError(err instanceof Error ? err.message : String(err));
+                  setError(errorMessage(err));
                 }
               })();
             }}
@@ -142,7 +113,7 @@ export default function GroupDetailPage() {
                   await refresh();
                   navigate("/groups");
                 } catch (err) {
-                  setError(err instanceof Error ? err.message : String(err));
+                  setError(errorMessage(err));
                 }
               })();
             }}
@@ -186,7 +157,13 @@ export default function GroupDetailPage() {
                     onClick={() => navigate(`/users/${m.user_id}`)}
                   >
                     <td className="text-ink">
-                      {m.display_name || m.email || m.user_id}
+                      <Link
+                        to={`/users/${m.user_id}`}
+                        className="row-link"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {m.display_name || m.email || m.user_id}
+                      </Link>
                       {m.user_id === group.created_by && (
                         <span className="ml-2 text-xs text-faint">creator</span>
                       )}
@@ -218,10 +195,23 @@ export default function GroupDetailPage() {
               </tbody>
             </table>
           </div>
-          <AddMembersModal
+          <UserPickerModal
             open={addOpen}
-            groupId={group.id}
-            memberIds={new Set(group.members.map((m) => m.user_id))}
+            titleId="add-members-title"
+            excludeIds={new Set(group.members.map((m) => m.user_id))}
+            addIcon={faPlus}
+            addUser={(userId) =>
+              api(`/api/spaces/${group.id}/members`, {
+                method: "POST",
+                body: JSON.stringify({ user_id: userId }),
+              })
+            }
+            inviteByEmail={(email) =>
+              api(`/api/spaces/${group.id}/members`, {
+                method: "POST",
+                body: JSON.stringify({ email }),
+              })
+            }
             onClose={() => setAddOpen(false)}
             onAdded={() => void load()}
           />
@@ -229,254 +219,5 @@ export default function GroupDetailPage() {
       )}
       </div>
     </div>
-  );
-}
-
-function AddMembersModal({
-  open,
-  groupId,
-  memberIds,
-  onClose,
-  onAdded,
-}: {
-  open: boolean;
-  groupId: string;
-  memberIds: Set<string>;
-  onClose: () => void;
-  onAdded: () => void;
-}) {
-  const [users, setUsers] = useState<DirectoryUser[]>([]);
-  const [lookupHit, setLookupHit] = useState<DirectoryUser | null>(null);
-  const [query, setQuery] = useState("");
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    setLookupHit(null);
-    setQuery("");
-    setSelected(new Set());
-    setError(null);
-    setNotice(null);
-    setBusy(false);
-    api<DirectoryUser[]>("/api/users")
-      .then(setUsers)
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const q = query.trim();
-    const looksLikeEmail = q.includes("@") && !q.includes(" ");
-    if (!looksLikeEmail) {
-      setLookupHit(null);
-      return;
-    }
-    const already = users.some((u) => u.email.toLowerCase() === q.toLowerCase());
-    if (already) {
-      setLookupHit(null);
-      return;
-    }
-    let cancelled = false;
-    const timer = window.setTimeout(() => {
-      void api<DirectoryUser>(`/api/users/lookup?email=${encodeURIComponent(q)}`)
-        .then((hit) => {
-          if (!cancelled) setLookupHit(hit);
-        })
-        .catch(() => {
-          if (!cancelled) setLookupHit(null);
-        });
-    }, 250);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [open, query, users]);
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const rows = users
-      .filter((u) => !memberIds.has(u.id))
-      .filter((u) => {
-        if (!q) return true;
-        return (
-          u.email.toLowerCase().includes(q) ||
-          (u.display_name ?? "").toLowerCase().includes(q)
-        );
-      });
-    if (
-      lookupHit &&
-      !memberIds.has(lookupHit.id) &&
-      !rows.some((u) => u.id === lookupHit.id)
-    ) {
-      return [...rows, lookupHit];
-    }
-    return rows;
-  }, [users, memberIds, query, lookupHit]);
-
-  function toggle(userId: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(userId)) next.delete(userId);
-      else next.add(userId);
-      return next;
-    });
-  }
-
-  const emailQuery = query.trim();
-  const canInviteByEmail =
-    emailQuery.includes("@") &&
-    !emailQuery.includes(" ") &&
-    !filtered.some((u) => u.email.toLowerCase() === emailQuery.toLowerCase());
-
-  async function inviteByEmail() {
-    setBusy(true);
-    setError(null);
-    setNotice(null);
-    try {
-      await api(`/api/spaces/${groupId}/members`, {
-        method: "POST",
-        body: JSON.stringify({ email: emailQuery }),
-      });
-      setNotice(`If ${emailQuery} has an account, an invitation is waiting for them.`);
-      setQuery("");
-      onAdded();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function done() {
-    if (busy) return;
-    if (!selected.size) {
-      onClose();
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    let added = 0;
-    try {
-      for (const userId of selected) {
-        await api(`/api/spaces/${groupId}/members`, {
-          method: "POST",
-          body: JSON.stringify({ user_id: userId }),
-        });
-        added += 1;
-        // Drop the user from the selection so a retry after a later failure
-        // does not post them again.
-        setSelected((prev) => {
-          const next = new Set(prev);
-          next.delete(userId);
-          return next;
-        });
-      }
-      onClose();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-      // Refresh the roster even after a partial failure.
-      if (added > 0) onAdded();
-    }
-  }
-
-  return (
-    <Modal open={open} onClose={onClose} labelledBy="add-members-title" closeDisabled={busy}>
-      <div className="flex items-center justify-between border-b border-border px-4 py-3">
-        <h3 id="add-members-title" className="font-medium text-ink">
-          Add members
-        </h3>
-        <button className="btn" type="button" onClick={onClose} disabled={busy} aria-label="Close">
-          <FontAwesomeIcon icon={faXmark} />
-        </button>
-      </div>
-      <div className="border-b border-border px-4 py-3">
-        <input
-          className="input"
-          type="search"
-          placeholder="Search users…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          autoFocus
-        />
-      </div>
-      {error && (
-        <div className="px-4 pt-3">
-          <ErrorNote error={error} />
-        </div>
-      )}
-      <ul className="min-h-0 flex-1 overflow-y-auto divide-y divide-border">
-        {notice && <li className="px-4 py-3 text-sm text-muted">{notice}</li>}
-        {!filtered.length && !canInviteByEmail && (
-          <li className="px-4 py-6 text-center text-sm text-faint">No users to add.</li>
-        )}
-        {canInviteByEmail && (
-          <li className="flex items-center justify-between gap-3 px-4 py-3">
-            <div className="min-w-0 truncate text-sm text-ink">Invite {emailQuery}</div>
-            <button
-              className="btn shrink-0"
-              type="button"
-              aria-label={`Invite ${emailQuery}`}
-              onClick={() => void inviteByEmail()}
-              disabled={busy}
-            >
-              <FontAwesomeIcon icon={faPlus} />
-            </button>
-          </li>
-        )}
-        {filtered.map((u) => {
-          const picked = selected.has(u.id);
-          return (
-            <li key={u.id} className="flex items-center justify-between gap-3 px-4 py-3">
-              <div className="min-w-0">
-                <div className="truncate text-sm text-ink">{u.display_name || u.email}</div>
-                {u.display_name && (
-                  <div className="truncate text-xs text-faint">{u.email}</div>
-                )}
-              </div>
-              <button
-                className="btn shrink-0"
-                type="button"
-                aria-label={picked ? `Deselect ${u.email}` : `Add ${u.email}`}
-                onClick={() => toggle(u.id)}
-                disabled={busy}
-              >
-                <FontAwesomeIcon icon={picked ? faCheck : faPlus} />
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-      <div className="flex justify-end gap-2 border-t border-border px-4 py-3">
-        <button
-          className="btn"
-          type="button"
-          onClick={onClose}
-          disabled={busy}
-          title="Cancel"
-          aria-label="Cancel"
-        >
-          <FontAwesomeIcon icon={faXmark} />
-        </button>
-        <button
-          className="btn"
-          type="button"
-          onClick={() => void done()}
-          disabled={busy}
-          title={
-            busy ? "Adding…" : selected.size ? `Done (${selected.size})` : "Done"
-          }
-          aria-label={
-            busy ? "Adding…" : selected.size ? `Done (${selected.size})` : "Done"
-          }
-        >
-          <FontAwesomeIcon icon={faCheck} />
-        </button>
-      </div>
-    </Modal>
   );
 }

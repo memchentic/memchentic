@@ -15,7 +15,7 @@ from sqlalchemy.orm import aliased, selectinload
 
 from memchentic.auth import passwords
 from memchentic.auth.passwords import hash_password, password_needs_rehash, verify_password
-from memchentic.db.session import set_rls_context
+from memchentic.db.session import commit_with_rls, set_rls_context
 from memchentic.models.entities import (
     ApiKey,
     AuthCode,
@@ -285,7 +285,6 @@ async def _revoke_unverified_credentials(session: AsyncSession, user: User) -> N
         session: Database session.
         user: The account being linked to an IdP identity.
     """
-    now = datetime.now(UTC)
     user.password_hash = None
     internal = (
         await session.execute(
@@ -296,28 +295,9 @@ async def _revoke_unverified_credentials(session: AsyncSession, user: User) -> N
     ).scalar_one_or_none()
     if internal is not None:
         await session.delete(internal)
-    await session.execute(
-        update(GuiSession)
-        .where(GuiSession.user_id == user.id, GuiSession.revoked_at.is_(None))
-        .values(revoked_at=now)
-    )
-    await session.execute(
-        update(AuthRefreshToken)
-        .where(AuthRefreshToken.user_id == user.id, AuthRefreshToken.revoked_at.is_(None))
-        .values(revoked_at=now)
-    )
-    await session.execute(
-        update(AuthCode)
-        .where(AuthCode.user_id == user.id, AuthCode.consumed_at.is_(None))
-        .values(consumed_at=now)
-    )
     # api_keys is under row-level security; bind the owner so the UPDATE sees the rows.
     await set_rls_context(session, user_id=user.id, is_admin=False)
-    await session.execute(
-        update(ApiKey)
-        .where(ApiKey.user_id == user.id, ApiKey.revoked_at.is_(None))
-        .values(revoked_at=now)
-    )
+    await revoke_credentials_raw(session, user.id)
     logger.warning(
         "First IdP link for user %s: revoked password, sessions, tokens and API keys",
         user.id,
@@ -674,3 +654,64 @@ async def delete_user(
         await session.flush()
     await session.delete(user)
     await session.commit()
+
+
+async def revoke_credentials_raw(session: AsyncSession, user_id: uuid.UUID) -> None:
+    """Revoke every stored credential of ``user_id`` (no ACL, no commit).
+
+    Ends browser sessions, OAuth refresh tokens, unused authorization codes
+    and API keys. ``api_keys`` is under row-level security: the caller must
+    have an RLS context that can see the target's keys (admin, or the target
+    user itself).
+
+    Args:
+        session: Database session.
+        user_id: Account whose credentials are revoked.
+    """
+    now = datetime.now(UTC)
+    await session.execute(
+        update(GuiSession)
+        .where(GuiSession.user_id == user_id, GuiSession.revoked_at.is_(None))
+        .values(revoked_at=now)
+    )
+    await session.execute(
+        update(AuthRefreshToken)
+        .where(AuthRefreshToken.user_id == user_id, AuthRefreshToken.revoked_at.is_(None))
+        .values(revoked_at=now)
+    )
+    await session.execute(
+        update(AuthCode)
+        .where(AuthCode.user_id == user_id, AuthCode.consumed_at.is_(None))
+        .values(consumed_at=now)
+    )
+    await session.execute(
+        update(ApiKey)
+        .where(ApiKey.user_id == user_id, ApiKey.revoked_at.is_(None))
+        .values(revoked_at=now)
+    )
+
+
+async def revoke_user_credentials(
+    session: AsyncSession, principal: Principal, user_id: uuid.UUID
+) -> None:
+    """Admin action: end all sessions, refresh tokens and API keys of a user.
+
+    The account, its password, its roster rows and its memories are kept.
+    Access tokens that were already issued stay valid until they expire
+    (``ACCESS_TOKEN_SECONDS``); they cannot be refreshed.
+
+    Args:
+        session: Database session.
+        principal: Authenticated caller; must be an administrator.
+        user_id: Target account.
+
+    Raises:
+        ForbiddenError: The caller is not an administrator.
+        NotFoundError: The target user does not exist.
+    """
+    if not principal.is_admin:
+        raise ForbiddenError("Admin required")
+    if await get_user(session, user_id) is None:
+        raise NotFoundError("User not found")
+    await revoke_credentials_raw(session, user_id)
+    await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)

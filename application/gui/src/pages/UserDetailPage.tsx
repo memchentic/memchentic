@@ -1,6 +1,7 @@
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faArrowLeft,
+  faBan,
   faPlus,
   faTrash,
   faUserPlus,
@@ -72,6 +73,8 @@ export default function UserDetailPage() {
   const [user, setUser] = useState<UserDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  // Text shown after a successful revoke; null before.
+  const [revokedNote, setRevokedNote] = useState<string | null>(null);
   const [manageableCount, setManageableCount] = useState(0);
 
   const load = useCallback(async () => {
@@ -138,12 +141,44 @@ export default function UserDetailPage() {
     }
   }
 
+  async function revokeCredentials() {
+    if (!user) return;
+    if (!confirm(`End all sessions and revoke all API keys of ${name}? The account is kept.`)) {
+      return;
+    }
+    try {
+      const res = await api<{ access_tokens_expire_within_seconds: number }>(
+        `/api/users/${user.id}/revoke-credentials`,
+        { method: "POST" },
+      );
+      const minutes = Math.ceil(res.access_tokens_expire_within_seconds / 60);
+      setRevokedNote(
+        `Sessions and API keys revoked. An access token that is already issued stays valid for up to ${minutes} minutes.`,
+      );
+      setError(null);
+    } catch (err) {
+      setRevokedNote(null);
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   return (
     <div>
       <PageHeader title={name}>
         <Link to="/users" className="btn" title="Users" aria-label="Users">
           <FontAwesomeIcon icon={faArrowLeft} />
         </Link>
+        {me?.is_admin && user && (
+          <button
+            className="btn"
+            type="button"
+            title="Revoke sessions and keys"
+            aria-label="Revoke sessions and keys"
+            onClick={() => void revokeCredentials()}
+          >
+            <FontAwesomeIcon icon={faBan} />
+          </button>
+        )}
         {me?.is_admin && user && (
           <button
             className="btn"
@@ -159,6 +194,7 @@ export default function UserDetailPage() {
       </PageHeader>
       <div className="page-body">
         <ErrorNote error={error} />
+        {revokedNote && <p className="mb-4 text-sm text-muted">{revokedNote}</p>}
         {user && (
           <>
             <div className="panel mb-6 overflow-x-auto">

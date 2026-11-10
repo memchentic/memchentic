@@ -4,16 +4,21 @@ from __future__ import annotations
 
 import os
 import uuid
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from memchentic.auth.idp_groups import groups_from_claims
 from memchentic.auth.users import ensure_admin_user, register_internal_user
+from memchentic.db.session import set_rls_context
+from memchentic.models.entities import ApiKey
 from memchentic.services.auth_groups import (
     SLUG_ADMINISTRATORS,
     SLUG_USERS,
+    add_member,
     ensure_auth_groups,
     list_members,
     remove_member,
@@ -21,6 +26,7 @@ from memchentic.services.auth_groups import (
     sync_user_from_idp_groups,
     user_is_administrator,
 )
+from memchentic.services.errors import ForbiddenError
 from memchentic.settings import get_settings
 
 ADMIN_KEY = os.environ.get("ADMIN_API_KEY", "")
@@ -282,3 +288,127 @@ def test_login_does_not_rebuild_rosters(
     assert resp.status_code == 200, resp.text
     groups = client.get("/api/auth-groups", headers={"Authorization": f"Bearer {ADMIN_KEY}"})
     assert groups.status_code == 200, groups.text
+
+
+async def test_admin_email_change_demotes_previous_env_admin(session: AsyncSession) -> None:
+    """Pointing ADMIN_EMAIL at another account must not leave two break-glass admins."""
+    settings = get_settings()
+    admin_principal = type("P", (), {"is_admin": True})()
+    old_admin = await ensure_admin_user(session, settings)
+    await ensure_auth_groups(session, old_admin)
+
+    email = f"next-admin-{uuid.uuid4().hex[:8]}@example.com"
+    successor = await register_internal_user(session, email=email, password="password-ok-12")
+    await set_rls_context(session, user_id=None, is_admin=True)
+    key = ApiKey(
+        id=uuid.uuid4(),
+        user_id=successor.id,
+        name="before-promotion",
+        key_prefix="mc_test",
+        key_hash=uuid.uuid4().hex,
+    )
+    session.add(key)
+    await session.commit()
+
+    changed = SimpleNamespace(
+        admin_contact_email=email,
+        admin_display_name="Next Admin",
+        admin_password="another-password-12",
+    )
+    try:
+        await ensure_auth_groups(session, await ensure_admin_user(session, changed))
+        await set_rls_context(session, user_id=None, is_admin=True)
+
+        assert await user_is_administrator(session, successor.id)
+        assert not await user_is_administrator(session, old_admin.id)
+        users_members = await list_members(session, admin_principal, SLUG_USERS)
+        assert any(m["user_id"] == str(old_admin.id) for m in users_members)
+        revoked_at = await session.scalar(select(ApiKey.revoked_at).where(ApiKey.id == key.id))
+        assert revoked_at is not None
+    finally:
+        # Swap back so later tests see the configured break-glass admin.
+        await ensure_auth_groups(session, await ensure_admin_user(session, settings))
+        await set_rls_context(session, user_id=None, is_admin=True)
+
+    assert await user_is_administrator(session, old_admin.id)
+    assert not await user_is_administrator(session, successor.id)
+
+
+async def test_unchanged_admin_email_revokes_nothing(session: AsyncSession) -> None:
+    """Re-running ensure_auth_groups for the same admin keeps its credentials."""
+    admin = await ensure_admin_user(session, get_settings())
+    await ensure_auth_groups(session, admin)
+    await set_rls_context(session, user_id=None, is_admin=True)
+    key = ApiKey(
+        id=uuid.uuid4(),
+        user_id=admin.id,
+        name="kept",
+        key_prefix="mc_test",
+        key_hash=uuid.uuid4().hex,
+    )
+    session.add(key)
+    await session.commit()
+
+    await ensure_auth_groups(session, await ensure_admin_user(session, get_settings()))
+    await set_rls_context(session, user_id=None, is_admin=True)
+
+    revoked_at = await session.scalar(select(ApiKey.revoked_at).where(ApiKey.id == key.id))
+    assert revoked_at is None
+    assert await user_is_administrator(session, admin.id)
+
+
+def test_add_to_users_allowed_when_admins_bound_and_target_not_admin(
+    client: TestClient,
+) -> None:
+    """A bound Administrators roster must not freeze the manual Users roster."""
+    _token, user_id, _email = _user(client)
+    admin_auth = {"Authorization": f"Bearer {ADMIN_KEY}"}
+    bind = client.put(
+        "/api/auth-groups/administrators/idp-bind",
+        headers=admin_auth,
+        json={"idp_group_id": "grp-admins", "idp_group_name": "Admins"},
+    )
+    assert bind.status_code == 200, bind.text
+    try:
+        removed = client.delete(f"/api/auth-groups/users/members/{user_id}", headers=admin_auth)
+        assert removed.status_code == 200, removed.text
+        added = client.post(
+            "/api/auth-groups/users/members", headers=admin_auth, json={"user_id": user_id}
+        )
+        assert added.status_code == 200, added.text
+        members = client.get("/api/auth-groups/users/members", headers=admin_auth).json()
+        assert user_id in {m["user_id"] for m in members}
+    finally:
+        client.put(
+            "/api/auth-groups/administrators/idp-bind",
+            headers=admin_auth,
+            json={"idp_group_id": None, "idp_group_name": None},
+        )
+
+
+async def test_add_to_users_refused_for_member_of_bound_administrators(
+    session: AsyncSession,
+) -> None:
+    """An IdP-managed administrator cannot be moved to Users by a manual edit."""
+    settings = get_settings()
+    admin = await ensure_admin_user(session, settings)
+    await ensure_auth_groups(session, admin)
+    principal = type("P", (), {"is_admin": True})()
+    await set_idp_bind(
+        session, principal, SLUG_ADMINISTRATORS, idp_group_id="admins-x", idp_group_name="Ax"
+    )
+    user = await register_internal_user(
+        session,
+        email=f"idp-admin-{uuid.uuid4().hex[:8]}@example.com",
+        password="password-ok-12",
+    )
+    try:
+        await sync_user_from_idp_groups(session, user, {"admins-x"}, settings=settings)
+        assert await user_is_administrator(session, user.id)
+        with pytest.raises(ForbiddenError, match="IdP-bound Administrators"):
+            await add_member(session, principal, SLUG_USERS, user.id)
+        assert await user_is_administrator(session, user.id)
+    finally:
+        await set_idp_bind(
+            session, principal, SLUG_ADMINISTRATORS, idp_group_id=None, idp_group_name=None
+        )

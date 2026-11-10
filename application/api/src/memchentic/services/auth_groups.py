@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import Collection
 from typing import TYPE_CHECKING, Any
@@ -10,8 +11,13 @@ from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from memchentic.auth.users import get_user, get_user_by_email, normalize_email
-from memchentic.models.entities import AuthGroup, AuthGroupMember, User
+from memchentic.auth.users import (
+    get_user,
+    get_user_by_email,
+    normalize_email,
+    revoke_credentials_raw,
+)
+from memchentic.models.entities import AuthGroup, AuthGroupMember, InstanceSetting, User
 from memchentic.services import limits
 from memchentic.services.errors import ForbiddenError, NotFoundError
 from memchentic.services.validation import check_optional_text
@@ -20,10 +26,16 @@ from memchentic.settings import Settings, get_settings
 if TYPE_CHECKING:
     from memchentic.auth.principal import Principal
 
+logger = logging.getLogger("memchentic.auth_groups")
+
 SLUG_ADMINISTRATORS = "administrators"
 SLUG_USERS = "users"
 SOURCE_MANUAL = "manual"
 SOURCE_IDP = "idp"
+
+# instance_settings row: user id of the account that ADMIN_EMAIL named at the
+# last ensure_auth_groups run.
+KEY_ENV_ADMIN_USER_ID = "env_admin_user_id"
 
 _SYSTEM_GROUPS: tuple[tuple[str, str], ...] = (
     (SLUG_ADMINISTRATORS, "Administrators"),
@@ -76,22 +88,26 @@ def _group_bound(group: AuthGroup) -> bool:
 
 
 async def user_in_idp_bound_roster(session: AsyncSession, user_id: uuid.UUID) -> bool:
-    """True when ``user_id`` is a member of any Auth Group with an IdP bind.
+    """True when IdP sync placed ``user_id`` on a currently bound Auth Group.
 
-    Used to refuse hard-delete of directory users that IdP sync owns.
+    Used to refuse hard-delete of directory users that IdP sync owns: the
+    next IdP sign-in would create them again. A member that was added by hand
+    before the bind was set (``source == "manual"``) is not owned by the IdP
+    and stays deletable.
 
     Args:
         session: Database session.
         user_id: Target user id.
 
     Returns:
-        Whether the user sits on a currently bound Administrators or Users roster.
+        Whether the user has an IdP-sourced row on a bound roster.
     """
     result = await session.execute(
         select(AuthGroup.id)
         .join(AuthGroupMember, AuthGroupMember.group_id == AuthGroup.id)
         .where(
             AuthGroupMember.user_id == user_id,
+            AuthGroupMember.source == SOURCE_IDP,
             AuthGroup.idp_group_id.is_not(None),
             AuthGroup.idp_group_id != "",
         )
@@ -135,6 +151,54 @@ async def add_member_raw(
     return row
 
 
+async def _track_env_admin(session: AsyncSession, administrators: AuthGroup, admin: User) -> None:
+    """Demote the previous break-glass account when ``ADMIN_EMAIL`` changed.
+
+    The id of the current break-glass account is stored in
+    ``instance_settings``. When the stored id differs from ``admin.id``:
+
+    * the previous account loses its Administrators row (the Users backfill
+      in ``ensure_auth_groups`` places it in Users when that roster is
+      unbound);
+    * sessions, refresh tokens and API keys that ``admin`` held before it
+      became the break-glass account are revoked, so credentials issued to
+      an ordinary account do not become administrator credentials.
+
+    Nothing is revoked on the first run (no stored id yet).
+
+    Args:
+        session: Database session. The caller of ``ensure_auth_groups`` ran
+            ``ensure_admin_user`` just before, which leaves the RLS context
+            of the admin user; that context can see the admin's own
+            ``api_keys`` rows.
+        administrators: The Administrators auth group.
+        admin: Current break-glass user.
+    """
+    row = await session.get(InstanceSetting, KEY_ENV_ADMIN_USER_ID)
+    previous: uuid.UUID | None = None
+    if row is not None:
+        try:
+            previous = uuid.UUID(row.value)
+        except ValueError:
+            previous = None
+    if previous == admin.id:
+        return
+    if previous is not None:
+        logger.warning(
+            "ADMIN_EMAIL changed: removing user %s from Administrators and "
+            "revoking earlier credentials of the new break-glass user %s",
+            previous,
+            admin.id,
+        )
+        await _remove_member_raw(session, administrators.id, previous)
+        await revoke_credentials_raw(session, admin.id)
+    if row is None:
+        session.add(InstanceSetting(key=KEY_ENV_ADMIN_USER_ID, value=str(admin.id)))
+    else:
+        row.value = str(admin.id)
+    await session.flush()
+
+
 async def ensure_auth_groups(session: AsyncSession, admin: User) -> dict[str, AuthGroup]:
     """Ensure system Auth Groups with exclusive membership.
 
@@ -152,6 +216,7 @@ async def ensure_auth_groups(session: AsyncSession, admin: User) -> dict[str, Au
     for slug, name in _SYSTEM_GROUPS:
         groups[slug] = await _ensure_group(session, slug, name)
 
+    await _track_env_admin(session, groups[SLUG_ADMINISTRATORS], admin)
     await add_member_raw(session, groups[SLUG_ADMINISTRATORS], admin.id, source=SOURCE_MANUAL)
     await _remove_member_raw(session, groups[SLUG_USERS].id, admin.id)
 
@@ -477,7 +542,11 @@ async def add_member(
     if other:
         if other_slug == SLUG_ADMINISTRATORS and _is_env_admin(user, settings):
             raise ForbiddenError("Cannot move the admin account out of Administrators")
-        if _group_bound(other) and other_slug == SLUG_ADMINISTRATORS:
+        if (
+            _group_bound(other)
+            and other_slug == SLUG_ADMINISTRATORS
+            and await _is_member(session, other.id, user_id)
+        ):
             raise ForbiddenError("Cannot move members out of an IdP-bound Administrators roster")
         await _remove_member_raw(session, other.id, user_id)
 

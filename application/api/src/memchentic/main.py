@@ -5,9 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+import signal
+import threading
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
+from types import FrameType
+from typing import Any
 
 from alembic.config import Config
 from fastapi import FastAPI, Request
@@ -24,7 +28,7 @@ from memchentic.auth.passwords import require_bcrypt_length
 from memchentic.auth.principal import resolve_bearer
 from memchentic.auth.tokens import verify_signing_key
 from memchentic.db.session import get_session_factory, init_db, set_rls_context
-from memchentic.events import start_memory_listener, stop_memory_listener
+from memchentic.events import close_memory_streams, start_memory_listener, stop_memory_listener
 from memchentic.mcp.context import principal_var, session_var
 from memchentic.mcp.server import create_mcp
 from memchentic.services.errors import ServiceError, http_error
@@ -65,6 +69,52 @@ def _www_authenticate(settings: Settings) -> bytes:
     return f'Bearer resource_metadata="{meta}", error="invalid_token"'.encode()
 
 
+def _close_streams_on_signal(loop: asyncio.AbstractEventLoop) -> Callable[[], None]:
+    """Chain SIGINT/SIGTERM so open SSE streams end when shutdown starts.
+
+    uvicorn waits for in-flight responses before it runs lifespan shutdown,
+    and an SSE response never finishes by itself. The chained handler asks
+    every stream to end, then calls the handler that was installed before
+    (uvicorn's own).
+
+    Args:
+        loop: The running event loop that owns the subscriber queues.
+
+    Returns:
+        A function that restores the previous handlers.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        # Signal handlers can only be set from the main thread. The test
+        # client runs the lifespan in a worker thread; nothing to chain there.
+        return lambda: None
+
+    installed: dict[int, tuple[Any, Any]] = {}
+
+    def _chain(previous: Any) -> Callable[[int, FrameType | None], None]:
+        def _handler(signum: int, frame: FrameType | None) -> None:
+            with suppress(RuntimeError):  # loop already closed
+                loop.call_soon_threadsafe(close_memory_streams)
+            previous(signum, frame)
+
+        return _handler
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        previous = signal.getsignal(sig)
+        if not callable(previous):
+            # SIG_DFL / SIG_IGN / not set from Python: keep the default action.
+            continue
+        handler = _chain(previous)
+        signal.signal(sig, handler)
+        installed[sig] = (handler, previous)
+
+    def _restore() -> None:
+        for sig, (handler, previous) in installed.items():
+            if signal.getsignal(sig) is handler:
+                signal.signal(sig, previous)
+
+    return _restore
+
+
 class McpAuthMiddleware:
     """Authenticate ``/mcp`` traffic and bind principal + DB session for tool handlers.
 
@@ -82,6 +132,11 @@ class McpAuthMiddleware:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         """Gate MCP requests on a valid principal; pass other traffic through.
+
+        The middleware never commits. Every service function commits its own
+        work with ``commit_with_rls``. Whatever is still pending when the MCP
+        app returns was left behind by a tool call that failed, and is rolled
+        back. This is the same contract as the REST ``db_session`` dependency.
 
         Args:
             scope: ASGI scope.
@@ -125,13 +180,13 @@ class McpAuthMiddleware:
             s_token = session_var.set(session)
             try:
                 await self.app(scope, receive, send)
-                await session.commit()
-            except Exception:
-                await session.rollback()
-                raise
             finally:
                 principal_var.reset(p_token)
                 session_var.reset(s_token)
+                # Services commit their own work. FastMCP turns a tool exception
+                # into an ``isError`` result without raising, so a commit here
+                # would persist the half-applied changes of a failed tool call.
+                await session.rollback()
 
 
 def _alembic_config() -> Config:
@@ -214,10 +269,12 @@ def create_app() -> FastAPI:
         # Fail closed before serving if MiniLM is missing (unless hash allowed).
         get_embedder()
         await start_memory_listener()
+        restore_signals = _close_streams_on_signal(asyncio.get_running_loop())
         try:
             async with mcp_app.lifespan(app):
                 yield
         finally:
+            restore_signals()
             await stop_memory_listener()
 
     docs_on = settings.enable_api_docs
@@ -348,4 +405,10 @@ def run() -> None:
     import uvicorn
 
     # Development entry point; inside the container the server must listen on all interfaces.
-    uvicorn.run("memchentic.main:app", host="0.0.0.0", port=8080, reload=True)  # noqa: S104
+    uvicorn.run(
+        "memchentic.main:app",
+        host="0.0.0.0",  # noqa: S104
+        port=8080,
+        reload=True,
+        timeout_graceful_shutdown=5,
+    )

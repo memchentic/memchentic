@@ -2,7 +2,7 @@ import logging
 import ssl
 from functools import lru_cache
 from typing import Literal
-from urllib.parse import quote_plus
+from urllib.parse import quote
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -88,9 +88,13 @@ class Settings(BaseSettings):
 
     def _dsn(self, *, user: str, password: str) -> str:
         host = self.postgres_hostname.strip()
-        db = quote_plus(self.postgres_db)
+        # ``quote(..., safe="")`` percent-encodes every reserved character and
+        # writes a space as ``%20``. Every consumer of this URL decodes with
+        # ``unquote`` (SQLAlchemy and the event listener), which reverses
+        # ``%20`` but not the ``+`` that ``quote_plus`` would write.
+        db = quote(self.postgres_db, safe="")
         return (
-            f"postgresql+asyncpg://{quote_plus(user)}:{quote_plus(password)}"
+            f"postgresql+asyncpg://{quote(user, safe='')}:{quote(password, safe='')}"
             f"@{host}:{self.postgres_port}/{db}"
         )
 

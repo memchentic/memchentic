@@ -3,12 +3,21 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 import uuid
 
+import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from memchentic.events.memory_bus import _subscribers
+from memchentic.events import memory_bus
+from memchentic.events.memory_bus import (
+    MemoryEvent,
+    _encode_event,
+    _subscribers,
+    publish_memory_event,
+)
 
 
 def _register_and_token(client: TestClient) -> str:
@@ -94,3 +103,78 @@ def test_personal_memory_event_space_not_readable_by_peer(client: TestClient) ->
         assert payload["space_id"] not in readable
     finally:
         _subscribers.discard(queue)
+
+
+def _oversize_event() -> MemoryEvent:
+    return MemoryEvent(
+        action="created",
+        id=str(uuid.uuid4()),
+        space_id=str(uuid.uuid4()),
+        kind="entry",
+        type="fact",
+        # 12 bytes per character once JSON-escaped. Longer than the title column
+        # allows, on purpose: it exercises the last reduction step as well.
+        title="\U0001f600" * 1000,
+        tags=[f"{i:02d}-" + "t" * 97 for i in range(90)],
+        snippet="s" * 181,
+    )
+
+
+def test_event_payload_always_fits_notify_limit() -> None:
+    """An oversize event is reduced, not rejected; a normal event is unchanged."""
+    big = _oversize_event()
+    payload = _encode_event(big)
+    assert len(payload.encode()) <= 7900
+    data = json.loads(payload)
+    assert (data["action"], data["id"], data["space_id"]) == ("created", big.id, big.space_id)
+    assert data["tags"] == []
+    assert data["snippet"] == ""
+    assert data["title"] == big.title[:200]
+
+    small = MemoryEvent(
+        action="updated",
+        id=big.id,
+        space_id=big.space_id,
+        kind="entry",
+        type="fact",
+        title="ok",
+        tags=["a", "b"],
+        snippet="hello",
+    )
+    assert json.loads(_encode_event(small)) == small.to_dict()
+
+
+async def test_publish_oversize_event_does_not_raise(session: AsyncSession) -> None:
+    """pg_notify accepts the reduced payload (the statement used to raise)."""
+    await publish_memory_event(session, _oversize_event())
+    await session.rollback()  # never deliver the test event
+
+
+async def test_close_memory_streams_wakes_waiting_subscriber(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A subscriber blocked on its queue receives the shutdown sentinel."""
+    monkeypatch.setattr(memory_bus, "_streams_closing", False)
+    async with memory_bus.subscribe_memory_events() as queue:
+        waiter = asyncio.create_task(queue.get())
+        await asyncio.sleep(0)
+        memory_bus.close_memory_streams()
+        received = await asyncio.wait_for(waiter, timeout=1.0)
+    assert received is memory_bus.STREAM_CLOSED
+
+
+def test_sse_stream_ends_when_shutdown_has_started(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Once shutdown has started, an SSE request completes instead of streaming forever."""
+    token = _register_and_token(client)
+    close_streams = memory_bus.close_memory_streams
+    # monkeypatch restores the flag to False after the test.
+    monkeypatch.setattr(memory_bus, "_streams_closing", False)
+    assert client.portal is not None
+    client.portal.call(close_streams)  # run on the application's event loop
+
+    res = client.get("/api/events/memories", headers={"Authorization": f"Bearer {token}"})
+
+    assert res.status_code == 200
+    assert res.text == ": connected\n\n"

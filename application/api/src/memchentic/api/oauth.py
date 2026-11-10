@@ -86,9 +86,10 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
+# ``path`` is bound by the "/{path:path}" route variant and is not used.
 @router.get("/.well-known/oauth-protected-resource")
 @router.get("/.well-known/oauth-protected-resource/{path:path}")
-async def prm(path: str = "") -> dict:
+async def prm(path: str = "") -> dict:  # noqa: ARG001
     return protected_resource_metadata(get_settings())
 
 

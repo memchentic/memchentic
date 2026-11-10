@@ -11,6 +11,8 @@ from urllib.parse import urlencode, urlparse
 
 import httpx
 import jwt
+from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePublicKey
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 from jwt.algorithms import ECAlgorithm, RSAAlgorithm
 
 from memchentic.settings import Settings
@@ -196,10 +198,17 @@ async def fetch_jwks_and_decode(token: str, settings: Settings) -> dict:
         raise ValueError("No matching JWKS key")
 
     kty = key.get("kty")
+    crypto_key: RSAPublicKey | EllipticCurvePublicKey
     if kty == "RSA":
-        crypto_key = RSAAlgorithm.from_jwk(json.dumps(key))
+        rsa_key = RSAAlgorithm.from_jwk(json.dumps(key))
+        if not isinstance(rsa_key, RSAPublicKey):
+            raise ValueError("JWKS RSA key is not a public key")
+        crypto_key = rsa_key
     elif kty == "EC":
-        crypto_key = ECAlgorithm.from_jwk(json.dumps(key))
+        ec_key = ECAlgorithm.from_jwk(json.dumps(key))
+        if not isinstance(ec_key, EllipticCurvePublicKey):
+            raise ValueError("JWKS EC key is not a public key")
+        crypto_key = ec_key
     else:
         raise ValueError(f"Unsupported JWKS kty: {kty}")
 

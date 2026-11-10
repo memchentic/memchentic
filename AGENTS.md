@@ -36,6 +36,9 @@ docker compose up -d --build  # --build only needed for local overlay rebuilds
 docker compose exec application pytest -q
 # Pytest always uses DB memchentic_test (never the live memchentic volume).
 docker compose exec application ruff check src tests
+docker compose exec application ruff format --check src tests
+docker compose exec application mypy
+docker compose exec application pytest -q --cov --cov-report=term-missing
 ```
 
 Host publishes come from `docker/.env`: `GUI_PORT` (18080), `API_PORT`

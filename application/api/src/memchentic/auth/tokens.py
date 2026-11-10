@@ -127,7 +127,9 @@ async def jwks(session: AsyncSession) -> dict:
     keys = []
     for row in result.scalars():
         public = serialization.load_pem_public_key(row.public_pem.encode())
-        numbers = public.public_numbers()  # type: ignore[attr-defined]
+        if not isinstance(public, rsa.RSAPublicKey):
+            raise TypeError("Signing key is not an RSA public key")
+        numbers = public.public_numbers()
         keys.append(
             {
                 "kty": "RSA",

@@ -407,7 +407,7 @@ async def refresh_session(
     _require_gui_header(request)
     raw = request.cookies.get(SESSION_COOKIE)
     row = await touch_session(session, raw, get_settings()) if raw else None
-    if row is None:
+    if not raw or row is None:
         denied = JSONResponse({"detail": "No active session"}, status_code=401)
         _clear_session_cookie(denied)
         return denied

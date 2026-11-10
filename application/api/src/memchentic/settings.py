@@ -66,7 +66,7 @@ class Settings(BaseSettings):
 
     @property
     def postgres_ssl(self) -> str | ssl.SSLContext:
-        """asyncpg ``ssl`` argument for ``POSTGRES_SSLMODE``.
+        """Return the asyncpg ``ssl`` argument for ``POSTGRES_SSLMODE``.
 
         ``verify-ca`` / ``verify-full`` build a context trusting
         ``POSTGRES_SSLROOTCERT`` (system CAs when empty); ``verify-full`` also

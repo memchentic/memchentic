@@ -67,7 +67,7 @@ def test_create_memory_fans_out_local_subscribers(client: TestClient) -> None:
 
 
 def test_personal_memory_event_space_not_readable_by_peer(client: TestClient) -> None:
-    """Bus may carry peer personal events; SSE ACL uses space list — peer must not see that space."""
+    """The bus carries a peer's personal event; the peer's space list excludes that space."""
     token_a = _register_and_token(client)
     token_b = _register_and_token(client)
     queue: asyncio.Queue = asyncio.Queue(maxsize=8)

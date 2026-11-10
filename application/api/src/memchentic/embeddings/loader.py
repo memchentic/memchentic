@@ -6,8 +6,12 @@ import logging
 import math
 import struct
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from tokenizers import Tokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +36,8 @@ class Embedder:
     def __init__(self, model_path: str | Path | None = None, dim: int = EMBEDDING_DIM) -> None:
         self.model_path = Path(model_path) if model_path is not None else DEFAULT_MODEL_DIR
         self.dim = dim
-        self._session = None
-        self._tokenizer = None
+        self._session: Any | None = None
+        self._tokenizer: Tokenizer | None = None
         self._backend = "hash"
         self._try_load_onnx()
 
@@ -95,7 +99,8 @@ class Embedder:
         return [v / norm for v in vec]
 
     def _embed_onnx(self, text: str) -> list[float]:
-        assert self._tokenizer is not None and self._session is not None
+        if self._tokenizer is None or self._session is None:
+            raise RuntimeError("ONNX embedder is not loaded")
         encoded = self._tokenizer.encode(text)
         ids = list(encoded.ids)
         mask = list(encoded.attention_mask)

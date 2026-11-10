@@ -177,7 +177,8 @@ def test_authenticated_user_directory_omits_admin_fields(client: TestClient) -> 
     rows = client.get("/api/users", headers=auth_a).json()
     assert isinstance(rows, list)
     by_id = {r["id"]: r for r in rows}
-    assert user_a in by_id and user_b in by_id
+    assert user_a in by_id
+    assert user_b in by_id
     assert by_id[user_b]["email"] == email_b
     assert "providers" not in by_id[user_b]
     assert "created_at" not in by_id[user_b]
@@ -236,9 +237,11 @@ def test_user_detail_groups_are_acl_scoped(client: TestClient) -> None:
         admin = client.get(
             f"/api/users/{user_a}", headers={"Authorization": f"Bearer {ADMIN_KEY}"}
         ).json()
-        assert admin["providers"] == ["internal"] and "created_at" in admin
+        assert admin["providers"] == ["internal"]
+        assert "created_at" in admin
         admin_ids = {t["id"] for t in admin["groups"]}
-        assert shared["id"] in admin_ids and private["id"] in admin_ids
+        assert shared["id"] in admin_ids
+        assert private["id"] in admin_ids
 
 
 def test_user_detail_acl_edges(client: TestClient) -> None:
@@ -465,7 +468,8 @@ def test_authorize_requires_registered_redirect_and_pkce(client: TestClient) -> 
     )
     page = client.get("/oauth/authorize", params={**base, "code_challenge": challenge})
     assert page.status_code == 200
-    assert "Test Harness" in page.text and "127.0.0.1:9" in page.text
+    assert "Test Harness" in page.text
+    assert "127.0.0.1:9" in page.text
     assert page.headers["x-frame-options"] == "DENY"
 
     form = {

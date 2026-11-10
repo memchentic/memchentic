@@ -55,7 +55,8 @@ async def reembed_all(batch_size: int = 200) -> int:
 def main() -> None:
     """Entry point: re-embed everything and print the backend and row count."""
     count = asyncio.run(reembed_all())
-    print(f"backend={get_embedder().backend} reembedded={count}")
+    # Command-line output of this script.
+    print(f"backend={get_embedder().backend} reembedded={count}")  # noqa: T201
 
 
 if __name__ == "__main__":

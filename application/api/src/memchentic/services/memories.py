@@ -280,7 +280,7 @@ def resolve_type_tokens(
     return None
 
 
-def _active_select(space_ids: list[uuid.UUID], include_expired: bool) -> Select[tuple[Memory]]:
+def _active_select(space_ids: list[uuid.UUID], include_expired: bool) -> Select[Memory]:
     """Memories in ``space_ids``, hiding past-due rows unless ``include_expired``."""
     stmt = select(Memory).where(Memory.space_id.in_(space_ids))
     active = active_memory_clause(include_expired=include_expired)
@@ -892,7 +892,8 @@ async def overlap_report(
     seen: set[tuple[str, str]] = set()
 
     def _add(a: Memory, b: Memory, reason: str, similarity: float | None = None) -> None:
-        key = tuple(sorted((str(a.id), str(b.id))))
+        first, second = sorted((str(a.id), str(b.id)))
+        key = (first, second)
         if key in seen:
             return
         seen.add(key)

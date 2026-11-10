@@ -204,9 +204,23 @@ class Digest:
     updated_at: str | None = None
     expires_at: str | None = None
     updated_by: str | None = None
+    confidence: float | None = None
+    created_at: str | None = None
+    path_hint: str | None = None
+    repo_hint: str | None = None
 
 
-def _snippet(body: str, limit: int = 180) -> str:
+def make_snippet(body: str | None, limit: int = 180) -> str:
+    """Build the one-line preview used in every digest, list row and live event.
+
+    Args:
+        body: Memory body; None is treated as empty.
+        limit: Maximum length of the result, including the ellipsis.
+
+    Returns:
+        The body with surrounding whitespace removed and newlines replaced by
+        spaces; cut to ``limit`` characters ending in ``…`` when it is longer.
+    """
     body = (body or "").strip().replace("\n", " ")
     if len(body) <= limit:
         return body
@@ -371,7 +385,7 @@ async def hybrid_search(
                 id=str(m.id),
                 title=m.title,
                 score=round(score, 6),
-                snippet=_snippet(m.body),
+                snippet=make_snippet(m.body),
                 type=m.entry_type.value if m.entry_type else None,
                 tags=list(m.tags or []),
                 space_id=str(m.space_id),
@@ -380,6 +394,10 @@ async def hybrid_search(
                 updated_by=str(m.updated_by_user_id) if m.updated_by_user_id else None,
                 updated_at=m.updated_at.isoformat() if m.updated_at else None,
                 expires_at=m.expires_at.isoformat() if m.expires_at else None,
+                confidence=m.confidence,
+                created_at=m.created_at.isoformat() if m.created_at else None,
+                path_hint=m.path_hint,
+                repo_hint=m.repo_hint,
             )
         )
     return digests

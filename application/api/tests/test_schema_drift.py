@@ -71,18 +71,23 @@ async def test_lookup_indexes_exist(session: AsyncSession) -> None:
     assert "(created_by_user_id)" in definitions["ix_memories_created_by_user_id"]
 
 
-async def test_title_lookup_plan_uses_title_index(session: AsyncSession) -> None:
+async def test_title_lookup_plan_uses_title_index() -> None:
     """The application's ``lower(trim(title))`` predicate can use the title index."""
+    engine = create_async_engine(get_settings().migration_database_url)
     stmt = select(Memory.id).where(
         Memory.space_id == text("'00000000-0000-0000-0000-000000000000'::uuid"),
         func.lower(func.trim(Memory.title)) == "x",
     )
-    compiled = stmt.compile(
-        dialect=session.get_bind().dialect, compile_kwargs={"literal_binds": True}
-    )
-    await session.execute(text("SET LOCAL enable_seqscan = off"))
-    plan = "\n".join(
-        str(row[0]) for row in (await session.execute(text(f"EXPLAIN {compiled}"))).all()
-    )
-    await session.rollback()
+    compiled = stmt.compile(dialect=engine.dialect, compile_kwargs={"literal_binds": True})
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("SET LOCAL enable_seqscan = off"))
+            # The space/updated_at index can tie on cost once other tests add rows;
+            # the transaction is rolled back, so dropping it only removes the tie.
+            await conn.execute(text("DROP INDEX ix_memories_space_updated"))
+            rows = (await conn.execute(text(f"EXPLAIN {compiled}"))).all()
+            await conn.rollback()
+    finally:
+        await engine.dispose()
+    plan = "\n".join(str(row[0]) for row in rows)
     assert "ix_memories_space_lower_title" in plan, plan

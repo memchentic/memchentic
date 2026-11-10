@@ -124,6 +124,8 @@ class ReviseIn(BaseModel):
     tags: TagList | None = None
     expires_at: DatetimeStr | None = None
     clear_expiry: bool = False
+    ttl_days: TtlDays | None = None
+    permanent: bool = False
     path_hint: str | None = Field(default=None, max_length=limits.PATH_HINT_MAX)
     repo_hint: str | None = Field(default=None, max_length=limits.REPO_HINT_MAX)
 
@@ -159,28 +161,6 @@ class GuideIn(BaseModel):
     expires_at: DatetimeStr | None = None
     ttl_days: TtlDays | None = None
     permanent: bool = False
-
-
-async def _memory_out(session: AsyncSession, memory: Any, *, full: bool = False) -> dict:
-    """Serialize a memory and attach creator email / display name."""
-    rows = await memory_service.enrich_creator_fields(
-        session, [memory_service.memory_to_dict(memory, full=full)]
-    )
-    return rows[0]
-
-
-async def _memories_out(session: AsyncSession, memories: list[Any]) -> list[dict]:
-    """Serialize memories and attach creator email / display name."""
-    return await memory_service.enrich_creator_fields(
-        session, [memory_service.memory_to_dict(m) for m in memories]
-    )
-
-
-async def _digests_out(session: AsyncSession, digests: list[Any]) -> list[dict]:
-    """Serialize digests and attach creator email / display name."""
-    return await memory_service.enrich_creator_fields(
-        session, [memory_service.digest_to_dict(d) for d in digests]
-    )
 
 
 @api_router.get("/health")
@@ -501,7 +481,7 @@ async def me(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict[str, Any]:
-    return await _me_payload(session, principal)
+    return await space_service.me_payload(session, principal, invite_details=True)
 
 
 @api_router.patch("/me")
@@ -513,30 +493,7 @@ async def patch_me(
     await space_service.set_default_shared_space(
         session, principal, parse_uuid(body.default_shared_space_id, "default_shared_space_id")
     )
-    return await _me_payload(session, principal)
-
-
-async def _me_payload(session: AsyncSession, principal: Principal) -> dict[str, Any]:
-    spaces = await space_service.list_member_spaces(session, principal)
-    personal = (
-        await space_service.get_personal_space(session, principal.user_id)
-        if principal.user_id
-        else None
-    )
-    user = await session.get(User, principal.user_id) if principal.user_id else None
-    default_shared = user.default_shared_space_id if user else None
-    return {
-        "default_shared_space_id": str(default_shared) if default_shared else None,
-        "id": str(principal.user_id) if principal.user_id else None,
-        "subject": principal.subject,
-        "email": principal.email,
-        "display_name": principal.display_name,
-        "provider": principal.provider,
-        "is_admin": principal.is_admin,
-        "personal_space_id": str(personal.id) if personal else None,
-        "memberships": [{"id": str(s.id), "name": s.name, "kind": s.kind.value} for s in spaces],
-        "pending_invites": await space_service.list_pending_invites(session, principal),
-    }
+    return await space_service.me_payload(session, principal, invite_details=True)
 
 
 @api_router.get("/users")
@@ -611,7 +568,7 @@ async def show_user(
         "id": str(user.id),
         "email": user.email,
         "display_name": user.display_name,
-        "groups": [{"id": str(s.id), "name": s.name, "kind": s.kind.value} for s in groups],
+        "groups": [space_service.space_to_dict(s) for s in groups],
     }
     if principal.is_admin:
         out["providers"] = providers_for(user)
@@ -659,7 +616,7 @@ async def spaces(
     session: AsyncSession = Depends(db_session),
 ) -> list[dict]:
     rows = await space_service.list_spaces(session, principal)
-    return [{"id": str(s.id), "name": s.name, "kind": s.kind.value} for s in rows]
+    return [space_service.space_to_dict(s) for s in rows]
 
 
 @api_router.post("/spaces")
@@ -669,7 +626,7 @@ async def create_space(
     session: AsyncSession = Depends(db_session),
 ) -> dict:
     space = await space_service.create_group(session, principal, name=body.name)
-    return {"id": str(space.id), "name": space.name, "kind": space.kind.value}
+    return space_service.space_to_dict(space)
 
 
 @api_router.get("/spaces/{space_id}")
@@ -681,21 +638,7 @@ async def show_space(
     space = await space_service.show_space(session, principal, space_id)
     if not space:
         raise HTTPException(404, "Not found")
-    return {
-        "id": str(space.id),
-        "name": space.name,
-        "kind": space.kind.value,
-        "created_by": str(space.created_by_user_id) if space.created_by_user_id else None,
-        "members": [
-            {
-                "user_id": str(m.user_id),
-                "email": m.user.email if m.user else None,
-                "display_name": m.user.display_name if m.user else None,
-                "pending": m.accepted_at is None,
-            }
-            for m in space_service.visible_members(space, principal)
-        ],
-    }
+    return space_service.space_detail(space, principal)
 
 
 @api_router.patch("/spaces/{space_id}")
@@ -706,7 +649,7 @@ async def rename_space(
     session: AsyncSession = Depends(db_session),
 ) -> dict:
     space = await space_service.rename_space(session, principal, space_id, body.name)
-    return {"id": str(space.id), "name": space.name, "kind": space.kind.value}
+    return space_service.space_to_dict(space)
 
 
 @api_router.delete("/spaces/{space_id}")
@@ -756,7 +699,7 @@ async def accept_space_invite(
     id exists.
     """
     space = await space_service.accept_invite(session, principal, space_id)
-    return {"id": str(space.id), "name": space.name, "kind": space.kind.value}
+    return space_service.space_to_dict(space)
 
 
 @api_router.delete("/spaces/{space_id}/members/{user_id}")
@@ -805,6 +748,7 @@ async def browse_memories(
     limit: int | None = None,
     offset: int = Query(0, ge=0, le=limits.OFFSET_MAX),
     include_expired: bool = False,
+    tags: str | None = Query(None, max_length=limits.QUERY_MAX),
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> list[dict]:
@@ -819,8 +763,9 @@ async def browse_memories(
         limit=limit,
         offset=offset,
         include_expired=include_expired,
+        tags=_parse_types(tags),
     )
-    return await _memories_out(session, rows)
+    return await memory_service.memories_out(session, rows)
 
 
 @api_router.get("/memories/search")
@@ -835,6 +780,9 @@ async def search_memories(
     offset: int = Query(0, ge=0, le=limits.OFFSET_MAX),
     include_expired: bool = False,
     touch: bool = True,
+    tags: str | None = Query(None, max_length=limits.QUERY_MAX),
+    path_hint: str | None = Query(None, max_length=limits.PATH_HINT_MAX),
+    repo_hint: str | None = Query(None, max_length=limits.REPO_HINT_MAX),
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> list[dict]:
@@ -851,8 +799,11 @@ async def search_memories(
         offset=offset,
         include_expired=include_expired,
         touch=touch,
+        tags=_parse_types(tags),
+        path_hint=path_hint,
+        repo_hint=repo_hint,
     )
-    return await _digests_out(session, digests)
+    return await memory_service.digests_out(session, digests)
 
 
 @api_router.post("/memories")
@@ -878,7 +829,7 @@ async def create_memory(
         repo_hint=body.repo_hint,
         force=body.force,
     )
-    return await _memory_out(session, memory, full=True)
+    return await memory_service.memory_out(session, memory, full=True)
 
 
 @api_router.get("/memories/{memory_id}")
@@ -898,7 +849,7 @@ async def get_memory(
     memory = await memory_service.open_memory(session, principal, memory_id=memory_id, recall=touch)
     if not memory:
         raise HTTPException(404, "Not found")
-    return await _memory_out(session, memory, full=True)
+    return await memory_service.memory_out(session, memory, full=True)
 
 
 @api_router.patch("/memories/{memory_id}")
@@ -918,10 +869,12 @@ async def patch_memory(
         tags=body.tags,
         expires_at=parse_datetime(body.expires_at, "expires_at"),
         clear_expiry=body.clear_expiry,
+        ttl_days=body.ttl_days,
+        permanent=body.permanent,
         path_hint=body.path_hint,
         repo_hint=body.repo_hint,
     )
-    return await _memory_out(session, memory, full=True)
+    return await memory_service.memory_out(session, memory, full=True)
 
 
 @api_router.delete("/memories/{memory_id}")
@@ -931,7 +884,7 @@ async def delete_memory(
     session: AsyncSession = Depends(db_session),
 ) -> dict:
     await memory_service.forget(session, principal, memory_id)
-    return {"status": "deleted"}
+    return {"status": "deleted", "id": str(memory_id)}
 
 
 @api_router.post("/guides")
@@ -953,7 +906,7 @@ async def create_guide(
         ttl_days=body.ttl_days,
         permanent=body.permanent,
     )
-    return await _memory_out(session, memory, full=True)
+    return await memory_service.memory_out(session, memory, full=True)
 
 
 @api_router.get("/api-keys")

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -320,3 +322,17 @@ def clear_discovery_cache() -> None:
     """Clear the in-process OIDC discovery and JWKS-URL caches (tests)."""
     _discovery_cache.clear()
     _jwks_uri_cache.clear()
+
+
+def pkce_s256_challenge(verifier: str) -> str:
+    """Return the S256 PKCE code challenge for ``verifier`` (RFC 7636).
+
+    Args:
+        verifier: The PKCE code verifier. Encoded as UTF-8, so a client-supplied
+            verifier with non-ASCII characters does not raise.
+
+    Returns:
+        The base64url SHA-256 digest without padding.
+    """
+    digest = hashlib.sha256(verifier.encode()).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")

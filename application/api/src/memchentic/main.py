@@ -26,6 +26,7 @@ from memchentic.api.router import api_router
 from memchentic.api.security_headers import SecurityHeadersMiddleware
 from memchentic.auth.bearer import resolve_bearer
 from memchentic.auth.passwords import require_bcrypt_length
+from memchentic.auth.principal import bearer_token_from_header
 from memchentic.db.migrate import run_migrations
 from memchentic.db.session import get_session_factory, init_db, set_rls_context
 from memchentic.embeddings import get_embedder
@@ -51,9 +52,7 @@ def _bearer_from_scope(scope: Scope) -> str | None:
     """
     for key, value in scope.get("headers", []):
         if key.decode().lower() == "authorization":
-            raw = value.decode()
-            if raw.lower().startswith("bearer "):
-                return raw[7:].strip() or None
+            return bearer_token_from_header(value.decode())
     return None
 
 

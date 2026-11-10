@@ -102,54 +102,19 @@ async def find_near_duplicate(
     return None
 
 
-async def overlap_report(
+_OVERLAP_NOTE = (
+    "Read-only hygiene report; merge via revise/forget. "
+    "Conflict detection is not implemented; conflicts is always empty."
+)
+
+
+async def _scan_rows(
     session: AsyncSession,
-    principal: Principal,
-    *,
-    space_id: uuid.UUID | None = None,
-    limit: int | None = None,
-    include_expired: bool = False,
-    expiring_within_days: int | None = None,
-) -> dict[str, Any]:
-    """Report duplicate candidates and soon-to-expire memories (read-only).
-
-    Args:
-        session: Database session.
-        principal: Authenticated caller.
-        space_id: Limit the report to one space.
-        limit: Most pairs and most expiring memories to return.
-        include_expired: Also compare past-due memories.
-        expiring_within_days: List only memories that expire within this many
-            days; ``None`` lists the next ``limit`` expiries.
-
-    Returns:
-        ``near_duplicates`` (pairs), ``expiring``, ``conflicts`` (always
-        empty; conflict detection is not implemented), ``scanned`` (number
-        of memories compared) and ``truncated`` (True when more memories
-        exist than ``OVERLAP_SCAN_LIMIT``; the oldest were not compared).
-    """
-    settings = get_settings()
-    if expiring_within_days is not None and expiring_within_days < 0:
-        raise ValidationError("expiring_within_days must be >= 0")
-    limit = settings.resolve_search_limit(limit)
-    note = (
-        "Read-only hygiene report; merge via revise/forget. "
-        "Conflict detection is not implemented; conflicts is always empty."
-    )
-    space_ids = await accessible_space_ids(session, principal, space_id)
-    if not space_ids:
-        return {
-            "near_duplicates": [],
-            "expiring": [],
-            "conflicts": [],
-            "scanned": 0,
-            "truncated": False,
-            "note": note,
-            "near_dup_threshold": settings.near_dup_threshold,
-            "content_trust": CONTENT_TRUST,
-        }
-
-    scan_limit = settings.overlap_scan_limit
+    space_ids: list[uuid.UUID],
+    include_expired: bool,
+    scan_limit: int,
+) -> tuple[list[Memory], bool]:
+    """Load the newest embedded rows to compare and whether the scan was cut off."""
     # One row more than the limit shows whether the scan is complete.
     rows = list(
         (
@@ -163,7 +128,31 @@ async def overlap_report(
     )
     truncated = len(rows) > scan_limit
     rows = rows[:scan_limit]
+    return rows, truncated
 
+
+def _overlap_payload(
+    near_duplicates: list[dict[str, Any]],
+    expiring: list[dict[str, Any]],
+    scanned: int,
+    truncated: bool,
+    threshold: float,
+) -> dict[str, Any]:
+    """Build the overlap report body in its fixed key order."""
+    return {
+        "near_duplicates": near_duplicates,
+        "expiring": expiring,
+        "conflicts": [],
+        "scanned": scanned,
+        "truncated": truncated,
+        "note": _OVERLAP_NOTE,
+        "near_dup_threshold": threshold,
+        "content_trust": CONTENT_TRUST,
+    }
+
+
+def _near_duplicate_pairs(rows: list[Memory], limit: int, threshold: float) -> list[dict[str, Any]]:
+    """Pair rows that share a title or exceed the cosine threshold, up to ``limit``."""
     near_duplicates: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
 
@@ -196,7 +185,6 @@ async def overlap_report(
         groups: dict[tuple[uuid.UUID, MemoryKind], list[Memory]] = {}
         for m in rows:
             groups.setdefault((m.space_id, m.kind), []).append(m)
-        threshold = settings.near_dup_threshold
         for members in groups.values():
             if len(members) < 2 or len(near_duplicates) >= limit:
                 continue
@@ -211,7 +199,16 @@ async def overlap_report(
                 if len(near_duplicates) >= limit:
                     break
     near_duplicates = near_duplicates[:limit]
+    return near_duplicates
 
+
+async def _expiring_soon(
+    session: AsyncSession,
+    space_ids: list[uuid.UUID],
+    limit: int,
+    expiring_within_days: int | None,
+) -> list[dict[str, Any]]:
+    """List the memories that expire next in the given spaces."""
     now = datetime.now(UTC)
     expiring_stmt = (
         select(Memory)
@@ -236,14 +233,50 @@ async def overlap_report(
         }
         for m in expiring_rows
     ]
+    return expiring
 
-    return {
-        "near_duplicates": near_duplicates,
-        "expiring": expiring,
-        "conflicts": [],
-        "scanned": len(rows),
-        "truncated": truncated,
-        "note": note,
-        "near_dup_threshold": settings.near_dup_threshold,
-        "content_trust": CONTENT_TRUST,
-    }
+
+async def overlap_report(
+    session: AsyncSession,
+    principal: Principal,
+    *,
+    space_id: uuid.UUID | None = None,
+    limit: int | None = None,
+    include_expired: bool = False,
+    expiring_within_days: int | None = None,
+) -> dict[str, Any]:
+    """Report duplicate candidates and soon-to-expire memories (read-only).
+
+    Args:
+        session: Database session.
+        principal: Authenticated caller.
+        space_id: Limit the report to one space.
+        limit: Most pairs and most expiring memories to return.
+        include_expired: Also compare past-due memories.
+        expiring_within_days: List only memories that expire within this many
+            days; ``None`` lists the next ``limit`` expiries.
+
+    Returns:
+        ``near_duplicates`` (pairs), ``expiring``, ``conflicts`` (always
+        empty; conflict detection is not implemented), ``scanned`` (number
+        of memories compared) and ``truncated`` (True when more memories
+        exist than ``OVERLAP_SCAN_LIMIT``; the oldest were not compared).
+    """
+    settings = get_settings()
+    if expiring_within_days is not None and expiring_within_days < 0:
+        raise ValidationError("expiring_within_days must be >= 0")
+    limit = settings.resolve_search_limit(limit)
+    space_ids = await accessible_space_ids(session, principal, space_id)
+    if not space_ids:
+        return _overlap_payload([], [], 0, False, settings.near_dup_threshold)
+
+    rows, truncated = await _scan_rows(
+        session, space_ids, include_expired, settings.overlap_scan_limit
+    )
+
+    near_duplicates = _near_duplicate_pairs(rows, limit, settings.near_dup_threshold)
+    expiring = await _expiring_soon(session, space_ids, limit, expiring_within_days)
+
+    return _overlap_payload(
+        near_duplicates, expiring, len(rows), truncated, settings.near_dup_threshold
+    )

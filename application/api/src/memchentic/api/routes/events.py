@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from memchentic.auth.bearer import resolve_bearer
+from memchentic.auth.principal import bearer_token_from_header
 from memchentic.db.session import get_session_factory, set_rls_context
 from memchentic.events import STREAM_CLOSED, subscribe_memory_events
 from memchentic.services import spaces as space_service
@@ -53,8 +54,7 @@ async def memory_events(request: Request) -> StreamingResponse:
     10s (and on idle keepalive). Invalid tokens end the stream. Clients should
     reconnect on drop; the GUI also keeps a 30s safety poll.
     """
-    auth = request.headers.get("Authorization") or ""
-    token = auth[7:].strip() if auth.lower().startswith("bearer ") else None
+    token = bearer_token_from_header(request.headers.get("Authorization"))
     initial = await _reauth_memory_events(token)
     if initial is None:
         raise HTTPException(status_code=401, detail="Unauthorized")

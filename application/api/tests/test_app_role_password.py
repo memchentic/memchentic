@@ -8,12 +8,12 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from memchentic.db.session import get_engine, init_db
+from memchentic.db.session import create_owner_engine, init_db
 from memchentic.settings import get_settings
 
 
 async def _owner_exec(statement: str) -> None:
-    engine = get_engine(migration=True)
+    engine = create_owner_engine()
     try:
         async with engine.begin() as conn:
             await conn.exec_driver_sql(statement)

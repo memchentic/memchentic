@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import hmac
 from dataclasses import dataclass
 from uuid import UUID
@@ -35,9 +34,18 @@ class Principal:
         return str(self.user_id)
 
 
-def hash_api_key(raw: str) -> str:
-    """Return the SHA-256 hex digest stored for an API key."""
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+def bearer_token_from_header(value: str | None) -> str | None:
+    """Extract the token from an ``Authorization: Bearer <token>`` header value.
+
+    Args:
+        value: Raw header value, or ``None`` when the header is absent.
+
+    Returns:
+        The token, or ``None`` when the header is absent, not Bearer, or empty.
+    """
+    if value and value.lower().startswith("bearer "):
+        return value[7:].strip() or None
+    return None
 
 
 def check_admin_password(email: str, password: str, settings: Settings | None = None) -> bool:

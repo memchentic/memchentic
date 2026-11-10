@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import base64
-import hashlib
 import re
 import uuid
 from dataclasses import dataclass
@@ -13,6 +11,7 @@ from urllib.parse import urlparse
 from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from memchentic.auth.providers import pkce_s256_challenge
 from memchentic.auth.tokens import hash_token, issue_access_token, new_opaque_token
 from memchentic.models.entities import AuthCode, AuthRefreshToken, OAuthClient
 from memchentic.settings import Settings, get_settings
@@ -118,9 +117,7 @@ def validate_redirect_uri(uri: str) -> str:
 def verify_pkce(code_verifier: str, challenge: str, method: str) -> bool:
     if method != "S256":
         return False
-    digest = hashlib.sha256(code_verifier.encode()).digest()
-    calc = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
-    return calc == challenge
+    return pkce_s256_challenge(code_verifier) == challenge
 
 
 async def revoke_refresh_family(session: AsyncSession, family_id: uuid.UUID) -> None:

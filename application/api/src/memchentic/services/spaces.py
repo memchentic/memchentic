@@ -19,6 +19,29 @@ from memchentic.services.errors import ForbiddenError, NotFoundError
 from memchentic.services.validation import check_name, parse_space_scope
 
 
+async def _insert_space(
+    session: AsyncSession,
+    *,
+    space_id: uuid.UUID,
+    kind: SpaceKind,
+    name: str,
+    created_by: uuid.UUID,
+) -> None:
+    """Insert a space and its creator membership through ``app_insert_space``.
+
+    Args:
+        session: Database session with the creator bound as ``app.user_id``.
+        space_id: Id of the new space.
+        kind: Personal or group.
+        name: Space name.
+        created_by: User who owns the space and becomes its first member.
+    """
+    await session.execute(
+        text("SELECT app_insert_space(:id, CAST(:kind AS space_kind), :name, :created_by)"),
+        {"id": space_id, "kind": kind.value, "name": name, "created_by": created_by},
+    )
+
+
 async def ensure_personal_space(session: AsyncSession, user: User) -> Space:
     # FORCE RLS: SELECT/INSERT policies key off app.user_id — always bind it
     # to the space owner before looking up or creating their personal space.
@@ -34,14 +57,12 @@ async def ensure_personal_space(session: AsyncSession, user: User) -> Space:
     # SECURITY DEFINER helper evaluates WITH CHECK under the caller's GUC and
     # inserts the membership row in the same privileged statement (avoids the
     # INSERT…RETURNING + SELECT-policy race under FORCE RLS).
-    await session.execute(
-        text("SELECT app_insert_space(:id, CAST(:kind AS space_kind), :name, :created_by)"),
-        {
-            "id": space_id,
-            "kind": SpaceKind.personal.value,
-            "name": "Personal",
-            "created_by": user.id,
-        },
+    await _insert_space(
+        session,
+        space_id=space_id,
+        kind=SpaceKind.personal,
+        name="Personal",
+        created_by=user.id,
     )
     await session.flush()
     space = await session.get(Space, space_id)
@@ -115,14 +136,12 @@ async def create_group(session: AsyncSession, principal: Principal, *, name: str
     name = check_name(name, "name", limits.SPACE_NAME_MAX)
     owner_id = principal.user_id
     space_id = uuid.uuid4()
-    await session.execute(
-        text("SELECT app_insert_space(:id, CAST(:kind AS space_kind), :name, :created_by)"),
-        {
-            "id": space_id,
-            "kind": SpaceKind.group.value,
-            "name": name.strip(),
-            "created_by": owner_id,
-        },
+    await _insert_space(
+        session,
+        space_id=space_id,
+        kind=SpaceKind.group,
+        name=name.strip(),
+        created_by=owner_id,
     )
     # Load before commit: commit/check-in clears RLS GUCs and would hide the row.
     space = await session.get(Space, space_id)
@@ -567,15 +586,6 @@ async def rename_space(
     return space
 
 
-def can_delete_group(space: Space, principal: Principal) -> bool:
-    """True when the caller owns the group (or is an administrator)."""
-    if space.kind != SpaceKind.group:
-        return False
-    if space.created_by_user_id == principal.user_id:
-        return True
-    return bool(principal.is_admin)
-
-
 async def delete_space(session: AsyncSession, principal: Principal, space_id: uuid.UUID) -> None:
     """Hard-delete a group the principal owns (memories and members cascade).
 
@@ -591,7 +601,7 @@ async def delete_space(session: AsyncSession, principal: Principal, space_id: uu
     space = await show_space(session, principal, space_id)
     if not space or space.kind != SpaceKind.group:
         raise NotFoundError("Group not found")
-    if not can_delete_group(space, principal):
+    if not can_manage_group(space, principal):
         raise ForbiddenError("Only the group owner can delete")
     await session.delete(space)
     await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)

@@ -9,7 +9,8 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from memchentic.auth.principal import Principal, hash_api_key
+from memchentic.auth.principal import Principal
+from memchentic.auth.tokens import hash_token
 from memchentic.db.session import advisory_xact_lock, commit_with_rls
 from memchentic.models.entities import ApiKey
 from memchentic.services import limits
@@ -42,6 +43,27 @@ def _key_lock(user_id: uuid.UUID) -> str:
     return f"memchentic:api-keys:{user_id}"
 
 
+def _new_api_key(user_id: uuid.UUID, name: str) -> tuple[ApiKey, str]:
+    """Build an unsaved API key row and its raw secret.
+
+    Args:
+        user_id: Owner of the key.
+        name: Display name; blank becomes ``default``.
+
+    Returns:
+        The new row (not yet added to a session) and the raw secret.
+    """
+    raw = f"mc_{secrets.token_urlsafe(32)}"
+    key = ApiKey(
+        id=uuid.uuid4(),
+        user_id=user_id,
+        name=name.strip() or "default",
+        key_prefix=raw[:10],
+        key_hash=hash_token(raw),
+    )
+    return key, raw
+
+
 async def create_api_key(
     session: AsyncSession,
     principal: Principal,
@@ -65,14 +87,7 @@ async def create_api_key(
     # Same lock as cycle_api_key, so a create never lands between a cycle's
     # "select active keys" and its commit.
     await advisory_xact_lock(session, _key_lock(target))
-    raw = f"mc_{secrets.token_urlsafe(32)}"
-    key = ApiKey(
-        id=uuid.uuid4(),
-        user_id=target,
-        name=name.strip() or "default",
-        key_prefix=raw[:10],
-        key_hash=hash_api_key(raw),
-    )
+    key, raw = _new_api_key(target, name)
     session.add(key)
     await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
     await session.refresh(key)
@@ -128,14 +143,7 @@ async def cycle_api_key(
     for existing in result.scalars():
         existing.revoked_at = now
 
-    raw = f"mc_{secrets.token_urlsafe(32)}"
-    key = ApiKey(
-        id=uuid.uuid4(),
-        user_id=target,
-        name=name.strip() or "default",
-        key_prefix=raw[:10],
-        key_hash=hash_api_key(raw),
-    )
+    key, raw = _new_api_key(target, name)
     session.add(key)
     await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
     await session.refresh(key)

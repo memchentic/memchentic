@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import base64
-import hashlib
 import secrets
 from dataclasses import dataclass
 from typing import Any
@@ -11,9 +9,9 @@ from urllib.parse import urlencode
 
 import httpx
 
-from memchentic.auth.claims import groups_from_claims
+from memchentic.auth.claims import email_verified_from_claims, groups_from_claims
 from memchentic.auth.jwks import fetch_jwks_and_decode
-from memchentic.auth.providers import _oidc_discovery, resolve_scopes
+from memchentic.auth.providers import _oidc_discovery, pkce_s256_challenge, resolve_scopes
 from memchentic.settings import Settings
 
 
@@ -31,9 +29,7 @@ class OAuthProfile:
 def pkce_pair() -> tuple[str, str]:
     """Return ``(code_verifier, code_challenge)`` for S256 PKCE."""
     verifier = secrets.token_urlsafe(64)
-    digest = hashlib.sha256(verifier.encode("ascii")).digest()
-    challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
-    return verifier, challenge
+    return verifier, pkce_s256_challenge(verifier)
 
 
 async def resolve_oidc_endpoints(settings: Settings) -> dict[str, str]:
@@ -261,11 +257,7 @@ def _profile_from_claims(claims: dict[str, Any]) -> OAuthProfile:
 
     subject = str(claims.get("sub") or "").strip()
     email = str(claims.get("email") or "").strip()
-    raw_verified = claims.get("email_verified", False)
-    if isinstance(raw_verified, str):
-        verified = raw_verified.lower() in {"1", "true", "yes"}
-    else:
-        verified = bool(raw_verified)
+    verified = email_verified_from_claims(claims)
     display = claims.get("name") or claims.get("preferred_username")
     if not subject:
         raise ValueError("OAuth subject is required")

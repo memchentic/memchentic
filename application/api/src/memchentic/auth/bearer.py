@@ -9,11 +9,11 @@ import jwt
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from memchentic.auth.claims import groups_from_claims
-from memchentic.auth.principal import Principal, hash_api_key
-from memchentic.auth.tokens import verify_access_token
-from memchentic.auth.users import get_user_by_email
-from memchentic.models.entities import User, UserIdentity
+from memchentic.auth.claims import email_verified_from_claims, groups_from_claims
+from memchentic.auth.principal import Principal
+from memchentic.auth.tokens import hash_token, verify_access_token
+from memchentic.auth.users import get_user_by_email, get_user_by_provider_subject
+from memchentic.models.entities import User
 from memchentic.services.auth_roster import ensure_auth_groups, user_is_administrator
 from memchentic.services.users import ensure_admin_user, upsert_oauth_user
 from memchentic.settings import Settings, get_settings
@@ -58,7 +58,7 @@ async def resolve_bearer(
         )
 
     # API-key lookup runs before set_rls_context; RLS would hide every row.
-    key_hash = hash_api_key(token)
+    key_hash = hash_token(token)
     key_row = (
         await session.execute(
             text("SELECT user_id, email, display_name, provider FROM app_resolve_api_key(:h)"),
@@ -103,15 +103,7 @@ async def resolve_bearer(
         if settings.oauth_provider == "internal":
             return None
         provider = settings.oauth_provider
-        result = await session.execute(
-            select(User)
-            .join(UserIdentity, UserIdentity.user_id == User.id)
-            .where(
-                UserIdentity.provider == provider,
-                UserIdentity.provider_subject == sub,
-            )
-        )
-        user = result.scalar_one_or_none()
+        user = await get_user_by_provider_subject(session, provider=provider, subject=sub)
         if not user:
             user = await _upsert_from_external_claims(
                 session, payload, provider=provider, subject=sub
@@ -148,12 +140,7 @@ async def _upsert_from_external_claims(
     email = payload.get("email")
     if not isinstance(email, str) or not email.strip():
         return None
-    raw_verified = payload.get("email_verified", False)
-    if isinstance(raw_verified, str):
-        verified = raw_verified.lower() in {"1", "true", "yes"}
-    else:
-        verified = bool(raw_verified)
-    if not verified:
+    if not email_verified_from_claims(payload):
         return None
     display = payload.get("name") or payload.get("preferred_username")
     try:

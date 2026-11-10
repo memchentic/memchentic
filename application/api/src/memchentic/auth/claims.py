@@ -5,6 +5,21 @@ from __future__ import annotations
 from typing import Any
 
 
+def email_verified_from_claims(claims: dict[str, Any]) -> bool:
+    """Read the ``email_verified`` claim, which IdPs send as a bool or a string.
+
+    Args:
+        claims: Verified token or userinfo claims.
+
+    Returns:
+        True only when the claim is true, or one of the strings 1, true, yes.
+    """
+    raw = claims.get("email_verified", False)
+    if isinstance(raw, str):
+        return raw.lower() in {"1", "true", "yes"}
+    return bool(raw)
+
+
 def groups_from_claims(claims: dict[str, Any]) -> set[str]:
     """Extract IdP group ids/names from ID token / userinfo claims.
 

@@ -82,6 +82,23 @@ nodeSelector: {}
 tolerations: []
 affinity: {}
 
+# Extra volumes and mounts for the application pod. Use them to provide files
+# that a config value points at, for example the CA bundle for
+# config.postgresSslrootcert:
+#   extraVolumes:
+#     - name: db-ca
+#       configMap:
+#         name: db-ca
+#   extraVolumeMounts:
+#     - name: db-ca
+#       mountPath: /etc/memchentic/ca
+#       readOnly: true
+#   config:
+#     postgresSslmode: verify-full
+#     postgresSslrootcert: /etc/memchentic/ca/ca.crt
+extraVolumes: []
+extraVolumeMounts: []
+
 # Non-secret application settings (ConfigMap → env).
 config:
   # Must be the public https origin in real deployments.

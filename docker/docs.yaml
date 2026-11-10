@@ -4,7 +4,9 @@
 #   DOCS_PORT=18099
 #   DOCS_IMAGE=registry.memchentic.ai/memchentic/docs:latest
 #
-# Pull published image (default). Rebuild from ../docs when iterating:
+# Pull published image (default). `--build docs` needs a clone of
+# https://github.com/memchentic/docs in ../docs, because docs/docker/Dockerfile
+# is not tracked in this repository:
 #   cd docker && docker compose up -d --build docs
 
 services:

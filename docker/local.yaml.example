@@ -4,6 +4,16 @@
 # Volume mounts (+ uvicorn --reload so bind-mounted Python picks up edits).
 # No extra services — GUI is static assets served by application.
 #
+# Prerequisite: build the GUI on the host BEFORE the first `docker compose up`:
+#   (cd ../application/gui && npm ci && npm run build)
+# The API bind mount below hides the GUI build inside the image, and the
+# application serves the GUI only when ../application/gui/dist/index.html
+# exists. If the directory is missing at `up`, Docker creates an empty one
+# (owned by root with a rootful daemon) and `/` returns 404. If
+# `npm run build` then fails with a permission error, remove that directory
+# first. Run `npm run build` again after a GUI change; a rebuild of the image
+# does not change the served GUI while this overlay is active.
+#
 # MiniLM lives under application/api/models/ (baked in the image). When this
 # overlay mounts the API tree, run scripts/fetch_minilm_onnx.sh once on the
 # host so that directory is not empty. ALLOW_HASH_EMBEDDINGS lets the app

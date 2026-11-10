@@ -240,6 +240,7 @@ jobs:
           render | grep -c '^kind: NetworkPolicy$'
           test "$(render --set postgres.networkPolicy.enabled=false | grep -c '^kind: NetworkPolicy$')" = "0"
           test "$(render --set postgres.enabled=false --set config.postgresHostname=db.example.com | grep -c '^kind: NetworkPolicy$')" = "0"
+          test "$(render | grep -c 'POSTGRES_APP_USER')" = "1"
 
   lint:
     name: Lint (actionlint, hadolint)

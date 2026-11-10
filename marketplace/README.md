@@ -69,4 +69,7 @@ server in the host so recall/capture tools are available.
 ## Source of truth
 
 This tree is the live home of **`memchentic`**. Edit here.
-Product behavior and tool contracts still live in `docs/` at the repo root.
+Tool contracts are the docstrings in
+`application/mcp/src/memchentic/mcp/server.py`. The user-facing tool summary
+is `docs/sphinx/source/mcp-tools.md`. The full user documentation lives in
+the repository `memchentic/docs`.

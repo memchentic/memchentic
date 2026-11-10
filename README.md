@@ -48,24 +48,48 @@ when the MCP is disconnected.
 
 ## Start here
 
+Run the published image with Docker Compose:
+
 ```bash
 git clone https://github.com/memchentic/memchentic.git
 cd memchentic/docker
 cp .env.example .env
-cp local.yaml.example local.yaml
-# set admin password + API key; set BASE_URL and CORS_ORIGINS to your host
-docker compose up -d --build
 ```
 
-Open the UI on port `18080` (default), sign in, and create an API key. Point
-your MCP client at `http://<host>:18080/mcp`.
-The port is published on `127.0.0.1` only by default; set `BIND_ADDRESS=0.0.0.0`
-in `docker/.env` to reach it from another machine without a reverse proxy.
+Edit `docker/.env` before the first start. The application refuses to start
+until all five secrets are set:
+
+| Variable | Rule |
+| --- | --- |
+| `ADMIN_PASSWORD` | 16 or more characters |
+| `ADMIN_API_KEY` | 16 or more characters |
+| `POSTGRES_PASSWORD` | 16 or more characters. Set it before the first start: Postgres keeps the password it was first started with |
+| `POSTGRES_APP_PASSWORD` | 16 or more characters |
+| `ENCRYPTION_KEY` | 32 or more characters. Keep it: after a change the stored signing keys cannot be read |
+| `BASE_URL` | The origin that people and agents use, for example `https://memchentic.example.com` or `http://<host>:<GUI_PORT>` |
+| `CORS_ORIGINS` | The same origin as `BASE_URL` |
+| `BIND_ADDRESS` | The host interface of the published port. The default accepts connections from the same machine only; set `0.0.0.0` to open the UI from another machine without a reverse proxy |
+
+`openssl rand -hex 24` prints a value that satisfies each secret rule. Run it
+once for each secret. If `BASE_URL` is a plain `http` origin, also set
+`SESSION_COOKIE_SECURE=false`; otherwise the browser does not keep you
+signed in. Every other variable is described in `docker/README.md`.
+
+```bash
+docker compose up -d
+```
+
+Open `http://<host>:<GUI_PORT>` (`GUI_PORT` defaults to `18080`), sign in as
+`ADMIN_EMAIL` with `ADMIN_PASSWORD`, and create an API key. Point your MCP
+client at `<BASE_URL>/mcp`.
+
+To build from source, run the tests, or change the UI, follow the section
+"Run and verify" in `AGENTS.md`. For Kubernetes, see `helm/README.md`.
 
 Import this GitHub repo as a marketplace and install **memchentic**, then keep
 the MCP connected so recall and capture run on their own. Plugin details live
-under `marketplace/`; user docs under [`docs/`](https://github.com/memchentic/docs)
-(`docs/sphinx/`).
+under `marketplace/`. User documentation lives in the repository
+[`memchentic/docs`](https://github.com/memchentic/docs).
 
 ## License
 

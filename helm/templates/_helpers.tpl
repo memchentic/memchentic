@@ -10,13 +10,13 @@ Create a default fully qualified app name.
 */}}
 {{- define "memchentic.fullname" -}}
 {{- if .Values.fullnameOverride }}
-{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
+{{- .Values.fullnameOverride | trunc 43 | trimSuffix "-" }}
 {{- else }}
 {{- $name := default .Chart.Name .Values.nameOverride }}
 {{- if contains $name .Release.Name }}
-{{- .Release.Name | trunc 63 | trimSuffix "-" }}
+{{- .Release.Name | trunc 43 | trimSuffix "-" }}
 {{- else }}
-{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" }}
+{{- printf "%s-%s" .Release.Name $name | trunc 43 | trimSuffix "-" }}
 {{- end }}
 {{- end }}
 {{- end }}
@@ -29,11 +29,12 @@ Chart label.
 {{- end }}
 
 {{/*
-Common labels.
+Labels shared by every object of the release. No component, never a selector.
 */}}
-{{- define "memchentic.labels" -}}
+{{- define "memchentic.commonLabels" -}}
 helm.sh/chart: {{ include "memchentic.chart" . }}
-{{ include "memchentic.selectorLabels" . }}
+app.kubernetes.io/name: {{ include "memchentic.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if .Chart.AppVersion }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
@@ -41,18 +42,27 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 
 {{/*
-Selector labels.
+Application object labels.
+*/}}
+{{- define "memchentic.labels" -}}
+{{ include "memchentic.commonLabels" . }}
+app.kubernetes.io/component: application
+{{- end }}
+
+{{/*
+Application selector labels.
 */}}
 {{- define "memchentic.selectorLabels" -}}
 app.kubernetes.io/name: {{ include "memchentic.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: application
 {{- end }}
 
 {{/*
 Postgres component labels.
 */}}
 {{- define "memchentic.postgres.labels" -}}
-{{ include "memchentic.labels" . }}
+{{ include "memchentic.commonLabels" . }}
 app.kubernetes.io/component: postgres
 {{- end }}
 
@@ -63,10 +73,17 @@ app.kubernetes.io/component: postgres
 {{- end }}
 
 {{/*
+Effective secrets.mode. An empty or null value means "existing".
+*/}}
+{{- define "memchentic.secretsMode" -}}
+{{- .Values.secrets.mode | default "existing" -}}
+{{- end }}
+
+{{/*
 Validate secrets.mode and required fields.
 */}}
 {{- define "memchentic.validateSecrets" -}}
-{{- $mode := .Values.secrets.mode | default "existing" }}
+{{- $mode := include "memchentic.secretsMode" . }}
 {{- if not (or (eq $mode "inline") (eq $mode "existing") (eq $mode "externalSecret")) }}
 {{- fail (printf "secrets.mode must be inline, existing, or externalSecret (got %q)" $mode) }}
 {{- end }}
@@ -108,7 +125,7 @@ Resolved Secret name for envFrom / postgres.
 */}}
 {{- define "memchentic.secretName" -}}
 {{- include "memchentic.validateSecrets" . }}
-{{- $mode := .Values.secrets.mode | default "inline" }}
+{{- $mode := include "memchentic.secretsMode" . }}
 {{- if eq $mode "existing" }}
 {{- .Values.secrets.existingSecret }}
 {{- else }}

@@ -35,8 +35,10 @@ data:
   LOG_LEVEL: {{ .Values.config.logLevel | quote }}
   SESSION_REMEMBER_DAYS: {{ .Values.config.sessionRememberDays | quote }}
   SESSION_BROWSER_HOURS: {{ .Values.config.sessionBrowserHours | quote }}
-  {{- if .Values.config.sessionCookieSecure }}
-  SESSION_COOKIE_SECURE: {{ .Values.config.sessionCookieSecure | quote }}
+  {{- if not (kindIs "invalid" .Values.config.sessionCookieSecure) }}
+  {{- with (toString .Values.config.sessionCookieSecure) }}
+  SESSION_COOKIE_SECURE: {{ . | quote }}
+  {{- end }}
   {{- end }}
   {{- if .Values.config.forwardedAllowIps }}
   FORWARDED_ALLOW_IPS: {{ .Values.config.forwardedAllowIps | quote }}

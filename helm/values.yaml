@@ -2,6 +2,15 @@
 # Override with -f / --set. Homelab site overrides live outside this repo.
 # Secrets: use existing or externalSecret — inline values are empty placeholders only.
 
+# Keep one replica. More than one replica is not supported:
+# - auth rate limits are counted per pod, so the effective limit is the
+#   configured limit multiplied by the replica count;
+# - the first start on an empty database creates the admin user and the
+#   built-in groups without a lock, so one of two pods that start together
+#   can fail once and restart.
+# Extensions and schema migrations are serialized by a Postgres advisory lock,
+# so the old and the new pod of a rolling update do not run them at the same
+# time. The old pod serves against the new schema until it is replaced.
 replicaCount: 1
 
 image:
@@ -16,9 +25,13 @@ nameOverride: ""
 fullnameOverride: ""
 
 serviceAccount:
+  # Create a ServiceAccount named after the release (or `name`).
   create: false
   name: ""
   annotations: {}
+  # The application never calls the Kubernetes API. Set true only when a
+  # workload-identity integration needs the default token mount.
+  automount: false
 
 podAnnotations: {}
 podLabels: {}
@@ -56,6 +69,14 @@ ingress:
   tls: []
 
 resources: {}
+
+probes:
+  # Path of the readiness probe. `/api/ready` checks the database and the
+  # embedder. It exists only in application images that contain that route;
+  # an older image answers 404 there and the pod would never become ready.
+  # Switch this default to /api/ready in the commit that sets `appVersion`
+  # to the first release that contains the route.
+  readinessPath: /api/health
 
 nodeSelector: {}
 tolerations: []
@@ -177,7 +198,7 @@ postgres:
   enabled: true
   image:
     repository: pgvector/pgvector
-    tag: pg16
+    tag: 0.8.7-pg16
     pullPolicy: IfNotPresent
   service:
     port: 5432
@@ -186,3 +207,23 @@ postgres:
     storageClass: ""
     size: 10Gi
   resources: {}
+  # uid/gid 999 is the `postgres` user of the Debian-based pgvector image.
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 999
+    runAsGroup: 999
+    fsGroup: 999
+    fsGroupChangePolicy: OnRootMismatch
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+  networkPolicy:
+    # Allow ingress to the bundled Postgres only from the application pods.
+    # It takes effect only when the cluster network plugin enforces NetworkPolicy.
+    enabled: true
+    # Extra NetworkPolicyPeer entries, e.g. the podSelector of a backup job.
+    extraFrom: []

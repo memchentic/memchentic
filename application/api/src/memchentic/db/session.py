@@ -16,6 +16,11 @@ from memchentic.settings import get_settings
 _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
 
+# Postgres advisory lock id ("memm"). Serializes boot DDL (extensions, the
+# app-role password and Alembic) across processes. Must differ from every other
+# fixed advisory lock id in the code base (auth/tokens.py uses 0x6D656D6B).
+MIGRATION_LOCK_ID = 0x6D656D6D
+
 
 def get_engine(*, migration: bool = False) -> AsyncEngine:
     """Return the shared async engine.
@@ -181,12 +186,14 @@ async def init_db() -> None:
 
     The schema itself comes from Alembic. Uses the owner DSN because
     ``CREATE EXTENSION`` and ``ALTER ROLE`` require a superuser / owner and
-    must run before the runtime app role connects.
+    must run before the runtime app role connects. A transaction-scoped
+    advisory lock serializes concurrent starts (replicas, rolling updates).
     """
     settings = get_settings()
     engine = get_engine(migration=True)
     try:
         async with engine.begin() as conn:
+            await conn.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": MIGRATION_LOCK_ID})
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
             await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "pgcrypto"'))
             await _reconcile_app_role_password(

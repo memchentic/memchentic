@@ -83,3 +83,17 @@ config:
 ## Ingress
 
 When the Ingress is enabled, set `config.forwardedAllowIps` to the address range of the ingress controller; otherwise all clients share one rate-limit bucket.
+
+## Upgrading from chart 0.1.x
+
+Chart 0.2.0 adds `app.kubernetes.io/component: application` to the application
+selector. Kubernetes does not allow a Deployment selector to change, so delete
+the Deployment once before the upgrade. The database and its volume are not
+touched. The application is unavailable until the new pod is ready.
+
+    kubectl delete deployment <deployment>
+    helm upgrade <release> <chart> -f <your values>
+
+`<deployment>` is `<release>-memchentic`. When the release name contains
+`memchentic`, it is the release name alone (`helm upgrade --install memchentic ./helm`
+creates the Deployment `memchentic`).

@@ -204,6 +204,11 @@ jobs:
             --set postgres.enabled=false \
             --set config.postgresHostname=db.example.com \
             --set ingress.enabled=true > /dev/null
+          helm template ci helm "${base[@]}" "${existing[@]}" \
+            --set migrations.initContainer.enabled=true \
+            --set serviceAccount.create=true \
+            --set postgres.networkPolicy.enabled=false \
+            --set probes.readinessPath=/api/ready > /dev/null
 
       - name: Chart assertions
         # One line per chart finding, appended at the end of this script.
@@ -220,6 +225,20 @@ jobs:
           }
           # shellcheck disable=SC2119
           render | grep -c '^kind: Deployment$'
+          test "$(render --set secrets.mode= | grep -c '^kind: Secret$')" = "0"
+          test "$(render --show-only templates/service.yaml | grep -c 'app.kubernetes.io/component: application')" = "2"
+          test "$(render --show-only templates/postgres-statefulset.yaml | grep -c 'component: application')" = "0"
+          test "$(render | grep -c 'runAsNonRoot: true')" = "3"
+          render --set serviceAccount.create=true | grep -c '^kind: ServiceAccount$'
+          test "$(render | grep -c '^kind: ServiceAccount$')" = "0"
+          test "$(render | grep -c 'automountServiceAccountToken: false')" = "2"
+          render --set probes.readinessPath=/api/ready | grep -c 'path: "/api/ready"'
+          render --set config.sessionCookieSecure=false | grep -c 'SESSION_COOKIE_SECURE: "false"'
+          render --set postgres.service.port=6432 | grep -c 'value: "6432"'
+          test "$(render --set postgres.service.port=6432 --set migrations.initContainer.enabled=true | grep -c 'value: "6432"')" = "2"
+          render | grep -c '^kind: NetworkPolicy$'
+          test "$(render --set postgres.networkPolicy.enabled=false | grep -c '^kind: NetworkPolicy$')" = "0"
+          test "$(render --set postgres.enabled=false --set config.postgresHostname=db.example.com | grep -c '^kind: NetworkPolicy$')" = "0"
 
   lint:
     name: Lint (actionlint, hadolint)

@@ -164,6 +164,84 @@ def visible_members(space: Space, principal: Principal) -> list[SpaceMember]:
     return [m for m in space.members if m.accepted_at is not None]
 
 
+def space_to_dict(space: Space) -> dict[str, str]:
+    """Serialise a space to the short form used in listings and memberships.
+
+    Args:
+        space: The space row.
+
+    Returns:
+        ``id``, ``name`` and ``kind`` of the space.
+    """
+    return {"id": str(space.id), "name": space.name, "kind": space.kind.value}
+
+
+def space_detail(space: Space, principal: Principal) -> dict[str, Any]:
+    """Serialise a space with its creator and the roster the caller may see.
+
+    Args:
+        space: The space row with ``members`` loaded.
+        principal: Authenticated caller. ``visible_members`` uses it to hide
+            pending invites from everyone except admins.
+
+    Returns:
+        The short form plus ``created_by`` and ``members``.
+    """
+    return {
+        **space_to_dict(space),
+        "created_by": str(space.created_by_user_id) if space.created_by_user_id else None,
+        "members": [
+            {
+                "user_id": str(m.user_id),
+                "email": m.user.email if m.user else None,
+                "display_name": m.user.display_name if m.user else None,
+                "pending": m.accepted_at is None,
+            }
+            for m in visible_members(space, principal)
+        ],
+    }
+
+
+async def me_payload(
+    session: AsyncSession, principal: Principal, *, invite_details: bool
+) -> dict[str, Any]:
+    """Build the identity payload returned by ``GET /api/me`` and the ``me`` tool.
+
+    Args:
+        session: Database session with the caller's RLS context.
+        principal: Authenticated caller.
+        invite_details: True for REST: the payload carries ``pending_invites``
+            (group id, group name, creator labels). False for MCP: it carries
+            only ``pending_invite_count``, because a group name in a pending
+            invite is text chosen by another user.
+
+    Returns:
+        Identity fields, the personal space id, the default shared group id,
+        the caller's memberships, and the pending invites (list or count).
+    """
+    spaces = await list_member_spaces(session, principal)
+    personal = await get_personal_space(session, principal.user_id) if principal.user_id else None
+    user = await session.get(User, principal.user_id) if principal.user_id else None
+    default_shared = user.default_shared_space_id if user else None
+    invites = await list_pending_invites(session, principal)
+    payload: dict[str, Any] = {
+        "default_shared_space_id": str(default_shared) if default_shared else None,
+        "id": str(principal.user_id) if principal.user_id else None,
+        "subject": principal.subject,
+        "email": principal.email,
+        "display_name": principal.display_name,
+        "provider": principal.provider,
+        "is_admin": principal.is_admin,
+        "personal_space_id": str(personal.id) if personal else None,
+        "memberships": [space_to_dict(s) for s in spaces],
+    }
+    if invite_details:
+        payload["pending_invites"] = invites
+    else:
+        payload["pending_invite_count"] = len(invites)
+    return payload
+
+
 async def get_readable_space(
     session: AsyncSession, principal: Principal, space_id: uuid.UUID
 ) -> Space | None:

@@ -22,6 +22,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from memchentic.models.entities import Memory
+from memchentic.search.hybrid import make_snippet
 from memchentic.settings import get_settings
 
 logger = logging.getLogger("memchentic.events")
@@ -103,7 +104,6 @@ def memory_event_from_row(action: Action, memory: Memory) -> MemoryEvent:
     Returns:
         A compact ``MemoryEvent``.
     """
-    body = memory.body or ""
     return MemoryEvent(
         action=action,
         id=str(memory.id),
@@ -112,7 +112,7 @@ def memory_event_from_row(action: Action, memory: Memory) -> MemoryEvent:
         type=memory.entry_type.value if memory.entry_type else None,
         title=memory.title,
         tags=list(memory.tags or []),
-        snippet=body[:180] + ("…" if len(body) > 180 else ""),
+        snippet=make_snippet(memory.body),
         confidence=float(memory.confidence) if memory.confidence is not None else None,
         created_by=str(memory.created_by_user_id) if memory.created_by_user_id else None,
         created_at=memory.created_at.isoformat() if memory.created_at else None,

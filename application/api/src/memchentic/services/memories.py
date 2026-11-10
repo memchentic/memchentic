@@ -25,13 +25,14 @@ from memchentic.auth.principal import Principal
 from memchentic.db.session import advisory_xact_lock, commit_with_rls, set_rls_context
 from memchentic.embeddings import get_embedder
 from memchentic.events import memory_event_from_row, publish_memory_event
-from memchentic.models.entities import EntryType, Memory, MemoryKind, User
+from memchentic.models.entities import EntryType, Memory, MemoryKind, Space, User
 from memchentic.search.hybrid import (
     GUIDE_CONFIDENCE_MAX,
     Digest,
     active_memory_clause,
     escape_ilike,
     hybrid_search,
+    make_snippet,
     memory_type_clause,
     prepare_filtered_vector_scan,
 )
@@ -118,9 +119,29 @@ def memory_to_dict(m: Memory, *, full: bool = False) -> dict[str, Any]:
     if full:
         data["body"] = m.body
     else:
-        body = m.body or ""
-        data["snippet"] = body[:180] + ("…" if len(body) > 180 else "")
+        data["snippet"] = make_snippet(m.body)
     return data
+
+
+def check_lifetime_args(
+    *, expires_at: datetime | None, ttl_days: int | None, permanent: bool
+) -> None:
+    """Reject contradictory lifetime arguments.
+
+    Args:
+        expires_at: Absolute expiry supplied by the caller.
+        ttl_days: Relative lifetime in days; ``0`` means permanent.
+        permanent: Caller wants no expiry.
+
+    Raises:
+        ValidationError: When ``ttl_days`` is outside
+            ``0..limits.TTL_DAYS_MAX`` or the arguments contradict each other.
+    """
+    check_ttl_days(ttl_days)
+    if expires_at is not None and (permanent or ttl_days is not None):
+        raise ValidationError("Pass only one of expires_at, ttl_days or permanent")
+    if permanent and ttl_days:
+        raise ValidationError("permanent=true contradicts ttl_days > 0; pass only one")
 
 
 def resolve_expiry(
@@ -132,8 +153,9 @@ def resolve_expiry(
 ) -> datetime | None:
     """Pick the create-time expiry for a new memory.
 
-    Precedence: explicit ``expires_at``, then ``permanent`` / ``ttl_days=0``
-    (never expires), then positive ``ttl_days``, then ``MEMORY_DEFAULT_TTL_DAYS``.
+    At most one of ``expires_at``, ``ttl_days`` and ``permanent`` may be set
+    (``permanent`` with ``ttl_days=0`` is allowed: both mean no expiry). With
+    none set the lifetime is ``MEMORY_DEFAULT_TTL_DAYS``.
 
     Args:
         expires_at: Absolute expiry supplied by the caller.
@@ -145,11 +167,12 @@ def resolve_expiry(
         Expiry timestamp, or None for a permanent memory.
 
     Raises:
-        ValidationError: When ``ttl_days`` is outside ``0..TTL_DAYS_MAX``.
+        ValidationError: When ``ttl_days`` is outside
+            ``0..limits.TTL_DAYS_MAX`` or the arguments contradict each other.
     """
+    check_lifetime_args(expires_at=expires_at, ttl_days=ttl_days, permanent=permanent)
     if expires_at is not None:
         return expires_at
-    check_ttl_days(ttl_days)
     if permanent or ttl_days == 0:
         return None
     ref = now or datetime.now(UTC)
@@ -254,6 +277,10 @@ def digest_to_dict(d: Digest) -> dict[str, Any]:
         "updated_by": d.updated_by,
         "updated_at": d.updated_at,
         "expires_at": d.expires_at,
+        "confidence": d.confidence,
+        "created_at": d.created_at,
+        "path_hint": d.path_hint,
+        "repo_hint": d.repo_hint,
     }
 
 
@@ -297,6 +324,90 @@ async def enrich_creator_fields(
     return rows
 
 
+CONTENT_TRUST = "untrusted"
+
+
+async def annotate_rows(session: AsyncSession, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Attach author, space and trust labels to serialized memory rows.
+
+    Adds the creator and editor labels of ``enrich_creator_fields``,
+    ``space_name``, ``space_kind`` and the constant ``content_trust`` marker.
+    Existing keys are never changed.
+
+    Args:
+        session: DB session with the caller's RLS context.
+        rows: Memory or digest dicts that carry ``created_by`` and ``space_id``.
+
+    Returns:
+        The same list, mutated in place.
+    """
+    await enrich_creator_fields(session, rows)
+    space_ids: set[uuid.UUID] = set()
+    for row in rows:
+        sid = row.get("space_id")
+        if not sid:
+            continue
+        try:
+            space_ids.add(uuid.UUID(str(sid)))
+        except ValueError:
+            continue
+    spaces: dict[str, tuple[str | None, str | None]] = {}
+    if space_ids:
+        result = await session.execute(
+            select(Space.id, Space.name, Space.kind).where(Space.id.in_(space_ids))
+        )
+        spaces = {str(sid): (name, kind.value) for sid, name, kind in result.all()}
+    for row in rows:
+        name, kind = spaces.get(str(row.get("space_id") or ""), (None, None))
+        row["space_name"] = name
+        row["space_kind"] = kind
+        row["content_trust"] = CONTENT_TRUST
+    return rows
+
+
+async def memory_out(
+    session: AsyncSession, memory: Memory, *, full: bool = False
+) -> dict[str, Any]:
+    """Serialize one memory for REST or MCP, with author, space and trust labels.
+
+    Args:
+        session: DB session with the caller's RLS context.
+        memory: Loaded memory row.
+        full: Include ``body`` instead of ``snippet``.
+
+    Returns:
+        The labelled memory dict.
+    """
+    rows = await annotate_rows(session, [memory_to_dict(memory, full=full)])
+    return rows[0]
+
+
+async def memories_out(session: AsyncSession, memories: Sequence[Memory]) -> list[dict[str, Any]]:
+    """Serialize memories as list rows, with author, space and trust labels.
+
+    Args:
+        session: DB session with the caller's RLS context.
+        memories: Loaded memory rows.
+
+    Returns:
+        Labelled memory dicts in the same order.
+    """
+    return await annotate_rows(session, [memory_to_dict(m) for m in memories])
+
+
+async def digests_out(session: AsyncSession, digests: Sequence[Digest]) -> list[dict[str, Any]]:
+    """Serialize digests, with author, space and trust labels.
+
+    Args:
+        session: DB session with the caller's RLS context.
+        digests: Search or listing digests.
+
+    Returns:
+        Labelled digest dicts in the same order.
+    """
+    return await annotate_rows(session, [digest_to_dict(d) for d in digests])
+
+
 def _creator_id(m: Memory) -> str | None:
     return str(m.created_by_user_id) if m.created_by_user_id else None
 
@@ -319,10 +430,16 @@ async def accessible_space_ids(
 
     Returns:
         Zero or more space UUIDs.
+
+    Raises:
+        NotFoundError: When ``space_id`` is set and the caller cannot read
+            that space.
     """
     if space_id:
         space = await get_readable_space(session, principal, space_id)
-        return [space.id] if space else []
+        if not space:
+            raise NotFoundError("Space not found or not accessible")
+        return [space.id]
     spaces = await list_spaces(session, principal)
     if space_scope:
         kind = parse_space_scope(space_scope)
@@ -489,7 +606,9 @@ async def remember(
         )
         if dup:
             raise NearDuplicateError(
-                f"Near-duplicate exists ({dup.id}). Pass force=true to create anyway.",
+                f"Near-duplicate exists (id={dup.id}, title={dup.title!r}). "
+                "Update it with revise(id=...) instead; pass force=true only if "
+                "this is a different memory.",
                 duplicate_id=str(dup.id),
             )
 
@@ -643,6 +762,8 @@ async def revise(
     clear_expiry: bool = False,
     path_hint: str | None = None,
     repo_hint: str | None = None,
+    ttl_days: int | None = None,
+    permanent: bool = False,
 ) -> Memory:
     if title is not None:
         title = check_title(title)
@@ -652,6 +773,9 @@ async def revise(
         tags = check_tags(tags)
     path_hint = check_optional_text(path_hint, "path_hint", limits.PATH_HINT_MAX)
     repo_hint = check_optional_text(repo_hint, "repo_hint", limits.REPO_HINT_MAX)
+    check_lifetime_args(
+        expires_at=expires_at, ttl_days=ttl_days, permanent=permanent or clear_expiry
+    )
     memory = await open_memory(session, principal, memory_id=memory_id)
     if not memory:
         raise NotFoundError("Memory not found")
@@ -674,14 +798,16 @@ async def revise(
         memory.entry_type = new_type
     if tags is not None:
         memory.tags = tags
-    if clear_expiry:
+    if clear_expiry or permanent or ttl_days == 0:
         memory.expires_at = None
     elif expires_at is not None:
         memory.expires_at = expires_at
+    elif ttl_days is not None:
+        memory.expires_at = datetime.now(UTC) + timedelta(days=ttl_days)
     if path_hint is not None:
-        memory.path_hint = path_hint
+        memory.path_hint = path_hint or None
     if repo_hint is not None:
-        memory.repo_hint = repo_hint
+        memory.repo_hint = repo_hint or None
     if text_changed:
         memory.embedding = await get_embedder().aembed_memory_text(memory.title, memory.body)
     memory.updated_at = datetime.now(UTC)
@@ -715,8 +841,11 @@ async def browse(
     limit: int | None = None,
     offset: int = 0,
     include_expired: bool = False,
+    tags: list[str] | None = None,
 ) -> list[Memory]:
     offset = check_offset(offset)
+    if tags is not None:
+        tags = check_tags(tags)
     space_ids = await accessible_space_ids(session, principal, space_id, space_scope=space_scope)
     if not space_ids:
         return []
@@ -726,6 +855,8 @@ async def browse(
     clause = memory_type_clause(tokens)
     if clause is not None:
         stmt = stmt.where(clause)
+    if tags:
+        stmt = stmt.where(Memory.tags.contains(tags))
     stmt = stmt.order_by(Memory.updated_at.desc(), Memory.id).limit(limit).offset(offset)
     return list((await session.execute(stmt)).scalars())
 
@@ -735,7 +866,7 @@ def _digest_from_memory(m: Memory, *, score: float = 1.0) -> Digest:
         id=str(m.id),
         title=m.title,
         score=score,
-        snippet=(m.body or "")[:180],
+        snippet=make_snippet(m.body),
         type=m.entry_type.value if m.entry_type else None,
         tags=list(m.tags or []),
         space_id=str(m.space_id),
@@ -744,6 +875,10 @@ def _digest_from_memory(m: Memory, *, score: float = 1.0) -> Digest:
         updated_by=str(m.updated_by_user_id) if m.updated_by_user_id else None,
         updated_at=m.updated_at.isoformat() if m.updated_at else None,
         expires_at=m.expires_at.isoformat() if m.expires_at else None,
+        confidence=m.confidence,
+        created_at=m.created_at.isoformat() if m.created_at else None,
+        path_hint=m.path_hint,
+        repo_hint=m.repo_hint,
     )
 
 
@@ -756,7 +891,12 @@ async def since(
     space_id: uuid.UUID | None = None,
     limit: int | None = None,
     include_expired: bool = False,
+    tags: list[str] | None = None,
+    offset: int = 0,
 ) -> list[Digest]:
+    if tags is not None:
+        tags = check_tags(tags)
+    offset = check_offset(offset)
     space_ids = await accessible_space_ids(session, principal, space_id)
     if not space_ids:
         return []
@@ -766,7 +906,9 @@ async def since(
         stmt = stmt.where(Memory.updated_at >= since_dt)
     if until_dt:
         stmt = stmt.where(Memory.updated_at <= until_dt)
-    stmt = stmt.order_by(Memory.updated_at.desc()).limit(limit)
+    if tags:
+        stmt = stmt.where(Memory.tags.contains(tags))
+    stmt = stmt.order_by(Memory.updated_at.desc()).limit(limit).offset(max(0, offset))
     rows = list((await session.execute(stmt)).scalars())
     # A listing is not a recall: it does not renew TTL or count as usage.
     return [_digest_from_memory(m) for m in rows]
@@ -781,8 +923,10 @@ async def by_tag(
     space_id: uuid.UUID | None = None,
     limit: int | None = None,
     include_expired: bool = False,
+    offset: int = 0,
 ) -> list[Digest]:
     tags = check_tags(tags)
+    offset = check_offset(offset)
     if not tags:
         raise ValidationError("tags must contain at least one non-empty tag")
     space_ids = await accessible_space_ids(session, principal, space_id)
@@ -797,7 +941,7 @@ async def by_tag(
         stmt = stmt.where(Memory.tags.overlap(tags))
     else:
         stmt = stmt.where(Memory.tags.contains(tags))
-    stmt = stmt.order_by(Memory.updated_at.desc()).limit(limit)
+    stmt = stmt.order_by(Memory.updated_at.desc()).limit(limit).offset(max(0, offset))
     rows = list((await session.execute(stmt)).scalars())
     # A listing is not a recall: it does not renew TTL or count as usage.
     return [_digest_from_memory(m) for m in rows]
@@ -880,6 +1024,9 @@ async def search(
     offset: int = 0,
     include_expired: bool = False,
     touch: bool = True,
+    tags: list[str] | None = None,
+    path_hint: str | None = None,
+    repo_hint: str | None = None,
 ) -> list[Digest]:
     """Hybrid search across entries and/or guides for the GUI/REST surface.
 
@@ -887,6 +1034,10 @@ async def search(
     """
     query = check_query(query)
     offset = check_offset(offset)
+    if tags is not None:
+        tags = check_tags(tags)
+    path_hint = check_optional_text(path_hint, "path_hint", limits.PATH_HINT_MAX)
+    repo_hint = check_optional_text(repo_hint, "repo_hint", limits.REPO_HINT_MAX)
     space_ids = await accessible_space_ids(session, principal, space_id, space_scope=space_scope)
     tokens = resolve_type_tokens(types=types, kind=kind, entry_type=entry_type)
     if tokens is None and kind is None and entry_type is None:
@@ -897,6 +1048,9 @@ async def search(
         query=query,
         space_ids=space_ids,
         type_tokens=tokens,
+        tags=tags,
+        path_hint=path_hint,
+        repo_hint=repo_hint,
         limit=limit,
         offset=offset,
         include_expired=include_expired,
@@ -934,6 +1088,7 @@ async def guide_write(
     body = check_body(body)
     if tags is not None:
         tags = check_tags(tags)
+    check_lifetime_args(expires_at=expires_at, ttl_days=ttl_days, permanent=permanent)
     space = await resolve_write_space(
         session, principal, space_id, group=group, visibility=visibility
     )
@@ -1007,14 +1162,21 @@ async def guide_find(
     space_scope: str | None = None,
     limit: int | None = None,
     include_expired: bool = False,
+    tags: list[str] | None = None,
+    offset: int = 0,
 ) -> list[Digest]:
     query = check_query(query)
+    if tags is not None:
+        tags = check_tags(tags)
+    offset = check_offset(offset)
     digests = await hybrid_search(
         session,
         query=query,
         space_ids=await accessible_space_ids(session, principal, space_id, space_scope=space_scope),
         type_tokens=["guide"],
+        tags=tags,
         limit=limit,
+        offset=offset,
         include_expired=include_expired,
     )
     return await _touch_digests(session, principal, digests)
@@ -1028,6 +1190,8 @@ async def about_path(
     repo_hint: str | None = None,
     limit: int | None = None,
     include_expired: bool = False,
+    space_id: uuid.UUID | None = None,
+    offset: int = 0,
 ) -> list[Digest]:
     """List memories whose ``path_hint`` or body mention ``path``.
 
@@ -1040,6 +1204,8 @@ async def about_path(
         repo_hint: Optional substring of ``repo_hint`` to narrow by.
         limit: Maximum rows (capped by settings).
         include_expired: Include past-due rows.
+        space_id: Limit the listing to one readable space.
+        offset: Rows to skip, for paging.
 
     Returns:
         Newest-first digests. Empty when ``path`` and ``repo_hint`` are both
@@ -1047,11 +1213,12 @@ async def about_path(
     """
     path = check_text(path, "path", limits.PATH_HINT_MAX)
     repo_hint = check_optional_text(repo_hint, "repo_hint", limits.REPO_HINT_MAX)
+    offset = check_offset(offset)
     needle = (path or "").strip()
     repo = (repo_hint or "").strip()
     if not needle and not repo:
         return []
-    space_ids = await accessible_space_ids(session, principal, None)
+    space_ids = await accessible_space_ids(session, principal, space_id)
     if not space_ids:
         return []
     limit = get_settings().resolve_search_limit(limit)
@@ -1066,7 +1233,7 @@ async def about_path(
         )
     if repo:
         stmt = stmt.where(Memory.repo_hint.ilike(f"%{escape_ilike(repo)}%", escape="\\"))
-    stmt = stmt.order_by(Memory.updated_at.desc()).limit(limit)
+    stmt = stmt.order_by(Memory.updated_at.desc()).limit(limit).offset(max(0, offset))
     rows = list((await session.execute(stmt)).scalars())
     return [_digest_from_memory(m) for m in rows]
 
@@ -1077,7 +1244,7 @@ async def trace(
     memory = await open_memory(session, principal, memory_id=memory_id)
     if not memory:
         raise NotFoundError("Memory not found")
-    return {
+    data = {
         "id": str(memory.id),
         "title": memory.title,
         "kind": memory.kind.value,
@@ -1088,6 +1255,7 @@ async def trace(
         "provenance": memory.provenance or {},
         "space_id": str(memory.space_id),
     }
+    return (await annotate_rows(session, [data]))[0]
 
 
 async def overlap_report(
@@ -1097,6 +1265,7 @@ async def overlap_report(
     space_id: uuid.UUID | None = None,
     limit: int | None = None,
     include_expired: bool = False,
+    expiring_within_days: int | None = None,
 ) -> dict[str, Any]:
     """Report duplicate candidates and soon-to-expire memories (read-only).
 
@@ -1106,6 +1275,8 @@ async def overlap_report(
         space_id: Limit the report to one space.
         limit: Most pairs and most expiring memories to return.
         include_expired: Also compare past-due memories.
+        expiring_within_days: List only memories that expire within this many
+            days; ``None`` lists the next ``limit`` expiries.
 
     Returns:
         ``near_duplicates`` (pairs), ``expiring``, ``conflicts`` (always
@@ -1114,6 +1285,8 @@ async def overlap_report(
         exist than ``OVERLAP_SCAN_LIMIT``; the oldest were not compared).
     """
     settings = get_settings()
+    if expiring_within_days is not None and expiring_within_days < 0:
+        raise ValidationError("expiring_within_days must be >= 0")
     limit = settings.resolve_search_limit(limit)
     note = (
         "Read-only hygiene report; merge via revise/forget. "
@@ -1129,6 +1302,7 @@ async def overlap_report(
             "truncated": False,
             "note": note,
             "near_dup_threshold": settings.near_dup_threshold,
+            "content_trust": CONTENT_TRUST,
         }
 
     scan_limit = settings.overlap_scan_limit
@@ -1205,6 +1379,10 @@ async def overlap_report(
         .order_by(Memory.expires_at.asc())
         .limit(limit)
     )
+    if expiring_within_days is not None:
+        expiring_stmt = expiring_stmt.where(
+            Memory.expires_at <= now + timedelta(days=expiring_within_days)
+        )
     expiring_rows = list((await session.execute(expiring_stmt)).scalars())
     expiring = [
         {
@@ -1223,6 +1401,7 @@ async def overlap_report(
         "truncated": truncated,
         "note": note,
         "near_dup_threshold": settings.near_dup_threshold,
+        "content_trust": CONTENT_TRUST,
     }
 
 

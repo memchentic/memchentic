@@ -2,8 +2,11 @@
 
 from memchentic.events.memory_bus import (
     MEMORY_CHANNEL,
+    STREAM_CLOSED,
     MemoryEvent,
+    close_memory_streams,
     memory_event_from_row,
+    memory_listener_state,
     publish_memory_event,
     start_memory_listener,
     stop_memory_listener,
@@ -12,8 +15,11 @@ from memchentic.events.memory_bus import (
 
 __all__ = [
     "MEMORY_CHANNEL",
+    "STREAM_CLOSED",
     "MemoryEvent",
+    "close_memory_streams",
     "memory_event_from_row",
+    "memory_listener_state",
     "publish_memory_event",
     "start_memory_listener",
     "stop_memory_listener",

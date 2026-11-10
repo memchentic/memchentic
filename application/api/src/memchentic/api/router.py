@@ -40,7 +40,7 @@ from memchentic.auth.users import (
 )
 from memchentic.db.session import get_session_factory, set_rls_context
 from memchentic.deps import db_session, get_optional_principal, get_principal
-from memchentic.events import subscribe_memory_events
+from memchentic.events import STREAM_CLOSED, subscribe_memory_events
 from memchentic.models.entities import User
 from memchentic.services import api_keys as api_key_service
 from memchentic.services import auth_groups as auth_group_service
@@ -185,7 +185,15 @@ async def _digests_out(session: AsyncSession, digests: list[Any]) -> list[dict]:
 
 @api_router.get("/health")
 async def health() -> dict[str, str]:
+    """Report service health.
+
+    Returns:
+        ``status`` is ``ok`` only when the embedder is usable and the event
+        listener is ``listening``; otherwise ``degraded``. ``events`` is the
+        listener state: ``listening``, ``reconnecting`` or ``stopped``.
+    """
     from memchentic.embeddings import get_embedder
+    from memchentic.events import memory_listener_state
     from memchentic.settings import get_settings
 
     settings = get_settings()
@@ -195,11 +203,13 @@ async def health() -> dict[str, str]:
     except RuntimeError:
         backend = "unavailable"
         embedder_ok = False
-    status = "ok" if embedder_ok else "degraded"
+    events = memory_listener_state()
+    status = "ok" if embedder_ok and events == "listening" else "degraded"
     return {
         "status": status,
         "service": "memchentic",
         "embedder": backend,
+        "events": events,
     }
 
 
@@ -263,6 +273,10 @@ async def memory_events(request: Request) -> StreamingResponse:
                     last_reauth = time.monotonic()
                     yield b": keepalive\n\n"
                     continue
+                if event is STREAM_CLOSED:
+                    # Shutdown has started: finish the response so uvicorn can
+                    # run lifespan shutdown. Clients reconnect by themselves.
+                    return
                 now = time.monotonic()
                 if now - last_reauth >= _SSE_REAUTH_SECONDS:
                     refreshed = await _reauth_memory_events(token)

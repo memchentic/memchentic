@@ -5,10 +5,11 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import UTC, datetime, timedelta
-from urllib.parse import quote_plus
+from urllib.parse import quote
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.engine import make_url
 
 from memchentic.events.memory_bus import _connect_kwargs_from_settings
 from memchentic.settings import get_settings
@@ -131,14 +132,32 @@ def test_connect_kwargs_preserve_special_password(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setenv("POSTGRES_DB", "memchentic")
     get_settings.cache_clear()
     try:
-        # Settings quote_plus when building the URL; kwargs must unquote cleanly.
-        assert quote_plus(password) in get_settings().database_url
+        # Settings quote when building the URL; kwargs must unquote cleanly.
+        assert quote(password, safe="") in get_settings().database_url
         kwargs = _connect_kwargs_from_settings()
         assert kwargs["user"] == "mem"
         assert kwargs["password"] == password
         assert kwargs["host"] == "dbhost"
         assert kwargs["port"] == 5432
         assert kwargs["database"] == "memchentic"
+    finally:
+        get_settings.cache_clear()
+
+
+def test_dsn_round_trips_password_with_space_and_plus(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both consumers of the DSN decode a password with spaces and a plus sign."""
+    password = "pass word+plus 123"
+    monkeypatch.setenv("POSTGRES_APP_USER", "mem")
+    monkeypatch.setenv("POSTGRES_APP_PASSWORD", password)
+    monkeypatch.setenv("POSTGRES_HOSTNAME", "dbhost")
+    monkeypatch.setenv("POSTGRES_PORT", "5432")
+    monkeypatch.setenv("POSTGRES_DB", "memchentic")
+    get_settings.cache_clear()
+    try:
+        # Event listener (asyncpg keyword arguments).
+        assert _connect_kwargs_from_settings()["password"] == password
+        # Main engine (SQLAlchemy URL parser).
+        assert make_url(get_settings().database_url).password == password
     finally:
         get_settings.cache_clear()
 

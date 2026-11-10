@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import uuid
+from collections.abc import Callable
 from types import SimpleNamespace
 
 import pytest
@@ -27,6 +28,7 @@ from memchentic.services.auth_roster import (
 from memchentic.services.errors import ForbiddenError
 from memchentic.services.users import ensure_admin_user, register_internal_user
 from memchentic.settings import Settings, get_settings
+from support import RegisteredUser
 
 ADMIN_KEY = os.environ.get("ADMIN_API_KEY", "")
 
@@ -59,7 +61,6 @@ def test_groups_from_claims_extracts_ids_and_names() -> None:
     assert "realm-role" in got
 
 
-@pytest.mark.asyncio
 async def test_ensure_auth_groups_exclusive_and_locks_admin(session: AsyncSession) -> None:
     settings = get_settings()
     admin = await ensure_admin_user(session, settings)
@@ -94,7 +95,6 @@ async def test_ensure_auth_groups_exclusive_and_locks_admin(session: AsyncSessio
         )
 
 
-@pytest.mark.asyncio
 async def test_idp_sync_administrators_wins(session: AsyncSession) -> None:
     settings = get_settings()
     admin = await ensure_admin_user(session, settings)
@@ -135,8 +135,6 @@ async def test_idp_sync_administrators_wins(session: AsyncSession) -> None:
 
 
 def test_auth_groups_api_bind_and_refuse_edits(client: TestClient) -> None:
-    if not ADMIN_KEY:
-        pytest.skip("ADMIN_API_KEY not set")
     token, user_id, _email = _user(client)
     user_auth = {"Authorization": f"Bearer {token}"}
     admin_auth = {"Authorization": f"Bearer {ADMIN_KEY}"}
@@ -446,3 +444,40 @@ async def test_list_idp_groups_keeps_configuration_message(
     _okta_env(monkeypatch, issuer="not-a-url")
     result = await idp_groups.list_idp_groups(Settings())
     assert result.error == "OAUTH_ISSUER is required for Okta group listing"
+
+
+def test_get_bind_and_members_are_admin_only(
+    client: TestClient,
+    make_user: Callable[..., RegisteredUser],
+    admin_headers: dict[str, str],
+) -> None:
+    user = make_user()
+    bind_url = "/api/auth-groups/users/idp-bind"
+    members_url = "/api/auth-groups/users/members"
+
+    assert client.get(bind_url, headers=user.headers).status_code == 403
+    assert client.get(members_url, headers=user.headers).status_code == 403
+
+    bind = client.get(bind_url, headers=admin_headers)
+    assert bind.status_code == 200, bind.text
+    assert bind.json() == {
+        "slug": "users",
+        "idp_group_id": None,
+        "idp_group_name": None,
+        "roster_bound": False,
+    }
+    assert client.get("/api/auth-groups/nope/idp-bind", headers=admin_headers).status_code == 404
+    assert client.get("/api/auth-groups/nope/members", headers=admin_headers).status_code == 404
+
+    members = client.get(members_url, headers=admin_headers)
+    assert members.status_code == 200, members.text
+    row = next(m for m in members.json() if m["user_id"] == user.user_id)
+    assert set(row) == {"user_id", "email", "display_name", "locked", "source"}
+    assert row["email"] == user.email
+    assert row["locked"] is False
+    assert row["source"] == "manual"
+
+    admin_id = client.get("/api/me", headers=admin_headers).json()["id"]
+    admins = client.get("/api/auth-groups/administrators/members", headers=admin_headers).json()
+    admin_row = next(m for m in admins if m["user_id"] == admin_id)
+    assert admin_row["locked"] is True

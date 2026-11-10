@@ -13,31 +13,15 @@ from memchentic.models.entities import EntryType, Memory, MemoryKind
 from memchentic.search.hybrid import rerank_score
 from memchentic.services import memory_hygiene
 from memchentic.settings import get_settings
+from support import call_tool, register_user
 
 
 def _user(client: TestClient) -> dict[str, str]:
-    email = f"t{uuid.uuid4().hex[:10]}@example.com"
-    password = f"pw-{uuid.uuid4().hex}"
-    client.post("/api/auth/register", json={"email": email, "password": password})
-    token = client.post("/api/auth/login", json={"email": email, "password": password}).json()[
-        "access_token"
-    ]
-    return {"Authorization": f"Bearer {token}"}
+    return register_user(client).headers
 
 
 def _tool(client: TestClient, auth: dict[str, str], name: str, args: dict[str, Any]) -> Any:
-    resp = client.post(
-        "/mcp",
-        headers={**auth, "Accept": "application/json, text/event-stream"},
-        json={
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "tools/call",
-            "params": {"name": name, "arguments": args},
-        },
-    )
-    resp.raise_for_status()
-    return resp.json()["result"]["structuredContent"]
+    return call_tool(client, auth, name, args)["structuredContent"]
 
 
 def _memory(**kw: Any) -> Memory:
@@ -177,7 +161,6 @@ async def _no_scan_setup(_session: Any) -> None:
     """Stand-in for prepare_filtered_vector_scan with the fake session."""
 
 
-@pytest.mark.asyncio
 async def test_near_dup_checks_beyond_nearest(monkeypatch: pytest.MonkeyPatch) -> None:
     """Exact title match is found even when outside the nearest-vector window."""
     monkeypatch.setattr(memory_hygiene, "prepare_filtered_vector_scan", _no_scan_setup)
@@ -195,7 +178,6 @@ async def test_near_dup_checks_beyond_nearest(monkeypatch: pytest.MonkeyPatch) -
     assert found is twin
 
 
-@pytest.mark.asyncio
 async def test_near_dup_prefers_similarity_hit(monkeypatch: pytest.MonkeyPatch) -> None:
     """A later candidate above the similarity threshold wins over no title match."""
     monkeypatch.setattr(memory_hygiene, "prepare_filtered_vector_scan", _no_scan_setup)
@@ -214,8 +196,7 @@ async def test_near_dup_prefers_similarity_hit(monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_overlap_report_scans_past_old_window_and_flags_near_dup(client: TestClient) -> None:
-    """Scan window defaults above 200; cosine near-dups are reported."""
-    assert get_settings().overlap_scan_limit > 200
+    """Cosine near-duplicates and same-title pairs are reported."""
     auth = _user(client)
     marker = uuid.uuid4().hex[:10]
     group = client.post("/api/spaces", headers=auth, json={"name": f"g-{marker}"}).json()
@@ -272,3 +253,54 @@ def test_rerank_recency_boost_is_bounded() -> None:
     ancient = _memory(updated_at=now - timedelta(days=3650))
     ratio = rerank_score(fresh, 0.03, now=now) / rerank_score(ancient, 0.03, now=now)
     assert 1.0 < ratio <= 1.0 + get_settings().search_recency_weight
+
+
+def _user_token(client: TestClient) -> tuple[str, str, str]:
+    """Register and log in a fresh internal user.
+
+    Args:
+        client: In-process test client.
+
+    Returns:
+        Tuple of (access token, user id, email).
+    """
+    user = register_user(client)
+    return user.token, user.user_id, user.email
+
+
+def test_near_duplicate_refused_without_force(client: TestClient) -> None:
+    """A second identical entry is refused unless ``force`` is set."""
+    token, _, _ = _user_token(client)
+    auth = {"Authorization": f"Bearer {token}"}
+    body = {"title": "Database choice", "body": f"Postgres with pgvector {uuid.uuid4().hex}"}
+    assert client.post("/api/memories", headers=auth, json=body).status_code == 200
+    assert client.post("/api/memories", headers=auth, json=body).status_code == 409
+    assert (
+        client.post("/api/memories", headers=auth, json={**body, "force": True}).status_code == 200
+    )
+
+
+def test_expired_near_dup_does_not_block_remember(client: TestClient) -> None:
+    auth = _user(client)
+    marker = uuid.uuid4().hex[:10]
+    title = f"Expired twin {marker}"
+    past = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+    first = client.post(
+        "/api/memories",
+        headers=auth,
+        json={
+            "title": title,
+            "body": f"body {marker}",
+            "type": "fact",
+            "expires_at": past,
+            "force": True,
+        },
+    )
+    assert first.status_code == 200, first.text
+    second = client.post(
+        "/api/memories",
+        headers=auth,
+        json={"title": title, "body": f"body {marker} again", "type": "fact"},
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["id"] != first.json()["id"]

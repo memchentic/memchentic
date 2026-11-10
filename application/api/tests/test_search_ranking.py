@@ -10,31 +10,15 @@ import asyncpg
 from fastapi.testclient import TestClient
 
 from memchentic.settings import get_settings
+from support import call_tool, register_user
 
 
 def _user(client: TestClient) -> dict[str, str]:
-    email = f"rank{uuid.uuid4().hex[:10]}@example.com"
-    password = f"pw-{uuid.uuid4().hex}"
-    client.post("/api/auth/register", json={"email": email, "password": password})
-    token = client.post("/api/auth/login", json={"email": email, "password": password}).json()[
-        "access_token"
-    ]
-    return {"Authorization": f"Bearer {token}"}
+    return register_user(client).headers
 
 
 def _tool(client: TestClient, auth: dict[str, str], name: str, args: dict[str, Any]) -> Any:
-    resp = client.post(
-        "/mcp",
-        headers={**auth, "Accept": "application/json, text/event-stream"},
-        json={
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "tools/call",
-            "params": {"name": name, "arguments": args},
-        },
-    )
-    resp.raise_for_status()
-    return resp.json()["result"]["structuredContent"]
+    return call_tool(client, auth, name, args)["structuredContent"]
 
 
 def _age_90_days(memory_id: str) -> None:

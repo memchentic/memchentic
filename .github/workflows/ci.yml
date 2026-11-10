@@ -96,6 +96,7 @@ jobs:
             --env POSTGRES_USER=memchentic \
             --env POSTGRES_PASSWORD \
             --env COVERAGE_FILE=/tmp/.coverage \
+            --env MEMCHENTIC_TEST_REQUIRE_ONNX=1 \
             --volume "${GITHUB_WORKSPACE}/application/api/tests:/opt/memchentic/tests:ro" \
             "${IMAGE}" \
             pytest -q -p no:cacheprovider --cov=memchentic --cov-report=term-missing

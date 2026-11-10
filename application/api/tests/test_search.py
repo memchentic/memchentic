@@ -18,7 +18,7 @@ from memchentic.embeddings.loader import (
     Embedder,
 )
 from memchentic.models.entities import Memory
-from memchentic.search.hybrid import prepare_filtered_vector_scan, rrf_fuse
+from memchentic.search.hybrid import escape_ilike, prepare_filtered_vector_scan, rrf_fuse
 
 _ONNX_READY = (DEFAULT_MODEL_DIR / "model.onnx").is_file() and (
     DEFAULT_MODEL_DIR / "tokenizer.json"
@@ -53,7 +53,6 @@ def test_hash_fallback_is_deterministic_and_normalized(tmp_path) -> None:
     assert math.isclose(math.sqrt(sum(v * v for v in first)), 1.0, rel_tol=1e-6)
 
 
-@pytest.mark.asyncio
 async def test_aembed_matches_sync_embed(tmp_path) -> None:
     """Async offload returns the same vector as sync embed on the hash backend.
 
@@ -66,7 +65,6 @@ async def test_aembed_matches_sync_embed(tmp_path) -> None:
     assert await embedder.aembed_memory_text("t", "b") == embedder.embed_memory_text("t", "b")
 
 
-@pytest.mark.asyncio
 async def test_concurrent_aembed_completes(tmp_path) -> None:
     """Two concurrent aembed calls both finish (awaitable offload contract).
 
@@ -188,3 +186,8 @@ async def test_prepare_filtered_vector_scan_sets_transaction_local_setting(
 def test_embedding_column_width_matches_embedder() -> None:
     """The ``memories.embedding`` column and the embedder agree on the vector width."""
     assert Memory.__table__.c.embedding.type.dim == EMBEDDING_DIM
+
+
+def test_escape_ilike_escapes_percent_underscore_backslash() -> None:
+    assert escape_ilike(r"a%b_c\d") == r"a\%b\_c\\d"
+    assert escape_ilike("plain") == "plain"

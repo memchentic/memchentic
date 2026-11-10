@@ -14,17 +14,12 @@ from memchentic.services.auth_roster import ensure_auth_groups
 from memchentic.services.memories import backfill_orphan_creators
 from memchentic.services.users import ensure_admin_user
 from memchentic.settings import get_settings
+from support import register_user
 
 
 def _user(client: TestClient) -> tuple[dict[str, str], str]:
-    email = f"backfill-{uuid.uuid4().hex[:10]}@example.com"
-    password = f"pw-{uuid.uuid4().hex}"
-    reg = client.post("/api/auth/register", json={"email": email, "password": password})
-    assert reg.status_code == 200, reg.text
-    login = client.post("/api/auth/login", json={"email": email, "password": password})
-    assert login.status_code == 200, login.text
-    auth = {"Authorization": f"Bearer {login.json()['access_token']}"}
-    return auth, client.get("/api/me", headers=auth).json()["id"]
+    user = register_user(client)
+    return user.headers, user.user_id
 
 
 def test_startup_backfill_attributes_orphans(client: TestClient) -> None:

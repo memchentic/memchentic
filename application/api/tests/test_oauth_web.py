@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -12,6 +13,7 @@ from jwt.exceptions import InvalidTokenError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from memchentic.auth import web_oauth
 from memchentic.auth.bearer import resolve_bearer
 from memchentic.auth.jwks import clear_jwks_cache
 from memchentic.auth.providers import _pin_discovery_origins, clear_discovery_cache, resolve_scopes
@@ -39,7 +41,6 @@ def external_oauth(monkeypatch: pytest.MonkeyPatch) -> None:
     clear_jwks_cache()
 
 
-@pytest.mark.asyncio
 async def test_session_jwt_verifies_under_external_provider(
     session: AsyncSession, external_oauth: None
 ) -> None:
@@ -59,7 +60,6 @@ async def test_session_jwt_verifies_under_external_provider(
     assert claims["email"] == "gui@example.com"
 
 
-@pytest.mark.asyncio
 async def test_idp_jwt_still_accepted_under_external_provider(
     session: AsyncSession, external_oauth: None
 ) -> None:
@@ -212,7 +212,6 @@ def test_provider_reports_web_oauth(client: TestClient, external_oauth: None) ->
     assert info["oauth_label"] == "Google"
 
 
-@pytest.mark.asyncio
 async def test_resolve_bearer_upserts_external_subject(
     session: AsyncSession, external_oauth: None
 ) -> None:
@@ -557,3 +556,84 @@ def test_internal_as_metadata_unchanged(client: TestClient) -> None:
     assert meta["registration_endpoint"] == f"{base}/oauth/register"
     assert meta["code_challenge_methods_supported"] == ["S256"]
     assert meta["scopes_supported"] == ["openid", "profile", "email"]
+
+
+def test_profile_from_claims_parses_string_flags_and_requires_identity() -> None:
+    profile = web_oauth._profile_from_claims(
+        {
+            "sub": " abc ",
+            "email": "ada@example.com",
+            "email_verified": "true",
+            "preferred_username": "ada",
+        }
+    )
+    assert profile.subject == "abc"
+    assert profile.email == "ada@example.com"
+    assert profile.email_verified is True
+    assert profile.display_name == "ada"
+
+    claims = {"sub": "abc", "email": "ada@example.com"}
+    explicit_false = web_oauth._profile_from_claims({**claims, "email_verified": "false"})
+    assert explicit_false.email_verified is False
+    assert web_oauth._profile_from_claims(claims).email_verified is False
+
+    with pytest.raises(ValueError, match="subject is required"):
+        web_oauth._profile_from_claims({"email": "ada@example.com"})
+    with pytest.raises(ValueError, match="email is required"):
+        web_oauth._profile_from_claims({"sub": "abc"})
+
+
+async def _github_profile(
+    monkeypatch: pytest.MonkeyPatch, *, user: dict[str, Any], emails: list[dict[str, Any]]
+) -> OAuthProfile:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/user":
+            return httpx.Response(200, json=user)
+        if request.url.path == "/user/emails":
+            return httpx.Response(200, json=emails)
+        return httpx.Response(404)
+
+    real_client = httpx.AsyncClient
+
+    def fake_client(**kwargs: Any) -> httpx.AsyncClient:
+        return real_client(transport=httpx.MockTransport(handler), **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", fake_client)
+    monkeypatch.setattr(
+        web_oauth,
+        "resolve_oidc_endpoints",
+        AsyncMock(return_value={"token_endpoint": "https://github.com/login/oauth/access_token"}),
+    )
+    monkeypatch.setattr(
+        web_oauth, "_token_post", AsyncMock(return_value={"access_token": "test-access-token"})
+    )
+    return await web_oauth._github_exchange(get_settings(), code="code", code_verifier="verifier")
+
+
+async def test_github_exchange_prefers_verified_primary_email(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile = await _github_profile(
+        monkeypatch,
+        user={"id": 42, "login": "ada", "name": None, "email": "public@example.com"},
+        emails=[
+            {"email": "secondary@example.com", "primary": False, "verified": True},
+            {"email": "primary@example.com", "primary": True, "verified": True},
+        ],
+    )
+    assert profile.subject == "42"
+    assert profile.email == "primary@example.com"
+    assert profile.email_verified is True
+    assert profile.display_name == "ada"
+
+
+async def test_github_exchange_marks_public_email_unverified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile = await _github_profile(
+        monkeypatch,
+        user={"id": 42, "login": "ada", "email": "public@example.com"},
+        emails=[{"email": "primary@example.com", "primary": True, "verified": False}],
+    )
+    assert profile.email == "public@example.com"
+    assert profile.email_verified is False

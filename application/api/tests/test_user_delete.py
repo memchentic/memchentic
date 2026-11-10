@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from memchentic.db.session import set_rls_context
 from memchentic.models.entities import Space
 from memchentic.services.auth_groups import set_idp_bind
 from memchentic.services.auth_roster import SLUG_USERS, add_member_raw, ensure_auth_groups
@@ -34,7 +35,6 @@ def _register(client: TestClient) -> tuple[str, str, str]:
     return token, user_id, email
 
 
-@pytest.mark.skipif(not ADMIN_KEY, reason="ADMIN_API_KEY unset")
 def test_admin_deletes_unbound_user(client: TestClient) -> None:
     _token, user_id, _email = _register(client)
     admin = {"Authorization": f"Bearer {ADMIN_KEY}"}
@@ -53,7 +53,6 @@ def test_admin_deletes_unbound_user(client: TestClient) -> None:
     assert missing.status_code == 404
 
 
-@pytest.mark.skipif(not ADMIN_KEY, reason="ADMIN_API_KEY unset")
 def test_non_admin_cannot_delete_user(client: TestClient) -> None:
     _token, target_id, _ = _register(client)
     other_token, _, _ = _register(client)
@@ -66,7 +65,6 @@ def test_non_admin_cannot_delete_user(client: TestClient) -> None:
     assert client.get(f"/api/users/{target_id}", headers=admin).status_code == 200
 
 
-@pytest.mark.skipif(not ADMIN_KEY, reason="ADMIN_API_KEY unset")
 def test_cannot_delete_self(client: TestClient) -> None:
     token, user_id, _ = _register(client)
     admin = {"Authorization": f"Bearer {ADMIN_KEY}"}
@@ -84,7 +82,6 @@ def test_cannot_delete_self(client: TestClient) -> None:
     assert "own account" in refuse.json()["detail"].lower()
 
 
-@pytest.mark.skipif(not ADMIN_KEY, reason="ADMIN_API_KEY unset")
 def test_cannot_delete_env_admin(client: TestClient) -> None:
     admin = {"Authorization": f"Bearer {ADMIN_KEY}"}
     me = client.get("/api/me", headers=admin).json()
@@ -124,7 +121,6 @@ def test_manual_member_of_bound_roster_is_deletable(client: TestClient) -> None:
     assert client.get(f"/api/users/{user_id}", headers=admin).status_code == 404
 
 
-@pytest.mark.asyncio
 async def test_delete_user_removes_personal_space(session: AsyncSession) -> None:
     user = await register_internal_user(
         session,
@@ -137,14 +133,18 @@ async def test_delete_user_removes_personal_space(session: AsyncSession) -> None
 
     admin = await ensure_admin_user(session)
     await ensure_auth_groups(session, admin)
+    # The two calls above rebind the RLS context to the env admin's user with
+    # is_admin=false. DELETE /api/users/{id} runs delete_user as an admin.
+    await set_rls_context(session, user_id=None, is_admin=True)
     await delete_user(session, actor_user_id=None, target_user_id=user.id)
 
+    # Look with an admin context: a hidden row must not count as a deleted row.
+    await set_rls_context(session, user_id=None, is_admin=True)
     assert await get_personal_space(session, user.id) is None
     left = await session.execute(select(Space).where(Space.id == personal_id))
     assert left.scalar_one_or_none() is None
 
 
-@pytest.mark.skipif(not ADMIN_KEY, reason="ADMIN_API_KEY unset")
 def test_delete_user_reassigns_owned_groups(client: TestClient) -> None:
     """Deleting a group owner reassigns created_by to the acting admin."""
     token, owner_id, _ = _register(client)
@@ -168,7 +168,6 @@ def test_delete_user_reassigns_owned_groups(client: TestClient) -> None:
     assert detail.json()["created_by"] == admin_me["id"]
 
 
-@pytest.mark.asyncio
 async def test_delete_user_refuses_when_on_bound_roster(session: AsyncSession) -> None:
     user = await register_internal_user(
         session,

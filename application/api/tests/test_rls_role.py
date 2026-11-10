@@ -23,12 +23,9 @@ from memchentic.models.entities import (
 from memchentic.settings import get_settings
 
 
-@pytest.mark.asyncio
 async def test_runtime_role_is_not_superuser() -> None:
     """The app DSN connects as a non-superuser without BYPASSRLS."""
     settings = get_settings()
-    if not settings.postgres_app_password:
-        pytest.skip("POSTGRES_APP_PASSWORD unset")
     engine = create_async_engine(settings.database_url)
     try:
         async with engine.connect() as conn:
@@ -43,14 +40,11 @@ async def test_runtime_role_is_not_superuser() -> None:
         await engine.dispose()
 
 
-@pytest.mark.asyncio
 async def test_rls_hides_foreign_space_without_membership(
     session: AsyncSession,
 ) -> None:
     """Raw SELECT under a stranger's RLS context cannot see another personal space."""
     settings = get_settings()
-    if not settings.postgres_app_password:
-        pytest.skip("POSTGRES_APP_PASSWORD unset")
 
     marker = uuid4().hex[:8]
     owner = User(
@@ -94,12 +88,9 @@ async def test_rls_hides_foreign_space_without_membership(
         await engine.dispose()
 
 
-@pytest.mark.asyncio
 async def test_rls_hides_group_memories_from_pending_member(session: AsyncSession) -> None:
     """A pending invite grants no row access; accepting touches only accepted_at."""
     settings = get_settings()
-    if not settings.postgres_app_password:
-        pytest.skip("POSTGRES_APP_PASSWORD unset")
 
     marker = uuid4().hex[:8]
     owner = User(
@@ -165,7 +156,6 @@ async def test_rls_hides_group_memories_from_pending_member(session: AsyncSessio
         await engine.dispose()
 
 
-@pytest.mark.asyncio
 async def test_migration_018_schema_and_creator_membership(session: AsyncSession) -> None:
     """018 adds the consent and editor columns, narrows UPDATE, and accepts creators."""
     settings = get_settings()

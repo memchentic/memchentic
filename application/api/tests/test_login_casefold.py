@@ -30,7 +30,6 @@ def test_admin_login_email_is_case_insensitive() -> None:
     assert not check_admin_password("nobody@example.com", "SecretPass", settings)
 
 
-@pytest.mark.asyncio
 async def test_internal_login_email_is_case_insensitive(session: AsyncSession) -> None:
     """Registered emails authenticate when the login form uses different casing."""
     suffix = uuid.uuid4().hex[:10]

@@ -3,46 +3,32 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
-import time
 import uuid
+from typing import Any
+from urllib.parse import quote
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.requests import Request
 
+import memchentic.api.routes.events as rest_router
 from memchentic.events import memory_bus
 from memchentic.events.memory_bus import (
     MemoryEvent,
+    _connect_kwargs_from_settings,
     _encode_event,
-    _subscribers,
     publish_memory_event,
 )
+from memchentic.settings import get_settings
+from support import MemoryEventsTap, register_user
 
 
 def _register_and_token(client: TestClient) -> str:
-    email = f"e{uuid.uuid4().hex[:10]}@example.com"
-    password = f"pw-{uuid.uuid4().hex}"
-    client.post("/api/auth/register", json={"email": email, "password": password})
-    res = client.post(
-        "/api/auth/login",
-        json={"email": email, "password": password, "remember": False},
-    )
-    assert res.status_code == 200
-    return res.json()["access_token"]
-
-
-def _wait_for_event(queue: asyncio.Queue, memory_id: str, *, timeout: float = 3.0) -> dict | None:
-    found = None
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if not queue.empty():
-            found = queue.get_nowait()
-            if found.get("id") == memory_id:
-                return found
-            found = None
-        time.sleep(0.05)
-    return None
+    return register_user(client, prefix="e").token
 
 
 def test_memory_events_requires_auth(client: TestClient) -> None:
@@ -50,59 +36,51 @@ def test_memory_events_requires_auth(client: TestClient) -> None:
     assert res.status_code == 401
 
 
-def test_create_memory_fans_out_local_subscribers(client: TestClient) -> None:
-    """REST create NOTIFYs; the process listener delivers to local queues."""
-    queue: asyncio.Queue = asyncio.Queue(maxsize=8)
-    _subscribers.add(queue)
-    try:
-        token = _register_and_token(client)
-        headers = {"Authorization": f"Bearer {token}"}
-        title = f"live-{uuid.uuid4().hex[:8]}"
-        create = client.post(
-            "/api/memories",
-            headers=headers,
-            json={"title": title, "body": "appears on the wire", "type": "note", "force": True},
-        )
-        assert create.status_code == 200
-        memory_id = create.json()["id"]
-        found = _wait_for_event(queue, memory_id)
-        assert found is not None
-        assert found["action"] == "created"
-        assert found["title"] == title
-        assert found.get("created_at")
-        assert found.get("created_by") == create.json()["created_by"]
-    finally:
-        _subscribers.discard(queue)
+def test_create_memory_fans_out_local_subscribers(
+    client: TestClient, memory_events_tap: MemoryEventsTap
+) -> None:
+    """REST create NOTIFYs; the process listener delivers to local subscribers."""
+    token = _register_and_token(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    title = f"live-{uuid.uuid4().hex[:8]}"
+    create = client.post(
+        "/api/memories",
+        headers=headers,
+        json={"title": title, "body": "appears on the wire", "type": "note", "force": True},
+    )
+    assert create.status_code == 200
+    found = memory_events_tap.wait_for(create.json()["id"])
+    assert found is not None
+    assert found["action"] == "created"
+    assert found["title"] == title
+    assert found.get("created_at")
+    assert found.get("created_by") == create.json()["created_by"]
 
 
-def test_personal_memory_event_space_not_readable_by_peer(client: TestClient) -> None:
+def test_personal_memory_event_space_not_readable_by_peer(
+    client: TestClient, memory_events_tap: MemoryEventsTap
+) -> None:
     """The bus carries a peer's personal event; the peer's space list excludes that space."""
     token_a = _register_and_token(client)
     token_b = _register_and_token(client)
-    queue: asyncio.Queue = asyncio.Queue(maxsize=8)
-    _subscribers.add(queue)
-    try:
-        create = client.post(
-            "/api/memories",
-            headers={"Authorization": f"Bearer {token_b}"},
-            json={
-                "title": f"secret-{uuid.uuid4().hex[:8]}",
-                "body": "peer must not see",
-                "type": "note",
-                "force": True,
-            },
-        )
-        assert create.status_code == 200
-        payload = create.json()
-        found = _wait_for_event(queue, payload["id"])
-        assert found is not None
-        assert found["space_id"] == payload["space_id"]
+    create = client.post(
+        "/api/memories",
+        headers={"Authorization": f"Bearer {token_b}"},
+        json={
+            "title": f"secret-{uuid.uuid4().hex[:8]}",
+            "body": "peer must not see",
+            "type": "note",
+            "force": True,
+        },
+    )
+    assert create.status_code == 200
+    payload = create.json()
+    found = memory_events_tap.wait_for(payload["id"])
+    assert found is not None
+    assert found["space_id"] == payload["space_id"]
 
-        spaces_a = client.get("/api/spaces", headers={"Authorization": f"Bearer {token_a}"}).json()
-        readable = {s["id"] for s in spaces_a}
-        assert payload["space_id"] not in readable
-    finally:
-        _subscribers.discard(queue)
+    spaces_a = client.get("/api/spaces", headers={"Authorization": f"Bearer {token_a}"}).json()
+    assert payload["space_id"] not in {s["id"] for s in spaces_a}
 
 
 def _oversize_event() -> MemoryEvent:
@@ -178,3 +156,120 @@ def test_sse_stream_ends_when_shutdown_has_started(
 
     assert res.status_code == 200
     assert res.text == ": connected\n\n"
+
+
+def test_connect_kwargs_preserve_special_password(monkeypatch: pytest.MonkeyPatch) -> None:
+    password = "p@ss/w:rd#1"
+    monkeypatch.setenv("POSTGRES_APP_USER", "mem")
+    monkeypatch.setenv("POSTGRES_APP_PASSWORD", password)
+    monkeypatch.setenv("POSTGRES_HOSTNAME", "dbhost")
+    monkeypatch.setenv("POSTGRES_PORT", "5432")
+    monkeypatch.setenv("POSTGRES_DB", "memchentic")
+    get_settings.cache_clear()
+    try:
+        # Settings quote when building the URL; kwargs must unquote cleanly.
+        assert quote(password, safe="") in get_settings().database_url
+        kwargs = _connect_kwargs_from_settings()
+        assert kwargs["user"] == "mem"
+        assert kwargs["password"] == password
+        assert kwargs["host"] == "dbhost"
+        assert kwargs["port"] == 5432
+        assert kwargs["database"] == "memchentic"
+    finally:
+        get_settings.cache_clear()
+
+
+def test_dsn_round_trips_password_with_space_and_plus(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both consumers of the DSN decode a password with spaces and a plus sign."""
+    password = "pass word+plus 123"
+    monkeypatch.setenv("POSTGRES_APP_USER", "mem")
+    monkeypatch.setenv("POSTGRES_APP_PASSWORD", password)
+    monkeypatch.setenv("POSTGRES_HOSTNAME", "dbhost")
+    monkeypatch.setenv("POSTGRES_PORT", "5432")
+    monkeypatch.setenv("POSTGRES_DB", "memchentic")
+    get_settings.cache_clear()
+    try:
+        # Event listener (asyncpg keyword arguments).
+        assert _connect_kwargs_from_settings()["password"] == password
+        # Main engine (SQLAlchemy URL parser).
+        assert make_url(get_settings().database_url).password == password
+    finally:
+        get_settings.cache_clear()
+
+
+def _stream_request() -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/events/memories",
+            "query_string": b"",
+            "headers": [(b"authorization", b"Bearer test-token")],
+        }
+    )
+
+
+async def _open_stream(monkeypatch: pytest.MonkeyPatch, reauth: Any) -> tuple[Any, asyncio.Future]:
+    """Start the stream and wait until it has subscribed to the bus."""
+    subscribers_before = len(memory_bus._subscribers)
+    monkeypatch.setattr(rest_router, "_reauth_memory_events", reauth)
+    response = await rest_router.memory_events(_stream_request())
+    stream = response.body_iterator
+    assert await anext(stream) == b": connected\n\n"
+    waiting = asyncio.ensure_future(anext(stream))
+    for _ in range(200):
+        if len(memory_bus._subscribers) > subscribers_before:
+            return stream, waiting
+        await asyncio.sleep(0)
+    waiting.cancel()
+    raise AssertionError("stream did not subscribe to the memory bus")
+
+
+async def _close_stream(stream: Any, waiting: asyncio.Future) -> None:
+    waiting.cancel()
+    with contextlib.suppress(asyncio.CancelledError, StopAsyncIteration):
+        await waiting
+    await stream.aclose()
+
+
+async def test_stream_omits_events_from_unreadable_space(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only events whose space the caller can read are written to the stream."""
+
+    async def reauth(_token: str | None) -> set[str]:
+        return {"space-readable"}
+
+    subscribers_before = len(memory_bus._subscribers)
+    stream, waiting = await _open_stream(monkeypatch, reauth)
+    try:
+        memory_bus._fan_out({"action": "created", "id": "m-hidden", "space_id": "space-other"})
+        memory_bus._fan_out({"action": "created", "id": "m-visible", "space_id": "space-readable"})
+        chunk = await asyncio.wait_for(waiting, timeout=2)
+    finally:
+        await _close_stream(stream, waiting)
+
+    assert chunk.startswith(b"event: memory\ndata: ")
+    assert json.loads(chunk.decode().split("data: ", 1)[1])["id"] == "m-visible"
+    assert len(memory_bus._subscribers) == subscribers_before
+
+
+async def test_stream_ends_when_token_stops_resolving(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When re-authentication fails the stream ends and unsubscribes."""
+    calls = 0
+
+    async def reauth(_token: str | None) -> set[str] | None:
+        nonlocal calls
+        calls += 1
+        return {"space-readable"} if calls == 1 else None
+
+    subscribers_before = len(memory_bus._subscribers)
+    monkeypatch.setattr(rest_router, "_SSE_REAUTH_SECONDS", 0.0)
+    stream, waiting = await _open_stream(monkeypatch, reauth)
+    try:
+        memory_bus._fan_out({"action": "created", "id": "m-late", "space_id": "space-readable"})
+        with pytest.raises(StopAsyncIteration):
+            await asyncio.wait_for(waiting, timeout=2)
+    finally:
+        await _close_stream(stream, waiting)
+
+    assert calls == 2
+    assert len(memory_bus._subscribers) == subscribers_before

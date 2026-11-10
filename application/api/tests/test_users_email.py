@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from memchentic.auth.users import (
+    authenticate_internal,
     ensure_admin_user,
     get_user,
     normalize_email,
@@ -17,7 +19,8 @@ from memchentic.auth.users import (
     register_internal_user,
     upsert_oauth_user,
 )
-from memchentic.models.entities import User
+from memchentic.db.session import set_rls_context
+from memchentic.models.entities import ApiKey, AuthRefreshToken, GuiSession, User
 from memchentic.services.spaces import get_personal_space
 from memchentic.settings import get_settings
 
@@ -71,12 +74,47 @@ async def test_upsert_oauth_meshes_providers_under_email(session: AsyncSession) 
     assert providers_for(loaded) == ["github", "google"]
 
 
-@pytest.mark.asyncio
-async def test_internal_then_oauth_keeps_both_bindings(session: AsyncSession) -> None:
-    """An internal account gains an OAuth binding when the email matches."""
+async def test_internal_then_oauth_link_revokes_unverified_credentials(
+    session: AsyncSession,
+) -> None:
+    """The first IdP link drops the password, sessions, refresh tokens and API keys."""
     suffix = uuid.uuid4().hex[:10]
     email = f"local-{suffix}@example.com"
     local = await register_internal_user(session, email=email, password="password-ok-12")
+    now = datetime.now(UTC)
+    await set_rls_context(session, user_id=local.id, is_admin=False)
+    session.add_all(
+        [
+            ApiKey(
+                id=uuid.uuid4(),
+                user_id=local.id,
+                name="squat",
+                key_prefix="mc_test",
+                key_hash=uuid.uuid4().hex,
+            ),
+            GuiSession(
+                id=uuid.uuid4(),
+                token_hash=uuid.uuid4().hex,
+                subject=str(local.id),
+                email=email,
+                provider="internal",
+                user_id=local.id,
+                persistent=False,
+                expires_at=now + timedelta(hours=1),
+            ),
+            AuthRefreshToken(
+                id=uuid.uuid4(),
+                token_hash=uuid.uuid4().hex,
+                family_id=uuid.uuid4(),
+                client_id="mcp_test",
+                user_id=local.id,
+                scope="openid",
+                expires_at=now + timedelta(days=1),
+            ),
+        ]
+    )
+    await session.commit()
+
     linked = await upsert_oauth_user(
         session,
         provider="okta",
@@ -86,13 +124,22 @@ async def test_internal_then_oauth_keeps_both_bindings(session: AsyncSession) ->
     assert linked.id == local.id
     assert linked.provider == "okta"
     assert linked.provider_subject == f"okta-{suffix}"
-    # Password hash is preserved so internal login can still work after link.
-    assert linked.password_hash is not None
+    assert linked.password_hash is None
+    assert await authenticate_internal(session, email=email, password="password-ok-12") is None
+
+    await set_rls_context(session, user_id=None, is_admin=True)
     result = await session.execute(
         select(User).options(selectinload(User.identities)).where(User.id == local.id)
     )
     loaded = result.scalar_one()
-    assert providers_for(loaded) == ["internal", "okta"]
+    assert providers_for(loaded) == ["okta"]
+    for model in (ApiKey, GuiSession, AuthRefreshToken):
+        live = await session.scalar(
+            select(func.count())
+            .select_from(model)
+            .where(model.user_id == local.id, model.revoked_at.is_(None))
+        )
+        assert live == 0, model.__name__
 
 
 @pytest.mark.asyncio

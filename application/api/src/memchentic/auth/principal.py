@@ -90,17 +90,28 @@ async def resolve_bearer(
         # token.
         return None
 
-    sub = payload.get("sub")
+    sub = str(payload.get("sub") or "").strip()
     if not sub:
         return None
 
     from memchentic.services.auth_groups import user_is_administrator
 
-    try:
-        user_id = UUID(sub)
-    except ValueError:
-        # provider subject style — look up any durable binding; provision on first hit
-        provider = payload.get("provider") or settings.oauth_provider
+    # The verified issuer says who signed the token. A memchentic-signed token
+    # carries ``session_issuer`` and a local user id in ``sub``. Every other
+    # verified token was signed by the external IdP; its ``sub`` is an opaque
+    # string that is only ever matched against ``user_identities`` under the
+    # configured provider, whatever its shape and whatever the token claims.
+    if payload.get("iss") == settings.session_issuer:
+        try:
+            user_id = UUID(sub)
+        except ValueError:
+            return None
+        result = await session.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+    else:
+        if settings.oauth_provider == "internal":
+            return None
+        provider = settings.oauth_provider
         result = await session.execute(
             select(User)
             .join(UserIdentity, UserIdentity.user_id == User.id)
@@ -110,22 +121,10 @@ async def resolve_bearer(
             )
         )
         user = result.scalar_one_or_none()
-        if not user and settings.oauth_provider != "internal":
-            user = await _upsert_from_external_claims(
-                session, payload, provider=provider, subject=str(sub)
-            )
         if not user:
-            return None
-        return Principal(
-            user_id=user.id,
-            email=user.email,
-            display_name=user.display_name,
-            provider=user.provider,
-            is_admin=await user_is_administrator(session, user.id),
-        )
-
-    result = await session.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
+            user = await _upsert_from_external_claims(
+                session, payload, provider=provider, subject=sub
+            )
     if not user:
         return None
     return Principal(

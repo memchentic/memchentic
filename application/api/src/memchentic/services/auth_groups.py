@@ -235,6 +235,32 @@ async def add_to_users_group(session: AsyncSession, user_id: uuid.UUID) -> None:
     await add_member_raw(session, users, user_id, source=SOURCE_MANUAL)
 
 
+async def idp_signup_allowed(session: AsyncSession, idp_groups: Collection[str]) -> bool:
+    """Decide whether a first-time IdP sign-in may create a local account.
+
+    First match wins: a match on the Administrators bind admits the person; a
+    bound Users roster admits only members of the bound IdP group; otherwise
+    the instance registration toggle decides.
+
+    Args:
+        session: Database session.
+        idp_groups: Group ids/names from the IdP login.
+
+    Returns:
+        True when a new account may be created.
+    """
+    from memchentic.services.instance_settings import get_register_enabled
+
+    groups = list(idp_groups)
+    administrators = await _get_by_slug(session, SLUG_ADMINISTRATORS)
+    if administrators is not None and _bind_matches(administrators, groups):
+        return True
+    users = await _get_by_slug(session, SLUG_USERS)
+    if users is not None and _group_bound(users):
+        return _bind_matches(users, groups)
+    return await get_register_enabled(session)
+
+
 def _require_admin(principal: Principal) -> None:
     if not getattr(principal, "is_admin", False):
         raise ForbiddenError("Administrators only")

@@ -7,9 +7,17 @@ import uuid
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from memchentic.auth.users import ensure_admin_user, get_user_by_email, upsert_oauth_user
 from memchentic.db.session import get_session_factory
-from memchentic.services.instance_settings import ensure_instance_settings
+from memchentic.services.auth_groups import (
+    SLUG_ADMINISTRATORS,
+    SLUG_USERS,
+    ensure_auth_groups,
+    set_idp_bind,
+)
+from memchentic.services.instance_settings import ensure_instance_settings, set_register_enabled
 
 ADMIN_KEY = os.environ.get("ADMIN_API_KEY", "")
 
@@ -92,3 +100,61 @@ def test_boot_keeps_registration_toggle_set_in_system_settings(client: TestClien
         # Other tests register users: always re-open registration.
         on = client.put("/api/system/registration", headers=admin, json={"enabled": True})
         assert on.status_code == 200, on.text
+
+
+_ADMIN = type("P", (), {"is_admin": True})()
+
+
+async def _unbind_auth_groups(session: AsyncSession) -> None:
+    for slug in (SLUG_ADMINISTRATORS, SLUG_USERS):
+        await set_idp_bind(session, _ADMIN, slug, idp_group_id=None, idp_group_name=None)
+
+
+async def test_idp_provisioning_respects_registration_toggle(session: AsyncSession) -> None:
+    """With no auth group bind, the registration toggle gates first-time IdP sign-in."""
+    await ensure_auth_groups(session, await ensure_admin_user(session))
+    await _unbind_auth_groups(session)
+    suffix = uuid.uuid4().hex[:10]
+    email = f"closed-{suffix}@example.com"
+    await set_register_enabled(session, _ADMIN, False)
+    try:
+        with pytest.raises(ValueError, match="Sign-up is disabled"):
+            await upsert_oauth_user(session, provider="okta", subject=f"okta-{suffix}", email=email)
+        assert await get_user_by_email(session, email) is None
+    finally:
+        await set_register_enabled(session, _ADMIN, True)
+    created = await upsert_oauth_user(
+        session, provider="okta", subject=f"okta-{suffix}", email=email
+    )
+    assert created.email == email
+
+
+async def test_idp_provisioning_follows_users_auth_group_bind(session: AsyncSession) -> None:
+    """A bound Users roster admits only members of the bound IdP group."""
+    await ensure_auth_groups(session, await ensure_admin_user(session))
+    await _unbind_auth_groups(session)
+    suffix = uuid.uuid4().hex[:10]
+    bind = f"idp-users-{suffix}"
+    await set_idp_bind(session, _ADMIN, SLUG_USERS, idp_group_id=bind, idp_group_name=None)
+    try:
+        # Registration is enabled here, but the bound roster decides.
+        with pytest.raises(ValueError, match="Sign-up is disabled"):
+            await upsert_oauth_user(
+                session,
+                provider="okta",
+                subject=f"out-{suffix}",
+                email=f"out-{suffix}@example.com",
+                idp_groups=["some-other-group"],
+            )
+        await set_register_enabled(session, _ADMIN, False)
+        member = await upsert_oauth_user(
+            session,
+            provider="okta",
+            subject=f"in-{suffix}",
+            email=f"in-{suffix}@example.com",
+            idp_groups=[bind],
+        )
+        assert member.email == f"in-{suffix}@example.com"
+    finally:
+        await set_register_enabled(session, _ADMIN, True)
+        await _unbind_auth_groups(session)

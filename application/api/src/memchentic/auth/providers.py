@@ -21,6 +21,7 @@ _DISCOVERY_TTL_SECONDS = 300
 _JWKS_TTL_SECONDS = 300
 _discovery_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _jwks_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_jwks_uri_cache: dict[str, tuple[float, str]] = {}
 
 
 @dataclass
@@ -123,6 +124,41 @@ def resolve_jwks_uri(settings: Settings) -> str:
     return f"{issuer}/.well-known/jwks.json"
 
 
+async def discover_jwks_uri(settings: Settings) -> str:
+    """Return the JWKS URL for the active external IdP.
+
+    Order: an explicit ``OAUTH_JWKS_URI``; the ``jwks_uri`` of the pinned OIDC
+    discovery document; the preset guess from :func:`resolve_jwks_uri`. The
+    result, including the fallback, is cached for ``_DISCOVERY_TTL_SECONDS``
+    so a failing discovery endpoint is not retried on every request.
+
+    Args:
+        settings: App settings.
+
+    Returns:
+        Absolute JWKS URL.
+    """
+    if settings.oauth_jwks_uri:
+        return settings.oauth_jwks_uri
+    issuer = resolve_issuer(settings).rstrip("/")
+    now = time.monotonic()
+    cached = _jwks_uri_cache.get(issuer)
+    if cached and cached[0] > now:
+        return cached[1]
+    uri = ""
+    preset = PRESETS.get(settings.oauth_provider)
+    if preset is None or preset.discovery:
+        try:
+            meta = await _oidc_discovery(settings)
+            uri = str(meta.get("jwks_uri") or "")
+        except (httpx.HTTPError, ValueError):
+            uri = ""
+    if not uri:
+        uri = resolve_jwks_uri(settings)
+    _jwks_uri_cache[issuer] = (now + _DISCOVERY_TTL_SECONDS, uri)
+    return uri
+
+
 def _same_origin(issuer: str, url: str) -> bool:
     """Return True when ``url`` shares scheme+host+port with ``issuer``."""
     a = urlparse(issuer)
@@ -143,14 +179,56 @@ def _same_origin(issuer: str, url: str) -> bool:
     return _origin(a) == _origin(b)
 
 
-def _pin_discovery_origins(issuer: str, data: dict[str, Any]) -> None:
-    """Reject discovery endpoints that leave the issuer origin."""
+# Hosts, other than the issuer host, that a preset's genuine discovery document
+# points at. Keyed by OAUTH_PROVIDER. Only https on the default port is accepted.
+_EXTRA_DISCOVERY_HOSTS: dict[str, frozenset[str]] = {
+    "google": frozenset(
+        {
+            "oauth2.googleapis.com",
+            "openidconnect.googleapis.com",
+            "www.googleapis.com",
+        }
+    ),
+    "entra": frozenset({"graph.microsoft.com"}),
+}
+
+
+def _pin_discovery_origins(issuer: str, data: dict[str, Any], *, provider: str = "") -> None:
+    """Reject discovery endpoints that leave the issuer origin.
+
+    An endpoint passes when it shares scheme, host and port with the issuer,
+    or when it is an ``https`` URL on the default port whose host is listed in
+    ``_EXTRA_DISCOVERY_HOSTS`` for ``provider``.
+
+    Args:
+        issuer: Configured issuer URL.
+        data: Parsed OIDC discovery document.
+        provider: Active ``OAUTH_PROVIDER`` preset name.
+
+    Raises:
+        ValueError: When an endpoint is on a host that is neither the issuer
+            origin nor allowlisted for the provider.
+    """
+    extra_hosts = _EXTRA_DISCOVERY_HOSTS.get(provider, frozenset())
     for key in ("authorization_endpoint", "token_endpoint", "userinfo_endpoint", "jwks_uri"):
         raw = data.get(key)
         if not raw:
             continue
-        if not _same_origin(issuer, str(raw)):
-            raise ValueError(f"OIDC discovery {key} origin mismatch with issuer")
+        url = str(raw)
+        if _same_origin(issuer, url):
+            continue
+        parsed = urlparse(url)
+        try:
+            port = parsed.port
+        except ValueError:
+            port = -1
+        if (
+            parsed.scheme == "https"
+            and (parsed.hostname or "").lower() in extra_hosts
+            and port in (None, 443)
+        ):
+            continue
+        raise ValueError(f"OIDC discovery {key} origin mismatch with issuer")
 
 
 class JwksUnavailableError(RuntimeError):
@@ -177,12 +255,17 @@ async def _fetch_jwks(jwks_uri: str) -> dict[str, Any]:
     return data
 
 
-async def fetch_jwks_and_decode(token: str, settings: Settings) -> dict:
+async def fetch_jwks_and_decode(
+    token: str, settings: Settings, *, audience: str | None = None
+) -> dict:
     """Verify an IdP JWT against JWKS with pinned algorithms and required claims.
 
     Args:
         token: Compact JWT from the IdP.
         settings: App settings (audience, issuer, JWKS URI).
+        audience: Expected ``aud``. Defaults to the API audience
+            (``settings.effective_audience``), which is right for Bearer access
+            tokens. Pass the OAuth client id when verifying an OIDC id_token.
 
     Returns:
         Decoded and verified claims.
@@ -191,8 +274,8 @@ async def fetch_jwks_and_decode(token: str, settings: Settings) -> dict:
         ValueError: When audience/issuer/kid/key type is invalid.
         jwt.exceptions.InvalidTokenError: When signature or claims fail.
     """
-    audience = settings.effective_audience
-    if not audience:
+    expected_audience = audience or settings.effective_audience
+    if not expected_audience:
         raise ValueError("Audience is required for external JWT verification")
     issuer = resolve_issuer(settings)
     if not issuer:
@@ -205,7 +288,7 @@ async def fetch_jwks_and_decode(token: str, settings: Settings) -> dict:
     if not kid:
         raise ValueError("JWT header missing kid")
 
-    jwks = await _fetch_jwks(resolve_jwks_uri(settings))
+    jwks = await _fetch_jwks(await discover_jwks_uri(settings))
 
     key = next((k for k in jwks.get("keys", []) if k.get("kid") == kid), None)
     if key is None:
@@ -230,41 +313,73 @@ async def fetch_jwks_and_decode(token: str, settings: Settings) -> dict:
         token,
         crypto_key,
         algorithms=["RS256", "ES256"],
-        audience=audience,
+        audience=expected_audience,
         issuer=issuer,
         options={"require": ["exp", "aud", "iss", "sub"]},
     )
 
 
-def authorization_server_metadata(settings: Settings) -> dict:
+async def authorization_server_metadata(settings: Settings) -> dict:
+    """Return RFC 8414 authorization-server metadata for the active provider.
+
+    Internal mode describes the built-in authorization server. External mode
+    relays the endpoints of the IdP's pinned OIDC discovery document, so a
+    client that reads this document is sent to endpoints that exist.
+
+    Args:
+        settings: App settings.
+
+    Returns:
+        Metadata document.
+
+    Raises:
+        LookupError: When the external provider has no OIDC discovery.
+        ValueError: When discovery is misconfigured, incomplete, or fails the origin pin.
+        httpx.HTTPError: When the discovery document cannot be fetched.
+    """
     base = settings.base_url.rstrip("/")
-    scopes = [s.strip() for s in resolve_scopes(settings).split(",") if s.strip()]
-    if settings.oauth_provider != "internal":
-        issuer = resolve_issuer(settings)
+    if settings.oauth_provider == "internal":
         return {
-            "issuer": issuer,
-            "authorization_endpoint": f"{issuer}/authorize",
-            "token_endpoint": f"{issuer}/token",
-            "jwks_uri": resolve_jwks_uri(settings),
+            "issuer": base,
+            "authorization_endpoint": f"{base}/oauth/authorize",
+            "token_endpoint": f"{base}/oauth/token",
+            "jwks_uri": f"{base}/oauth/jwks",
+            "registration_endpoint": f"{base}/oauth/register",
             "response_types_supported": ["code"],
             "grant_types_supported": ["authorization_code", "refresh_token"],
             "code_challenge_methods_supported": ["S256"],
-            "scopes_supported": scopes,
+            "token_endpoint_auth_methods_supported": ["none", "client_secret_post"],
+            "scopes_supported": ["openid", "profile", "email"],
+            "subject_types_supported": ["public"],
+            "id_token_signing_alg_values_supported": ["RS256"],
         }
-    return {
-        "issuer": base,
-        "authorization_endpoint": f"{base}/oauth/authorize",
-        "token_endpoint": f"{base}/oauth/token",
-        "jwks_uri": f"{base}/oauth/jwks",
-        "registration_endpoint": f"{base}/oauth/register",
-        "response_types_supported": ["code"],
-        "grant_types_supported": ["authorization_code", "refresh_token"],
-        "code_challenge_methods_supported": ["S256"],
-        "token_endpoint_auth_methods_supported": ["none", "client_secret_post"],
-        "scopes_supported": ["openid", "profile", "email"],
-        "subject_types_supported": ["public"],
-        "id_token_signing_alg_values_supported": ["RS256"],
+
+    preset = PRESETS.get(settings.oauth_provider)
+    if preset is not None and not preset.discovery:
+        raise LookupError(
+            f"Provider {settings.oauth_provider} publishes no authorization-server metadata"
+        )
+    meta = await _oidc_discovery(settings)
+    authorization_endpoint = meta.get("authorization_endpoint")
+    token_endpoint = meta.get("token_endpoint")
+    if not authorization_endpoint or not token_endpoint:
+        raise ValueError("OIDC discovery missing authorization or token endpoint")
+    scopes = [s.strip() for s in resolve_scopes(settings).split(",") if s.strip()]
+    document: dict[str, Any] = {
+        "issuer": str(meta.get("issuer") or resolve_issuer(settings)),
+        "authorization_endpoint": str(authorization_endpoint),
+        "token_endpoint": str(token_endpoint),
+        "response_types_supported": meta.get("response_types_supported") or ["code"],
+        "grant_types_supported": meta.get("grant_types_supported")
+        or ["authorization_code", "refresh_token"],
+        "code_challenge_methods_supported": meta.get("code_challenge_methods_supported")
+        or ["S256"],
+        "scopes_supported": scopes,
     }
+    for key in ("jwks_uri", "registration_endpoint", "token_endpoint_auth_methods_supported"):
+        if meta.get(key):
+            document[key] = meta[key]
+    return document
 
 
 def protected_resource_metadata(settings: Settings) -> dict:
@@ -303,7 +418,7 @@ async def _oidc_discovery(settings: Settings) -> dict[str, Any]:
         resp = await client.get(url)
         resp.raise_for_status()
         data = resp.json()
-    _pin_discovery_origins(issuer, data)
+    _pin_discovery_origins(issuer, data, provider=settings.oauth_provider)
     _discovery_cache[issuer] = (now + _DISCOVERY_TTL_SECONDS, data)
     return data
 
@@ -454,7 +569,7 @@ async def _oidc_exchange(
     claims: dict[str, Any] = {}
     id_token = token_payload.get("id_token")
     if isinstance(id_token, str) and id_token:
-        claims = await fetch_jwks_and_decode(id_token, settings)
+        claims = await fetch_jwks_and_decode(id_token, settings, audience=settings.oauth_client_id)
         if nonce is not None and claims.get("nonce") != nonce:
             raise ValueError("OIDC nonce mismatch")
     access_token = token_payload.get("access_token")
@@ -556,8 +671,9 @@ def _profile_from_claims(claims: dict[str, Any]) -> OAuthProfile:
 
 
 def clear_discovery_cache() -> None:
-    """Clear the in-process OIDC discovery cache (tests)."""
+    """Clear the in-process OIDC discovery and JWKS-URL caches (tests)."""
     _discovery_cache.clear()
+    _jwks_uri_cache.clear()
 
 
 def clear_jwks_cache() -> None:

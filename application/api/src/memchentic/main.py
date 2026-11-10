@@ -229,6 +229,10 @@ def create_app() -> FastAPI:
         redoc_url="/redoc" if docs_on else None,
         openapi_url="/openapi.json" if docs_on else None,
     )
+    # Starlette runs the middleware added last first. CORSMiddleware must wrap
+    # McpAuthMiddleware so the 401 written for /mcp carries the CORS headers;
+    # SecurityHeadersMiddleware stays outermost.
+    app.add_middleware(McpAuthMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,
@@ -237,7 +241,6 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
         expose_headers=["WWW-Authenticate", "Mcp-Session-Id"],
     )
-    app.add_middleware(McpAuthMiddleware)
     app.add_middleware(SecurityHeadersMiddleware, hsts=settings.base_url.startswith("https://"))
 
     @app.exception_handler(ServiceError)

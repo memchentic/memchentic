@@ -2,19 +2,31 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import logging
 import uuid
 from collections.abc import Collection
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import bcrypt
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
 from memchentic.auth import passwords
 from memchentic.auth.passwords import hash_password, password_needs_rehash, verify_password
 from memchentic.db.session import set_rls_context
-from memchentic.models.entities import Space, SpaceKind, SpaceMember, User, UserIdentity
+from memchentic.models.entities import (
+    ApiKey,
+    AuthCode,
+    AuthRefreshToken,
+    GuiSession,
+    Space,
+    SpaceKind,
+    SpaceMember,
+    User,
+    UserIdentity,
+)
 from memchentic.services.errors import (
     ConflictError,
     ForbiddenError,
@@ -26,6 +38,8 @@ from memchentic.services.spaces import ensure_personal_space
 if TYPE_CHECKING:
     from memchentic.auth.principal import Principal
     from memchentic.settings import Settings
+
+logger = logging.getLogger("memchentic")
 
 
 @functools.cache
@@ -258,6 +272,58 @@ async def authenticate_internal(session: AsyncSession, *, email: str, password: 
     return user
 
 
+async def _revoke_unverified_credentials(session: AsyncSession, user: User) -> None:
+    """Revoke every credential created before an IdP proved ownership of the email.
+
+    Internal registration does not verify the email address. When an external
+    IdP first vouches for the address of a password-bearing account, the
+    password, the ``internal`` identity, GUI sessions, refresh tokens, pending
+    authorization codes and API keys may belong to somebody else. The caller
+    commits.
+
+    Args:
+        session: Database session.
+        user: The account being linked to an IdP identity.
+    """
+    now = datetime.now(UTC)
+    user.password_hash = None
+    internal = (
+        await session.execute(
+            select(UserIdentity).where(
+                UserIdentity.user_id == user.id, UserIdentity.provider == "internal"
+            )
+        )
+    ).scalar_one_or_none()
+    if internal is not None:
+        await session.delete(internal)
+    await session.execute(
+        update(GuiSession)
+        .where(GuiSession.user_id == user.id, GuiSession.revoked_at.is_(None))
+        .values(revoked_at=now)
+    )
+    await session.execute(
+        update(AuthRefreshToken)
+        .where(AuthRefreshToken.user_id == user.id, AuthRefreshToken.revoked_at.is_(None))
+        .values(revoked_at=now)
+    )
+    await session.execute(
+        update(AuthCode)
+        .where(AuthCode.user_id == user.id, AuthCode.consumed_at.is_(None))
+        .values(consumed_at=now)
+    )
+    # api_keys is under row-level security; bind the owner so the UPDATE sees the rows.
+    await set_rls_context(session, user_id=user.id, is_admin=False)
+    await session.execute(
+        update(ApiKey)
+        .where(ApiKey.user_id == user.id, ApiKey.revoked_at.is_(None))
+        .values(revoked_at=now)
+    )
+    logger.warning(
+        "First IdP link for user %s: revoked password, sessions, tokens and API keys",
+        user.id,
+    )
+
+
 async def upsert_oauth_user(
     session: AsyncSession,
     *,
@@ -273,7 +339,10 @@ async def upsert_oauth_user(
     Email is the stable identity. Each successful IdP login adds (or refreshes)
     that provider's subject on the same user without removing other bindings,
     so switching ``OAUTH_PROVIDER`` or linking another IdP with the same
-    verified email keeps prior logins working. When ``idp_groups`` is provided,
+    verified email keeps prior logins working. The first IdP link to an
+    account that still has a password revokes that password and every session,
+    token and API key issued before the link, because internal registration
+    does not prove ownership of the email. When ``idp_groups`` is provided,
     Auth Group membership is synced from IdP binds.
 
     Args:
@@ -289,8 +358,9 @@ async def upsert_oauth_user(
         The existing or newly created user.
 
     Raises:
-        ValueError: If email is missing/unverified, or a provider binding
-            conflict would orphan another account.
+        ValueError: If email is missing/unverified, a provider binding conflict
+            would orphan another account, or a new account is not admitted
+            (registration disabled, or the person is outside a bound auth group).
     """
     if not email_verified:
         raise ValueError("OAuth email must be verified")
@@ -323,12 +393,22 @@ async def upsert_oauth_user(
 
     by_email = await get_user_by_email(session, email_n)
     if by_email:
+        from memchentic.settings import get_settings
+
+        is_env_admin = email_n == normalize_email(get_settings().admin_contact_email)
+        if by_email.password_hash is not None and not is_env_admin:
+            await _revoke_unverified_credentials(session, by_email)
         await _ensure_identity(session, by_email, provider=provider, subject=subject_n)
         by_email.provider = provider
         by_email.provider_subject = subject_n
         if display_name:
             by_email.display_name = display_name
         return await _finish(by_email)
+
+    from memchentic.services.auth_groups import idp_signup_allowed
+
+    if not await idp_signup_allowed(session, groups):
+        raise ValueError("Sign-up is disabled for this instance; ask an administrator for access")
 
     user = User(
         id=uuid.uuid4(),

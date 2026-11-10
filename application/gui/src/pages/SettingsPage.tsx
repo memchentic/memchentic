@@ -153,8 +153,11 @@ function RegistrationPanel() {
       <div className="mb-3">
         <h3 className="text-sm font-medium text-ink">Public registration</h3>
         <p className="text-xs text-muted mt-0.5">
-          When disabled, the sign-in page hides Register. Administrators can still
-          create users from Users.{" "}
+          When disabled, the sign-in page hides Register, and a first-time
+          single sign-on user is refused unless an auth group IdP bind admits
+          them. When the Users auth group has an IdP bind, only members of a
+          bound IdP group are admitted, whatever this setting is.
+          Administrators can still create users from Users.{" "}
           <code className="text-ink">REGISTER_ENABLED</code> only sets the value on
           the first boot; after that, this setting is kept across restarts.
         </p>

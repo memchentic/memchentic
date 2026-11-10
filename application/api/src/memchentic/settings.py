@@ -123,6 +123,15 @@ class Settings(BaseSettings):
         default=30.0, gt=0, alias="SEARCH_RECENCY_HALF_LIFE_DAYS"
     )
     search_path_boost: float = Field(default=0.15, ge=0, alias="SEARCH_PATH_BOOST")
+    # Relevance floor for the vector leg of hybrid search. A memory that is not
+    # a keyword match is returned only when its cosine similarity to the query
+    # is at least this value. -1 turns the floor off.
+    search_min_similarity: float = Field(
+        default=0.2, ge=-1.0, le=1.0, alias="SEARCH_MIN_SIMILARITY"
+    )
+    # Recency is a bounded boost: a just-written memory scores at most
+    # (1 + SEARCH_RECENCY_WEIGHT) times an old one of equal relevance.
+    search_recency_weight: float = Field(default=0.25, ge=0, le=1.0, alias="SEARCH_RECENCY_WEIGHT")
 
     # Sliding TTL: 0 disables the default / ceiling respectively.
     memory_default_ttl_days: int = Field(default=90, ge=0, alias="MEMORY_DEFAULT_TTL_DAYS")

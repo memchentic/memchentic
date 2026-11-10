@@ -249,3 +249,20 @@ def test_rerank_caps_guide_confidence() -> None:
         rerank_score(capped, 0.03, now=now)
     )
     assert rerank_score(capped, 0.03, now=now) > rerank_score(weak, 0.03, now=now)
+
+
+def test_rerank_relevance_beats_recency() -> None:
+    """The best possible match at 90 days outranks the worst fresh candidate."""
+    now = datetime.now(UTC)
+    stale = _memory(updated_at=now - timedelta(days=90))
+    fresh = _memory(updated_at=now)
+    assert rerank_score(stale, 2 / 61, now=now) > rerank_score(fresh, 1 / 120, now=now)
+
+
+def test_rerank_recency_boost_is_bounded() -> None:
+    """Age changes a score by at most the factor 1 + SEARCH_RECENCY_WEIGHT."""
+    now = datetime.now(UTC)
+    fresh = _memory(updated_at=now)
+    ancient = _memory(updated_at=now - timedelta(days=3650))
+    ratio = rerank_score(fresh, 0.03, now=now) / rerank_score(ancient, 0.03, now=now)
+    assert 1.0 < ratio <= 1.0 + get_settings().search_recency_weight

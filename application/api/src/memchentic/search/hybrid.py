@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import re
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -8,6 +9,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import ColumnElement, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from memchentic.embeddings import get_embedder
 from memchentic.models.entities import EntryType, Memory, MemoryKind
@@ -25,6 +27,37 @@ def escape_ilike(value: str) -> str:
         Escaped string safe to wrap as ``%{value}%``.
     """
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+_WORD = re.compile(r"\w+")
+# Longest query for which the substring (ILIKE) fallback runs. The fallback
+# is a sequential scan; it is useful for identifiers and parts of words.
+SUBSTRING_FALLBACK_MAX_CHARS = 64
+# Most distinct terms sent to the any-term fallback.
+ANY_TERM_MAX_TERMS = 32
+
+
+def any_term_query(query: str) -> str:
+    """Rewrite a query so that ``websearch_to_tsquery`` matches any of its terms.
+
+    ``websearch_to_tsquery`` joins unquoted terms with AND and reads the word
+    ``or`` as OR. Punctuation is dropped so that quotes and ``-`` cannot
+    change the meaning.
+
+    Args:
+        query: Raw user query.
+
+    Returns:
+        ``"a or b or c"`` with at most ``ANY_TERM_MAX_TERMS`` distinct terms,
+        or an empty string when the query has no word characters.
+    """
+    terms: list[str] = []
+    for word in _WORD.findall(query.lower()):
+        if word != "or" and word not in terms:
+            terms.append(word)
+        if len(terms) >= ANY_TERM_MAX_TERMS:
+            break
+    return " or ".join(terms)
 
 
 def memory_type_clause(tokens: Sequence[str] | None) -> ColumnElement[bool] | None:
@@ -90,6 +123,12 @@ def rerank_score(
 ) -> float:
     """Adjust a fused RRF score for recency, path, guide confidence, and usage.
 
+    Recency is a bounded boost, not a decay. The factor is
+    ``1 + SEARCH_RECENCY_WEIGHT / (1 + age_days / SEARCH_RECENCY_HALF_LIFE_DAYS)``.
+    It is ``1 + SEARCH_RECENCY_WEIGHT`` for a memory edited just now and
+    approaches 1 for a very old one, so age alone can change a score by at
+    most that ratio.
+
     Args:
         memory: Loaded memory row.
         base: Reciprocal-rank-fusion score.
@@ -107,7 +146,8 @@ def rerank_score(
         if updated.tzinfo is None:
             updated = updated.replace(tzinfo=UTC)
         age_days = max(0.0, (now - updated).total_seconds() / 86400.0)
-        score *= 1.0 / (1.0 + age_days / settings.search_recency_half_life_days)
+        freshness = 1.0 / (1.0 + age_days / settings.search_recency_half_life_days)
+        score *= 1.0 + settings.search_recency_weight * freshness
     if path_hint and memory.path_hint and path_hint.casefold() in memory.path_hint.casefold():
         score *= 1.0 + settings.search_path_boost
     if memory.kind == MemoryKind.guide:
@@ -174,7 +214,10 @@ async def hybrid_search(
     qvec = await embedder.aembed(query)
     limit = settings.resolve_search_limit(limit)
     offset = max(0, int(offset))
-    fetch_n = max((limit + offset) * 3, 30)
+    # One candidate window for every page of a query. A window that grows
+    # with ``offset`` changes the fused scores between page requests, and an
+    # unbounded ``offset`` would fetch an unbounded number of rows.
+    fetch_n = max(settings.result_max_limit * 3, 30)
     now = datetime.now(UTC)
 
     base_filters = []
@@ -190,7 +233,15 @@ async def hybrid_search(
         if clause is not None:
             base_filters.append(clause)
     if path_hint:
-        base_filters.append(Memory.path_hint.ilike(f"%{escape_ilike(path_hint)}%", escape="\\"))
+        # Match the path tag or a mention in the body, as ``about_path``
+        # does. ``rerank_score`` boosts the rows whose tag matches.
+        path_pat = f"%{escape_ilike(path_hint)}%"
+        base_filters.append(
+            or_(
+                Memory.path_hint.ilike(path_pat, escape="\\"),
+                Memory.body.ilike(path_pat, escape="\\"),
+            )
+        )
     if repo_hint:
         base_filters.append(Memory.repo_hint.ilike(f"%{escape_ilike(repo_hint)}%", escape="\\"))
     if tags:
@@ -199,29 +250,38 @@ async def hybrid_search(
         else:
             base_filters.append(Memory.tags.contains(tags))
 
-    # Vector branch
-    vec_stmt = select(Memory.id).where(Memory.embedding.is_not(None), *base_filters)
-    vec_stmt = vec_stmt.order_by(Memory.embedding.cosine_distance(qvec)).limit(fetch_n)
+    # Vector branch. pgvector cosine_distance = 1 - cosine_similarity, and the
+    # embeddings are unit vectors, so "similarity >= floor" is
+    # "distance <= 1 - floor". Keyword matches are not subject to this floor.
+    distance = Memory.embedding.cosine_distance(qvec)
+    vec_stmt = (
+        select(Memory.id)
+        .where(Memory.embedding.is_not(None), *base_filters)
+        .where(distance <= 1.0 - settings.search_min_similarity)
+        .order_by(distance)
+        .limit(fetch_n)
+    )
     vec_ids = [row[0] for row in (await session.execute(vec_stmt)).all()]
 
-    # FTS branch
+    # Keyword branch: three steps, the first that returns rows wins. An
+    # empty query has no keyword leg, as before.
     fts_ids: list[uuid.UUID] = []
-    if query.strip():
+    stripped = query.strip()
+    if stripped:
+        # 1. Every term. websearch_to_tsquery joins unquoted terms with AND.
+        all_terms = func.websearch_to_tsquery("english", query)
         fts_stmt = (
             select(Memory.id)
             .where(*base_filters)
-            .where(Memory.search_tsv.op("@@")(func.websearch_to_tsquery("english", query)))
-            .order_by(
-                func.ts_rank_cd(
-                    Memory.search_tsv, func.websearch_to_tsquery("english", query)
-                ).desc()
-            )
+            .where(Memory.search_tsv.op("@@")(all_terms))
+            .order_by(func.ts_rank_cd(Memory.search_tsv, all_terms).desc(), Memory.id)
             .limit(fetch_n)
         )
         fts_ids = [row[0] for row in (await session.execute(fts_stmt)).all()]
-        # Fallback ILIKE if FTS empty
-        if not fts_ids:
-            like = f"%{escape_ilike(query.strip())}%"
+        # 2. The whole query as a substring of title or body. This is a
+        #    sequential scan, so it runs for short queries only.
+        if not fts_ids and len(stripped) <= SUBSTRING_FALLBACK_MAX_CHARS:
+            like = f"%{escape_ilike(stripped)}%"
             like_stmt = (
                 select(Memory.id)
                 .where(*base_filters)
@@ -231,10 +291,25 @@ async def hybrid_search(
                         Memory.body.ilike(like, escape="\\"),
                     )
                 )
-                .order_by(Memory.updated_at.desc())
+                .order_by(Memory.updated_at.desc(), Memory.id)
                 .limit(fetch_n)
             )
             fts_ids = [row[0] for row in (await session.execute(like_stmt)).all()]
+        # 3. Any term, among the vector candidates only. They passed the
+        #    filters and the similarity floor already, so a shared common
+        #    word cannot bring in an unrelated memory, and the statement
+        #    reads at most ``fetch_n`` rows by primary key.
+        or_text = any_term_query(query)
+        if not fts_ids and vec_ids and or_text:
+            any_term = func.websearch_to_tsquery("english", or_text)
+            any_stmt = (
+                select(Memory.id)
+                .where(Memory.id.in_(vec_ids))
+                .where(Memory.search_tsv.op("@@")(any_term))
+                .order_by(func.ts_rank_cd(Memory.search_tsv, any_term).desc(), Memory.id)
+                .limit(fetch_n)
+            )
+            fts_ids = [row[0] for row in (await session.execute(any_stmt)).all()]
 
     fused = rrf_fuse([vec_ids, fts_ids], k=settings.rrf_k)
     if not fused:
@@ -242,12 +317,19 @@ async def hybrid_search(
 
     rrf_map = dict(fused)
     rows = (
-        (await session.execute(select(Memory).where(Memory.id.in_(list(rrf_map))))).scalars().all()
+        (
+            await session.execute(
+                select(Memory).options(defer(Memory.embedding)).where(Memory.id.in_(list(rrf_map)))
+            )
+        )
+        .scalars()
+        .all()
     )
+    # Sort by score, then by id, so equal scores have one fixed order and
+    # every page is a slice of the same list.
     scored = sorted(
         ((m, rerank_score(m, rrf_map[m.id], now=now, path_hint=path_hint)) for m in rows),
-        key=lambda pair: pair[1],
-        reverse=True,
+        key=lambda pair: (-pair[1], str(pair[0].id)),
     )[offset : offset + limit]
     digests: list[Digest] = []
     for m, score in scored:

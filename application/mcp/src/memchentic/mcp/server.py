@@ -208,9 +208,17 @@ async def find(
 @mcp.tool
 @_reported
 async def open(
-    id: str | None = None, title: str | None = None, space_id: str | None = None
+    id: str | None = None,
+    title: str | None = None,
+    space_id: str | None = None,
+    kind: str | None = None,
 ) -> dict[str, Any]:
-    """Load full entry by id or title (case-insensitive). Ambiguous titles error."""
+    """Load one full entry or guide by id, or by exact title (case-insensitive).
+
+    A title lookup prefers live memories over past-due ones. When a title
+    still matches more than one memory the call fails; pass ``kind``
+    ("entry" or "guide"), ``space_id`` or the ``id``.
+    """
     principal = require_principal()
     session = require_session()
     memory = await memory_service.open_memory(
@@ -219,6 +227,7 @@ async def open(
         memory_id=parse_uuid(id, "id"),
         title=title,
         space_id=parse_uuid(space_id, "space_id"),
+        kind=kind,
         recall=True,
     )
     if not memory:
@@ -448,12 +457,20 @@ async def trace(id: str) -> dict[str, Any]:
 
 @mcp.tool
 @_reported
-async def overlap_report(space_id: str | None = None, limit: int | None = None) -> dict[str, Any]:
+async def overlap_report(
+    space_id: str | None = None,
+    limit: int | None = None,
+    include_expired: bool = False,
+) -> dict[str, Any]:
     """Read-only: near-duplicate pairs, conflicts, soon-to-expire."""
     principal = require_principal()
     session = require_session()
     return await memory_service.overlap_report(
-        session, principal, space_id=parse_uuid(space_id, "space_id"), limit=limit
+        session,
+        principal,
+        space_id=parse_uuid(space_id, "space_id"),
+        limit=limit,
+        include_expired=include_expired,
     )
 
 

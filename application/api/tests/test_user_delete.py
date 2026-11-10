@@ -98,11 +98,10 @@ def test_cannot_delete_env_admin(client: TestClient) -> None:
     assert "admin account" in refuse.json()["detail"].lower()
 
 
-@pytest.mark.skipif(not ADMIN_KEY, reason="ADMIN_API_KEY unset")
-def test_idp_bound_roster_member_not_deletable(client: TestClient) -> None:
+def test_manual_member_of_bound_roster_is_deletable(client: TestClient) -> None:
+    """A hand-added roster member is not IdP-owned: binding does not pin it."""
     _token, user_id, _email = _register(client)
     admin = {"Authorization": f"Bearer {ADMIN_KEY}"}
-    principal = type("P", (), {"is_admin": True})()
 
     try:
         bind = client.put(
@@ -114,25 +113,19 @@ def test_idp_bound_roster_member_not_deletable(client: TestClient) -> None:
 
         listed = client.get("/api/users", headers=admin)
         row = next(u for u in listed.json() if u["id"] == user_id)
-        assert row["deletable"] is False
-        assert "IdP-bound" in (row.get("delete_blocked_reason") or "")
+        assert row["deletable"] is True
+        assert row["delete_blocked_reason"] is None
 
-        refuse = client.delete(f"/api/users/{user_id}", headers=admin)
-        assert refuse.status_code == 403
+        deleted = client.delete(f"/api/users/{user_id}", headers=admin)
+        assert deleted.status_code == 200, deleted.text
     finally:
         client.put(
             "/api/auth-groups/users/idp-bind",
             headers=admin,
             json={"idp_group_id": None, "idp_group_name": None},
         )
-        del principal
 
-    after = client.get(f"/api/users/{user_id}", headers=admin)
-    assert after.status_code == 200
-    assert after.json()["deletable"] is True
-
-    deleted = client.delete(f"/api/users/{user_id}", headers=admin)
-    assert deleted.status_code == 200, deleted.text
+    assert client.get(f"/api/users/{user_id}", headers=admin).status_code == 404
 
 
 @pytest.mark.asyncio

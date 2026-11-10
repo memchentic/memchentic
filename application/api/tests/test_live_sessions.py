@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import os
 import uuid
 
 from fastapi.testclient import TestClient
 
+ADMIN_KEY = os.environ.get("ADMIN_API_KEY", "")
 GUI = {"X-Memchentic-Client": "gui"}
 
 
@@ -87,3 +89,42 @@ def test_refresh_is_rate_limited_per_client(client: TestClient) -> None:
     assert statuses[119] == 401
     assert statuses[120] == 429
     assert statuses[-1] == 429
+
+
+def test_admin_revoke_credentials_ends_sessions_and_keys(client: TestClient) -> None:
+    """Revoke ends stored credentials and keeps the account."""
+    email = f"rv{uuid.uuid4().hex[:10]}@example.com"
+    password = f"pw-{uuid.uuid4().hex}"
+    client.post("/api/auth/register", json={"email": email, "password": password})
+    login = client.post(
+        "/api/auth/login", json={"email": email, "password": password, "remember": True}
+    )
+    assert login.status_code == 200, login.text
+    user_id = login.json()["id"]
+    cookie = login.cookies["memchentic_session"]
+    bearer = {"Authorization": f"Bearer {login.json()['access_token']}"}
+    client.cookies.clear()
+    api_key = client.post("/api/api-keys", headers=bearer, json={"name": "t"}).json()["key"]
+    key_auth = {"Authorization": f"Bearer {api_key}"}
+    assert client.get("/api/me", headers=key_auth).status_code == 200
+    admin = {"Authorization": f"Bearer {ADMIN_KEY}"}
+    url = f"/api/users/{user_id}/revoke-credentials"
+
+    assert client.post(url, headers=bearer).status_code == 403
+    assert _refresh(client, cookie).status_code == 200
+    client.cookies.clear()
+
+    done = client.post(url, headers=admin)
+    assert done.status_code == 200, done.text
+    assert done.json()["status"] == "ok"
+    assert done.json()["access_tokens_expire_within_seconds"] > 0
+
+    assert _refresh(client, cookie).status_code == 401
+    assert client.get("/api/me", headers=key_auth).status_code == 401
+    unknown = client.post(f"/api/users/{uuid.uuid4()}/revoke-credentials", headers=admin)
+    assert unknown.status_code == 404
+
+    # The account is kept: the user can sign in again.
+    again = client.post("/api/auth/login", json={"email": email, "password": password})
+    assert again.status_code == 200
+    client.cookies.clear()

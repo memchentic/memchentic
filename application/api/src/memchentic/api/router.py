@@ -35,6 +35,7 @@ from memchentic.auth.users import (
     lookup_user_by_email,
     providers_for,
     register_internal_user,
+    revoke_user_credentials,
     user_delete_eligibility,
 )
 from memchentic.db.session import get_session_factory, set_rls_context
@@ -614,6 +615,22 @@ async def remove_user(
         raise HTTPException(403, "Admin required")
     await delete_user(session, actor_user_id=principal.user_id, target_user_id=user_id)
     return {"status": "ok"}
+
+
+@api_router.post("/users/{user_id}/revoke-credentials")
+async def revoke_user_credentials_route(
+    user_id: uuid.UUID,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(db_session),
+) -> dict[str, Any]:
+    """Admin: end a user's sessions, refresh tokens and API keys; keep the account."""
+    if not principal.is_admin:
+        raise HTTPException(403, "Admin required")
+    await revoke_user_credentials(session, principal, user_id)
+    return {
+        "status": "ok",
+        "access_tokens_expire_within_seconds": ACCESS_TOKEN_SECONDS,
+    }
 
 
 @api_router.get("/spaces")

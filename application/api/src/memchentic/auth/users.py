@@ -14,6 +14,12 @@ from memchentic.auth import passwords
 from memchentic.auth.passwords import hash_password, password_needs_rehash, verify_password
 from memchentic.db.session import set_rls_context
 from memchentic.models.entities import Space, SpaceKind, SpaceMember, User, UserIdentity
+from memchentic.services.errors import (
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+    ValidationError,
+)
 from memchentic.services.spaces import ensure_personal_space
 
 if TYPE_CHECKING:
@@ -46,7 +52,7 @@ def normalize_email(email: str) -> str:
     """
     email_n = (email or "").strip().casefold()
     if not email_n:
-        raise ValueError("Email is required")
+        raise ValidationError("Email is required")
     return email_n
 
 
@@ -143,7 +149,7 @@ async def _ensure_identity(
     )
     row = existing.scalar_one_or_none()
     if row and row.user_id != user.id:
-        raise ValueError("Provider binding already belongs to another user")
+        raise ConflictError("Provider binding already belongs to another user")
     if row:
         return
 
@@ -561,12 +567,12 @@ async def delete_user(
     settings = settings or get_settings()
     user = await get_user(session, target_user_id)
     if not user:
-        raise LookupError("User not found")
+        raise NotFoundError("User not found")
     ok, reason = await user_delete_eligibility(
         session, actor_user_id=actor_user_id, target=user, settings=settings
     )
     if not ok:
-        raise PermissionError(reason or "Cannot delete user")
+        raise ForbiddenError(reason or "Cannot delete user")
 
     # Reassign groups this user owns so remaining members keep a manager.
     if actor_user_id is not None:

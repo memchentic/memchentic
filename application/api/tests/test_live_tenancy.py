@@ -254,7 +254,7 @@ def test_user_detail_acl_edges(client: TestClient) -> None:
     auth_a = {"Authorization": f"Bearer {token_a}"}
     auth_b = {"Authorization": f"Bearer {token_b}"}
 
-    assert client.get("/api/users/not-a-uuid", headers=auth_a).status_code == 404
+    assert client.get("/api/users/not-a-uuid", headers=auth_a).status_code == 422
     assert client.get(f"/api/users/{ghost}", headers=auth_a).status_code == 404
 
     both = client.post(
@@ -338,7 +338,7 @@ def test_write_target_resolution(client: TestClient) -> None:
         client.patch(
             "/api/me", headers=auth, json={"default_shared_space_id": other["id"]}
         ).status_code
-        == 403
+        == 404
     )
 
 
@@ -579,7 +579,7 @@ def test_roster_rules_and_no_email_enumeration(client: TestClient) -> None:
     outsider_unknown = client.post(
         members, headers=auth[token_c], json={"email": f"nobody{uuid.uuid4().hex}@example.com"}
     )
-    assert outsider_known.status_code == outsider_unknown.status_code == 403
+    assert outsider_known.status_code == outsider_unknown.status_code == 404
 
     for email in (email_b, email_c):
         assert client.post(members, headers=auth[token_a], json={"email": email}).status_code == 200

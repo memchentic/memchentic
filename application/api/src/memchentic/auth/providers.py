@@ -153,15 +153,26 @@ def _pin_discovery_origins(issuer: str, data: dict[str, Any]) -> None:
             raise ValueError(f"OIDC discovery {key} origin mismatch with issuer")
 
 
+class JwksUnavailableError(RuntimeError):
+    """The IdP JWKS document could not be fetched or parsed (not a token problem)."""
+
+
 async def _fetch_jwks(jwks_uri: str) -> dict[str, Any]:
     now = time.monotonic()
     cached = _jwks_cache.get(jwks_uri)
     if cached and cached[0] > now:
         return cached[1]
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.get(jwks_uri)
-        resp.raise_for_status()
-        data = resp.json()
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(jwks_uri)
+            resp.raise_for_status()
+            data = resp.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        # Transport failure, non-2xx status or a non-JSON body: an outage on
+        # the IdP side, never a reason to call the caller's token invalid.
+        raise JwksUnavailableError(f"JWKS fetch failed: {type(exc).__name__}") from exc
+    if not isinstance(data, dict):
+        raise JwksUnavailableError("JWKS document is not a JSON object")
     _jwks_cache[jwks_uri] = (now + _JWKS_TTL_SECONDS, data)
     return data
 
@@ -187,11 +198,14 @@ async def fetch_jwks_and_decode(token: str, settings: Settings) -> dict:
     if not issuer:
         raise ValueError("Issuer is required for external JWT verification")
 
-    jwks = await _fetch_jwks(resolve_jwks_uri(settings))
+    # Parse the header before any network call: a bearer value that is not a
+    # JWT, or has no kid, is rejected without contacting the IdP.
     header = jwt.get_unverified_header(token)
     kid = header.get("kid")
     if not kid:
         raise ValueError("JWT header missing kid")
+
+    jwks = await _fetch_jwks(resolve_jwks_uri(settings))
 
     key = next((k for k in jwks.get("keys", []) if k.get("kid") == kid), None)
     if key is None:

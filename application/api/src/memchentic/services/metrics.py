@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from memchentic.auth.principal import Principal
 from memchentic.models.entities import Memory, MemoryKind, Space, User
+from memchentic.services.errors import ValidationError
 from memchentic.services.memories import accessible_space_ids
 
 MetricRange = Literal["7d", "30d", "90d", "all"]
@@ -39,12 +40,12 @@ def _parse_range(raw: str | None) -> MetricRange:
         A supported range token (default ``30d``).
 
     Raises:
-        ValueError: When ``raw`` is set but not a known token.
+        ValidationError: When ``raw`` is set but not a known token.
     """
     if raw is None or raw == "":
         return "30d"
     if raw not in _RANGE_DAYS:
-        raise ValueError(f"Invalid range {raw!r}; expected 7d, 30d, 90d, or all")
+        raise ValidationError(f"Invalid range {raw!r}; expected 7d, 30d, 90d, or all")
     return raw  # type: ignore[return-value]
 
 
@@ -93,7 +94,7 @@ async def memory_metrics(
         Metrics payload for the GUI.
 
     Raises:
-        ValueError: Invalid ``range_key`` or ``space_scope``.
+        ValidationError: Invalid ``range_key`` or ``space_scope``.
     """
     range_token = _parse_range(range_key)
     space_ids = await accessible_space_ids(session, principal, space_id, space_scope=space_scope)

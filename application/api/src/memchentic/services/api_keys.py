@@ -10,6 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from memchentic.auth.principal import Principal, hash_api_key
 from memchentic.db.session import commit_with_rls
 from memchentic.models.entities import ApiKey
+from memchentic.services import limits
+from memchentic.services.errors import ForbiddenError, NotFoundError
+from memchentic.services.validation import check_text
 
 
 def _require_target(principal: Principal, user_id: uuid.UUID | None) -> uuid.UUID:
@@ -23,14 +26,14 @@ def _require_target(principal: Principal, user_id: uuid.UUID | None) -> uuid.UUI
         The user id to act on.
 
     Raises:
-        PermissionError: Missing target, or a non-admin targeting someone else.
+        ForbiddenError: Missing target, or a non-admin targeting someone else.
     """
     if user_id is not None:
         if not principal.is_admin and principal.user_id != user_id:
-            raise PermissionError("Cannot manage keys for other users")
+            raise ForbiddenError("Cannot manage keys for other users")
         return user_id
     if not principal.user_id:
-        raise PermissionError("user_id required")
+        raise ForbiddenError("user_id required")
     return principal.user_id
 
 
@@ -52,6 +55,7 @@ async def create_api_key(
     Returns:
         The persisted key row and the raw secret (shown once).
     """
+    name = check_text(name.strip(), "name", limits.API_KEY_NAME_MAX)
     target = _require_target(principal, user_id)
     raw = f"mc_{secrets.token_urlsafe(32)}"
     key = ApiKey(
@@ -86,7 +90,7 @@ async def list_api_keys(
     if not principal.is_admin:
         target = principal.user_id
         if user_id is not None and user_id != target:
-            raise PermissionError("Cannot list other users' keys")
+            raise ForbiddenError("Cannot list other users' keys")
         if not target:
             return []
         result = await session.execute(
@@ -128,6 +132,7 @@ async def cycle_api_key(
     Returns:
         The new key row and raw secret (shown once).
     """
+    name = check_text(name.strip(), "name", limits.API_KEY_NAME_MAX)
     target = _require_target(principal, user_id)
     now = datetime.now(UTC)
     result = await session.execute(
@@ -159,13 +164,13 @@ async def revoke_api_key(session: AsyncSession, principal: Principal, key_id: uu
         key_id: Key to revoke.
 
     Raises:
-        PermissionError: Missing key, or a non-admin revoking someone else's.
+        NotFoundError: Missing key, or a non-admin revoking someone else's.
     """
     result = await session.execute(select(ApiKey).where(ApiKey.id == key_id))
     key = result.scalar_one_or_none()
     if not key:
-        raise PermissionError("Key not found")
+        raise NotFoundError("Key not found")
     if not principal.is_admin and key.user_id != principal.user_id:
-        raise PermissionError("Cannot revoke other users' keys")
+        raise NotFoundError("Key not found")
     key.revoked_at = datetime.now(UTC)
     await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)

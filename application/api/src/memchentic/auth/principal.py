@@ -5,6 +5,7 @@ import hmac
 from dataclasses import dataclass
 from uuid import UUID
 
+import jwt
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -72,10 +73,16 @@ async def resolve_bearer(
         )
 
     try:
+        # Local import on purpose: tests patch
+        # ``memchentic.auth.tokens.verify_access_token``.
         from memchentic.auth.tokens import verify_access_token
 
         payload = await verify_access_token(session, token, settings)
-    except Exception:  # noqa: BLE001 - any verify failure means an unauthenticated caller
+    except (jwt.PyJWTError, ValueError):
+        # The token is malformed, expired, wrongly signed or fails a claim
+        # check. Database and JWKS transport errors are not caught: they
+        # propagate, the request fails with a 5xx, and the caller keeps its
+        # token.
         return None
 
     sub = payload.get("sub")

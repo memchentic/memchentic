@@ -5,14 +5,14 @@ import json
 import time
 import uuid
 from collections.abc import AsyncIterator
-from datetime import datetime
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, StringConstraints, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from memchentic.auth.passwords import password_too_long
 from memchentic.auth.principal import Principal, check_admin_password, resolve_bearer
 from memchentic.auth.rate_limit import check_rate_limit
 from memchentic.auth.sessions import (
@@ -43,10 +43,13 @@ from memchentic.models.entities import User
 from memchentic.services import api_keys as api_key_service
 from memchentic.services import auth_groups as auth_group_service
 from memchentic.services import instance_settings as instance_settings_service
+from memchentic.services import limits
 from memchentic.services import memories as memory_service
 from memchentic.services import metrics as metrics_service
 from memchentic.services import spaces as space_service
-from memchentic.services.spaces import SpaceResolveError, Visibility
+from memchentic.services.errors import ValidationError
+from memchentic.services.spaces import Visibility
+from memchentic.services.validation import parse_datetime, parse_uuid, require_uuid
 from memchentic.settings import get_settings
 
 api_router = APIRouter(prefix="/api")
@@ -54,90 +57,106 @@ api_router = APIRouter(prefix="/api")
 GUI_CLIENT_HEADER = "X-Memchentic-Client"
 
 
+TitleStr = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=limits.TITLE_MAX)
+]
+BodyStr = Annotated[str, StringConstraints(min_length=1, max_length=limits.BODY_MAX)]
+TagStr = Annotated[str, StringConstraints(max_length=limits.TAG_MAX_LEN)]
+TagList = Annotated[list[TagStr], Field(max_length=limits.TAG_MAX_COUNT)]
+IdStr = Annotated[str, StringConstraints(max_length=limits.ID_TEXT_MAX)]
+DatetimeStr = Annotated[str, StringConstraints(max_length=limits.DATETIME_TEXT_MAX)]
+TypeStr = Annotated[str, StringConstraints(max_length=limits.TYPE_TEXT_MAX)]
+SpaceNameStr = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=limits.SPACE_NAME_MAX)
+]
+KeyNameStr = Annotated[
+    str, StringConstraints(strip_whitespace=True, max_length=limits.API_KEY_NAME_MAX)
+]
+EmailText = Annotated[str, StringConstraints(max_length=limits.EMAIL_MAX)]
+TtlDays = Annotated[int, Field(ge=0, le=limits.TTL_DAYS_MAX)]
+
+
 class RegisterIn(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8)
-    display_name: str | None = None
+    display_name: str | None = Field(default=None, max_length=limits.DISPLAY_NAME_MAX)
+
+    @field_validator("password")
+    @classmethod
+    def _password_fits_bcrypt(cls, value: str) -> str:
+        if password_too_long(value):
+            raise ValueError("password must be at most 72 bytes when encoded as UTF-8")
+        return value
 
 
 class LoginIn(BaseModel):
-    email: str
-    password: str
+    email: EmailText
+    password: str = Field(max_length=limits.PASSWORD_INPUT_MAX)
     remember: bool = False
 
 
 class RememberIn(BaseModel):
-    title: str
-    body: str
-    type: str = "note"
-    tags: list[str] = []
-    space_id: str | None = None
-    group: str | None = None
+    title: TitleStr
+    body: BodyStr
+    type: TypeStr = "note"
+    tags: TagList = Field(default_factory=list)
+    space_id: IdStr | None = None
+    group: str | None = Field(default=None, max_length=limits.SPACE_NAME_MAX)
     visibility: Visibility | None = None
-    expires_at: str | None = None
-    ttl_days: int | None = Field(default=None, ge=0)
+    expires_at: DatetimeStr | None = None
+    ttl_days: TtlDays | None = None
     permanent: bool = False
-    path_hint: str | None = None
-    repo_hint: str | None = None
+    path_hint: str | None = Field(default=None, max_length=limits.PATH_HINT_MAX)
+    repo_hint: str | None = Field(default=None, max_length=limits.REPO_HINT_MAX)
     force: bool = False
 
 
 class MeIn(BaseModel):
-    default_shared_space_id: str | None = None
+    default_shared_space_id: IdStr | None = None
 
 
 class ReviseIn(BaseModel):
-    title: str | None = None
-    body: str | None = None
-    type: str | None = None
-    tags: list[str] | None = None
-    expires_at: str | None = None
+    title: TitleStr | None = None
+    body: BodyStr | None = None
+    type: TypeStr | None = None
+    tags: TagList | None = None
+    expires_at: DatetimeStr | None = None
     clear_expiry: bool = False
-    path_hint: str | None = None
-    repo_hint: str | None = None
+    path_hint: str | None = Field(default=None, max_length=limits.PATH_HINT_MAX)
+    repo_hint: str | None = Field(default=None, max_length=limits.REPO_HINT_MAX)
 
 
 class GroupIn(BaseModel):
-    name: str
+    name: SpaceNameStr
 
 
 class MemberIn(BaseModel):
-    user_id: str | None = None
-    email: str | None = None
+    user_id: IdStr | None = None
+    email: EmailText | None = None
 
 
 class ApiKeyIn(BaseModel):
-    name: str = "default"
-    user_id: str | None = None
+    name: KeyNameStr = "default"
+    user_id: IdStr | None = None
 
 
 class ApiKeyCycleIn(BaseModel):
     """Replace a user's active keys with one new random secret."""
 
-    user_id: str | None = None
-    name: str = "default"
+    user_id: IdStr | None = None
+    name: KeyNameStr = "default"
 
 
 class GuideIn(BaseModel):
-    title: str
-    body: str
-    tags: list[str] = []
-    space_id: str | None = None
-    group: str | None = None
+    title: TitleStr
+    body: BodyStr
+    tags: TagList = Field(default_factory=list)
+    space_id: IdStr | None = None
+    group: str | None = Field(default=None, max_length=limits.SPACE_NAME_MAX)
     visibility: Visibility | None = None
-    expires_at: str | None = None
-    ttl_days: int | None = Field(default=None, ge=0)
+    expires_at: DatetimeStr | None = None
+    ttl_days: TtlDays | None = None
     permanent: bool = False
-
-
-def _uid(value: str | None) -> uuid.UUID | None:
-    return uuid.UUID(value) if value else None
-
-
-def _dt(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    return datetime.fromisoformat(value)
 
 
 async def _memory_out(session: AsyncSession, memory: Any, *, full: bool = False) -> dict:
@@ -466,12 +485,9 @@ async def patch_me(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict[str, Any]:
-    try:
-        await space_service.set_default_shared_space(
-            session, principal, _uid(body.default_shared_space_id)
-        )
-    except PermissionError as exc:
-        raise HTTPException(403, str(exc)) from exc
+    await space_service.set_default_shared_space(
+        session, principal, parse_uuid(body.default_shared_space_id, "default_shared_space_id")
+    )
     return await _me_payload(session, principal)
 
 
@@ -528,7 +544,7 @@ async def users(
 
 @api_router.get("/users/lookup")
 async def users_lookup(
-    email: str = Query(..., min_length=1),
+    email: str = Query(..., min_length=1, max_length=limits.EMAIL_MAX),
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict:
@@ -548,21 +564,17 @@ async def users_lookup(
 
 @api_router.get("/users/{user_id}")
 async def show_user(
-    user_id: str,
+    user_id: uuid.UUID,
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict:
     """Directory detail plus groups the caller is allowed to know about."""
-    try:
-        uid = uuid.UUID(user_id)
-    except ValueError as exc:
-        raise HTTPException(404, "Not found") from exc
-    if not await directory_user_visible(session, principal, uid):
+    if not await directory_user_visible(session, principal, user_id):
         raise HTTPException(404, "Not found")
-    user = await get_user(session, uid)
+    user = await get_user(session, user_id)
     if not user:
         raise HTTPException(404, "Not found")
-    groups = await space_service.list_visible_groups_for_user(session, principal, uid)
+    groups = await space_service.list_visible_groups_for_user(session, principal, user_id)
     out: dict[str, Any] = {
         "id": str(user.id),
         "email": user.email,
@@ -582,23 +594,14 @@ async def show_user(
 
 @api_router.delete("/users/{user_id}")
 async def remove_user(
-    user_id: str,
+    user_id: uuid.UUID,
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict[str, str]:
     """Admin hard-delete of a directory user (IdP-bound roster members refused)."""
     if not principal.is_admin:
         raise HTTPException(403, "Admin required")
-    try:
-        uid = uuid.UUID(user_id)
-    except ValueError as exc:
-        raise HTTPException(404, "Not found") from exc
-    try:
-        await delete_user(session, actor_user_id=principal.user_id, target_user_id=uid)
-    except LookupError as exc:
-        raise HTTPException(404, "Not found") from exc
-    except PermissionError as exc:
-        raise HTTPException(403, str(exc)) from exc
+    await delete_user(session, actor_user_id=principal.user_id, target_user_id=user_id)
     return {"status": "ok"}
 
 
@@ -623,11 +626,11 @@ async def create_space(
 
 @api_router.get("/spaces/{space_id}")
 async def show_space(
-    space_id: str,
+    space_id: uuid.UUID,
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict:
-    space = await space_service.show_space(session, principal, uuid.UUID(space_id))
+    space = await space_service.show_space(session, principal, space_id)
     if not space:
         raise HTTPException(404, "Not found")
     return {
@@ -648,66 +651,54 @@ async def show_space(
 
 @api_router.patch("/spaces/{space_id}")
 async def rename_space(
-    space_id: str,
+    space_id: uuid.UUID,
     body: GroupIn,
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict:
-    try:
-        space = await space_service.rename_space(session, principal, uuid.UUID(space_id), body.name)
-    except PermissionError as exc:
-        raise HTTPException(403, str(exc)) from exc
+    space = await space_service.rename_space(session, principal, space_id, body.name)
     return {"id": str(space.id), "name": space.name, "kind": space.kind.value}
 
 
 @api_router.delete("/spaces/{space_id}")
 async def delete_space(
-    space_id: str,
+    space_id: uuid.UUID,
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict:
-    try:
-        await space_service.delete_space(session, principal, uuid.UUID(space_id))
-    except PermissionError as exc:
-        raise HTTPException(403, str(exc)) from exc
+    await space_service.delete_space(session, principal, space_id)
     return {"status": "ok"}
 
 
 @api_router.post("/spaces/{space_id}/members")
 async def add_member(
-    space_id: str,
+    space_id: uuid.UUID,
     body: MemberIn,
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict:
-    sid = uuid.UUID(space_id)
-    await space_service.require_roster_manager(session, principal, sid)
+    await space_service.require_roster_manager(session, principal, space_id)
     if body.user_id:
-        target = uuid.UUID(body.user_id)
+        target = require_uuid(body.user_id, "user_id")
     elif body.email:
         user = await get_user_by_email(session, body.email)
         if not user:
             raise HTTPException(404, "No user with that email")
         target = user.id
     else:
-        raise HTTPException(400, "user_id or email required")
-    await space_service.add_member(session, principal, uuid.UUID(space_id), target)
+        raise ValidationError("user_id or email required")
+    await space_service.add_member(session, principal, space_id, target)
     return {"status": "ok", "user_id": str(target)}
 
 
 @api_router.delete("/spaces/{space_id}/members/{user_id}")
 async def remove_member(
-    space_id: str,
-    user_id: str,
+    space_id: uuid.UUID,
+    user_id: uuid.UUID,
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict:
-    try:
-        await space_service.remove_member(
-            session, principal, uuid.UUID(space_id), uuid.UUID(user_id)
-        )
-    except (PermissionError, ValueError) as exc:
-        raise HTTPException(403, str(exc)) from exc
+    await space_service.remove_member(session, principal, space_id, user_id)
     return {"status": "ok"}
 
 
@@ -720,86 +711,77 @@ def _parse_types(raw: str | None) -> list[str] | None:
 
 @api_router.get("/metrics/memories")
 async def memory_metrics(
-    range: str | None = None,
-    space_id: str | None = None,
-    space_scope: str | None = None,
+    range: str | None = Query(None, max_length=limits.TYPE_TEXT_MAX),
+    space_id: str | None = Query(None, max_length=limits.ID_TEXT_MAX),
+    space_scope: str | None = Query(None, max_length=limits.TYPE_TEXT_MAX),
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict:
     """ACL-scoped corpus aggregates for the Metrics page."""
-    try:
-        return await metrics_service.memory_metrics(
-            session,
-            principal,
-            range_key=range,
-            space_id=_uid(space_id),
-            space_scope=space_scope,
-        )
-    except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
+    return await metrics_service.memory_metrics(
+        session,
+        principal,
+        range_key=range,
+        space_id=parse_uuid(space_id, "space_id"),
+        space_scope=space_scope,
+    )
 
 
 @api_router.get("/memories")
 async def browse_memories(
-    space_id: str | None = None,
-    space_scope: str | None = None,
-    kind: str | None = None,
-    type: str | None = None,
-    types: str | None = None,
+    space_id: str | None = Query(None, max_length=limits.ID_TEXT_MAX),
+    space_scope: str | None = Query(None, max_length=limits.TYPE_TEXT_MAX),
+    kind: str | None = Query(None, max_length=limits.TYPE_TEXT_MAX),
+    type: str | None = Query(None, max_length=limits.TYPE_TEXT_MAX),
+    types: str | None = Query(None, max_length=limits.TYPES_QUERY_MAX),
     limit: int | None = None,
-    offset: int = 0,
+    offset: int = Query(0, ge=0, le=limits.OFFSET_MAX),
     include_expired: bool = False,
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> list[dict]:
-    try:
-        rows = await memory_service.browse(
-            session,
-            principal,
-            space_id=_uid(space_id),
-            space_scope=space_scope,
-            kind=kind,
-            entry_type=type,
-            types=_parse_types(types),
-            limit=limit,
-            offset=offset,
-            include_expired=include_expired,
-        )
-    except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
+    rows = await memory_service.browse(
+        session,
+        principal,
+        space_id=parse_uuid(space_id, "space_id"),
+        space_scope=space_scope,
+        kind=kind,
+        entry_type=type,
+        types=_parse_types(types),
+        limit=limit,
+        offset=offset,
+        include_expired=include_expired,
+    )
     return await _memories_out(session, rows)
 
 
 @api_router.get("/memories/search")
 async def search_memories(
-    q: str,
-    space_id: str | None = None,
-    space_scope: str | None = None,
-    type: str | None = None,
-    types: str | None = None,
-    kind: str | None = None,
+    q: str = Query(..., max_length=limits.QUERY_MAX),
+    space_id: str | None = Query(None, max_length=limits.ID_TEXT_MAX),
+    space_scope: str | None = Query(None, max_length=limits.TYPE_TEXT_MAX),
+    type: str | None = Query(None, max_length=limits.TYPE_TEXT_MAX),
+    types: str | None = Query(None, max_length=limits.TYPES_QUERY_MAX),
+    kind: str | None = Query(None, max_length=limits.TYPE_TEXT_MAX),
     limit: int | None = None,
-    offset: int = 0,
+    offset: int = Query(0, ge=0, le=limits.OFFSET_MAX),
     include_expired: bool = False,
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> list[dict]:
-    try:
-        digests = await memory_service.search(
-            session,
-            principal,
-            query=q,
-            space_id=_uid(space_id),
-            space_scope=space_scope,
-            kind=kind,
-            entry_type=type,
-            types=_parse_types(types),
-            limit=limit,
-            offset=offset,
-            include_expired=include_expired,
-        )
-    except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
+    digests = await memory_service.search(
+        session,
+        principal,
+        query=q,
+        space_id=parse_uuid(space_id, "space_id"),
+        space_scope=space_scope,
+        kind=kind,
+        entry_type=type,
+        types=_parse_types(types),
+        limit=limit,
+        offset=offset,
+        include_expired=include_expired,
+    )
     return await _digests_out(session, digests)
 
 
@@ -809,42 +791,33 @@ async def create_memory(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict:
-    try:
-        memory = await memory_service.remember(
-            session,
-            principal,
-            title=body.title,
-            body=body.body,
-            entry_type=body.type,
-            tags=body.tags,
-            space_id=_uid(body.space_id),
-            group=body.group,
-            visibility=body.visibility,
-            expires_at=_dt(body.expires_at),
-            ttl_days=body.ttl_days,
-            permanent=body.permanent,
-            path_hint=body.path_hint,
-            repo_hint=body.repo_hint,
-            force=body.force,
-        )
-    except SpaceResolveError as exc:
-        raise HTTPException(422, str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(409, str(exc)) from exc
-    except PermissionError as exc:
-        raise HTTPException(403, str(exc)) from exc
+    memory = await memory_service.remember(
+        session,
+        principal,
+        title=body.title,
+        body=body.body,
+        entry_type=body.type,
+        tags=body.tags,
+        space_id=parse_uuid(body.space_id, "space_id"),
+        group=body.group,
+        visibility=body.visibility,
+        expires_at=parse_datetime(body.expires_at, "expires_at"),
+        ttl_days=body.ttl_days,
+        permanent=body.permanent,
+        path_hint=body.path_hint,
+        repo_hint=body.repo_hint,
+        force=body.force,
+    )
     return await _memory_out(session, memory, full=True)
 
 
 @api_router.get("/memories/{memory_id}")
 async def get_memory(
-    memory_id: str,
+    memory_id: uuid.UUID,
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict:
-    memory = await memory_service.open_memory(
-        session, principal, memory_id=uuid.UUID(memory_id), recall=True
-    )
+    memory = await memory_service.open_memory(session, principal, memory_id=memory_id, recall=True)
     if not memory:
         raise HTTPException(404, "Not found")
     return await _memory_out(session, memory, full=True)
@@ -852,40 +825,34 @@ async def get_memory(
 
 @api_router.patch("/memories/{memory_id}")
 async def patch_memory(
-    memory_id: str,
+    memory_id: uuid.UUID,
     body: ReviseIn,
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict:
-    try:
-        memory = await memory_service.revise(
-            session,
-            principal,
-            uuid.UUID(memory_id),
-            title=body.title,
-            body=body.body,
-            entry_type=body.type,
-            tags=body.tags,
-            expires_at=_dt(body.expires_at),
-            clear_expiry=body.clear_expiry,
-            path_hint=body.path_hint,
-            repo_hint=body.repo_hint,
-        )
-    except PermissionError as exc:
-        raise HTTPException(403, str(exc)) from exc
+    memory = await memory_service.revise(
+        session,
+        principal,
+        memory_id,
+        title=body.title,
+        body=body.body,
+        entry_type=body.type,
+        tags=body.tags,
+        expires_at=parse_datetime(body.expires_at, "expires_at"),
+        clear_expiry=body.clear_expiry,
+        path_hint=body.path_hint,
+        repo_hint=body.repo_hint,
+    )
     return await _memory_out(session, memory, full=True)
 
 
 @api_router.delete("/memories/{memory_id}")
 async def delete_memory(
-    memory_id: str,
+    memory_id: uuid.UUID,
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict:
-    try:
-        await memory_service.forget(session, principal, uuid.UUID(memory_id))
-    except PermissionError as exc:
-        raise HTTPException(403, str(exc)) from exc
+    await memory_service.forget(session, principal, memory_id)
     return {"status": "deleted"}
 
 
@@ -895,24 +862,19 @@ async def create_guide(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict:
-    try:
-        memory = await memory_service.guide_write(
-            session,
-            principal,
-            title=body.title,
-            body=body.body,
-            tags=body.tags,
-            space_id=_uid(body.space_id),
-            group=body.group,
-            visibility=body.visibility,
-            expires_at=_dt(body.expires_at),
-            ttl_days=body.ttl_days,
-            permanent=body.permanent,
-        )
-    except SpaceResolveError as exc:
-        raise HTTPException(422, str(exc)) from exc
-    except PermissionError as exc:
-        raise HTTPException(403, str(exc)) from exc
+    memory = await memory_service.guide_write(
+        session,
+        principal,
+        title=body.title,
+        body=body.body,
+        tags=body.tags,
+        space_id=parse_uuid(body.space_id, "space_id"),
+        group=body.group,
+        visibility=body.visibility,
+        expires_at=parse_datetime(body.expires_at, "expires_at"),
+        ttl_days=body.ttl_days,
+        permanent=body.permanent,
+    )
     return await _memory_out(session, memory, full=True)
 
 
@@ -922,10 +884,7 @@ async def list_keys(
     session: AsyncSession = Depends(db_session),
 ) -> list[dict]:
     """List active keys: own for users, all accounts for admins."""
-    try:
-        keys = await api_key_service.list_api_keys(session, principal)
-    except PermissionError as exc:
-        raise HTTPException(403, str(exc)) from exc
+    keys = await api_key_service.list_api_keys(session, principal)
     return [
         {
             "id": str(k.id),
@@ -944,12 +903,9 @@ async def create_key(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict:
-    try:
-        key, raw = await api_key_service.create_api_key(
-            session, principal, name=body.name, user_id=_uid(body.user_id)
-        )
-    except PermissionError as exc:
-        raise HTTPException(403, str(exc)) from exc
+    key, raw = await api_key_service.create_api_key(
+        session, principal, name=body.name, user_id=parse_uuid(body.user_id, "user_id")
+    )
     return {
         "id": str(key.id),
         "name": key.name,
@@ -966,12 +922,9 @@ async def cycle_key(
     session: AsyncSession = Depends(db_session),
 ) -> dict:
     """Revoke the target user's active keys and issue one new random secret."""
-    try:
-        key, raw = await api_key_service.cycle_api_key(
-            session, principal, user_id=_uid(body.user_id), name=body.name
-        )
-    except PermissionError as exc:
-        raise HTTPException(403, str(exc)) from exc
+    key, raw = await api_key_service.cycle_api_key(
+        session, principal, user_id=parse_uuid(body.user_id, "user_id"), name=body.name
+    )
     return {
         "id": str(key.id),
         "name": key.name,
@@ -984,24 +937,21 @@ async def cycle_key(
 
 @api_router.delete("/api-keys/{key_id}")
 async def revoke_key(
-    key_id: str,
+    key_id: uuid.UUID,
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict:
-    try:
-        await api_key_service.revoke_api_key(session, principal, uuid.UUID(key_id))
-    except PermissionError as exc:
-        raise HTTPException(403, str(exc)) from exc
+    await api_key_service.revoke_api_key(session, principal, key_id)
     return {"status": "revoked"}
 
 
 class AuthGroupMemberIn(BaseModel):
-    user_id: str
+    user_id: IdStr
 
 
 class AuthGroupIdpBindIn(BaseModel):
-    idp_group_id: str | None = None
-    idp_group_name: str | None = None
+    idp_group_id: str | None = Field(default=None, max_length=limits.IDP_GROUP_MAX)
+    idp_group_name: str | None = Field(default=None, max_length=limits.IDP_GROUP_MAX)
 
 
 class RegistrationSettingIn(BaseModel):
@@ -1026,12 +976,7 @@ async def put_registration_setting(
     session: AsyncSession = Depends(db_session),
 ) -> dict[str, bool]:
     """Admin: enable or disable public self-registration."""
-    try:
-        enabled = await instance_settings_service.set_register_enabled(
-            session, principal, body.enabled
-        )
-    except PermissionError as exc:
-        raise HTTPException(403, str(exc)) from exc
+    enabled = await instance_settings_service.set_register_enabled(session, principal, body.enabled)
     return {"enabled": enabled}
 
 
@@ -1040,10 +985,7 @@ async def list_auth_groups(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> list[dict[str, Any]]:
-    try:
-        return await auth_group_service.list_groups(session, principal)
-    except PermissionError as exc:
-        raise HTTPException(403, str(exc)) from exc
+    return await auth_group_service.list_groups(session, principal)
 
 
 @api_router.get("/auth-groups/idp-groups")
@@ -1070,12 +1012,7 @@ async def get_auth_group_idp_bind(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict[str, Any]:
-    try:
-        return await auth_group_service.get_idp_bind(session, principal, slug)
-    except PermissionError as exc:
-        raise HTTPException(403, str(exc)) from exc
-    except LookupError as exc:
-        raise HTTPException(404, str(exc)) from exc
+    return await auth_group_service.get_idp_bind(session, principal, slug)
 
 
 @api_router.put("/auth-groups/{slug}/idp-bind")
@@ -1085,18 +1022,13 @@ async def put_auth_group_idp_bind(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict[str, Any]:
-    try:
-        return await auth_group_service.set_idp_bind(
-            session,
-            principal,
-            slug,
-            idp_group_id=body.idp_group_id,
-            idp_group_name=body.idp_group_name,
-        )
-    except PermissionError as exc:
-        raise HTTPException(403, str(exc)) from exc
-    except LookupError as exc:
-        raise HTTPException(404, str(exc)) from exc
+    return await auth_group_service.set_idp_bind(
+        session,
+        principal,
+        slug,
+        idp_group_id=body.idp_group_id,
+        idp_group_name=body.idp_group_name,
+    )
 
 
 @api_router.get("/auth-groups/{slug}/members")
@@ -1105,12 +1037,7 @@ async def list_auth_group_members(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> list[dict[str, Any]]:
-    try:
-        return await auth_group_service.list_members(session, principal, slug)
-    except PermissionError as exc:
-        raise HTTPException(403, str(exc)) from exc
-    except LookupError as exc:
-        raise HTTPException(404, str(exc)) from exc
+    return await auth_group_service.list_members(session, principal, slug)
 
 
 @api_router.post("/auth-groups/{slug}/members")
@@ -1120,31 +1047,17 @@ async def add_auth_group_member(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict[str, Any]:
-    try:
-        return await auth_group_service.add_member(
-            session, principal, slug, uuid.UUID(body.user_id)
-        )
-    except PermissionError as exc:
-        raise HTTPException(403, str(exc)) from exc
-    except LookupError as exc:
-        raise HTTPException(404, str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
+    return await auth_group_service.add_member(
+        session, principal, slug, require_uuid(body.user_id, "user_id")
+    )
 
 
 @api_router.delete("/auth-groups/{slug}/members/{user_id}")
 async def remove_auth_group_member(
     slug: str,
-    user_id: str,
+    user_id: uuid.UUID,
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict[str, str]:
-    try:
-        await auth_group_service.remove_member(session, principal, slug, uuid.UUID(user_id))
-    except PermissionError as exc:
-        raise HTTPException(403, str(exc)) from exc
-    except LookupError as exc:
-        raise HTTPException(404, str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
+    await auth_group_service.remove_member(session, principal, slug, user_id)
     return {"status": "removed"}

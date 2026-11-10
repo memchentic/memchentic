@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any, get_args
 
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -144,3 +146,89 @@ def test_search_types_include_guides(client: TestClient) -> None:
     assert guides
     assert all(row["kind"] == "guide" for row in guides)
     assert all(row.get("space_id") and "space" not in row for row in guides)
+
+
+def _tool_result(client: TestClient, token: str, name: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Call an MCP tool and return the raw result (``isError`` is set on a refused call)."""
+    resp = client.post(
+        "/mcp",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json, text/event-stream",
+        },
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": args},
+        },
+    )
+    resp.raise_for_status()
+    body = resp.json()
+    return body.get("result") or {"isError": True, "error": body.get("error")}
+
+
+def test_closed_set_parameters_are_validated(client: TestClient) -> None:
+    """A bad kind or type is refused, never silently ignored or stored."""
+    token, _me = _user(client)
+    auth = {"Authorization": f"Bearer {token}"}
+    marker = uuid.uuid4().hex[:8]
+    entry = client.post(
+        "/api/memories",
+        headers=auth,
+        json={"title": f"e {marker}", "body": f"entry {marker}", "type": "fact", "force": True},
+    ).json()
+    guide = client.post(
+        "/api/guides", headers=auth, json={"title": f"g {marker}", "body": f"guide {marker}"}
+    ).json()
+
+    # browse: a misspelled kind is refused on both surfaces; the right one filters.
+    assert _tool_result(client, token, "browse", {"kind": "guides"}).get("isError") is True
+    typo = client.get("/api/memories", headers=auth, params={"kind": "guides"})
+    assert typo.status_code in {400, 422}
+    guides = client.get("/api/memories", headers=auth, params={"kind": "guide"}).json()
+    assert {row["kind"] for row in guides} == {"guide"}
+
+    # find is entries-only.
+    refused_find = _tool_result(
+        client, token, "find", {"query": f"g {marker} guide", "type": "guide"}
+    )
+    assert refused_find.get("isError") is True
+
+    # revise: a guide has no entry type, and the refused call changes nothing.
+    refused = _tool_result(
+        client, token, "revise", {"id": guide["id"], "type": "fact", "title": "changed"}
+    )
+    assert refused.get("isError") is True
+    patched = client.patch(f"/api/memories/{guide['id']}", headers=auth, json={"type": "fact"})
+    assert patched.status_code in {400, 422}
+    after = client.get(f"/api/memories/{guide['id']}", headers=auth).json()
+    assert after["type"] is None
+    assert after["title"] == f"g {marker}"
+
+    # An entry can still change its type.
+    ok = client.patch(f"/api/memories/{entry['id']}", headers=auth, json={"type": "decision"})
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["type"] == "decision"
+
+
+def test_service_refuses_unknown_kind_and_guide_type() -> None:
+    """The shared service refuses closed-set typos for REST and MCP alike."""
+    from memchentic.services.errors import ValidationError
+    from memchentic.services.memories import resolve_type_tokens
+
+    with pytest.raises(ValidationError, match="kind must be"):
+        resolve_type_tokens(kind="guides")
+    with pytest.raises(ValidationError, match="type must be one of"):
+        resolve_type_tokens(kind="entry", entry_type="guide")
+    assert resolve_type_tokens(kind="") is None
+    assert resolve_type_tokens(types=["note", "guide"]) == ["note", "guide"]
+
+
+def test_type_and_kind_names_match_the_enums() -> None:
+    """The Literal aliases used in tool schemas list exactly the enum values."""
+    from memchentic.models.entities import EntryType, MemoryKind
+    from memchentic.services.memories import EntryTypeName, MemoryKindName
+
+    assert set(get_args(EntryTypeName)) == {e.value for e in EntryType}
+    assert set(get_args(MemoryKindName)) == {k.value for k in MemoryKind}

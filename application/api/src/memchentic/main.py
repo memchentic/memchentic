@@ -20,12 +20,14 @@ from alembic import command
 from memchentic.api.oauth import router as oauth_router
 from memchentic.api.router import api_router
 from memchentic.api.security_headers import SecurityHeadersMiddleware
+from memchentic.auth.passwords import require_bcrypt_length
 from memchentic.auth.principal import resolve_bearer
-from memchentic.auth.tokens import ensure_signing_key
+from memchentic.auth.tokens import verify_signing_key
 from memchentic.db.session import get_session_factory, init_db, set_rls_context
 from memchentic.events import start_memory_listener, stop_memory_listener
 from memchentic.mcp.context import principal_var, session_var
 from memchentic.mcp.server import create_mcp
+from memchentic.services.errors import ServiceError, http_error
 from memchentic.settings import Settings, get_settings
 
 logger = logging.getLogger("memchentic")
@@ -182,6 +184,7 @@ def create_app() -> FastAPI:
         if problems:
             details = "; ".join(f"{name} {reason}" for name, reason in problems.items())
             raise RuntimeError(f"Refusing to start: {details}")
+        require_bcrypt_length(settings.admin_password, "ADMIN_PASSWORD")
         await init_db()
         await asyncio.to_thread(_run_migrations)
         logger.info("Migrations applied")
@@ -203,7 +206,9 @@ def create_app() -> FastAPI:
             if backfilled:
                 logger.info("Backfilled created_by on %s memories to space owner", backfilled)
             if settings.oauth_provider == "internal":
-                await ensure_signing_key(session)
+                # Refuse to start when ENCRYPTION_KEY cannot decrypt the stored
+                # signing key; otherwise every sign-in fails at request time.
+                await verify_signing_key(session, settings)
         from memchentic.embeddings import get_embedder
 
         # Fail closed before serving if MiniLM is missing (unless hash allowed).
@@ -235,31 +240,43 @@ def create_app() -> FastAPI:
     app.add_middleware(McpAuthMiddleware)
     app.add_middleware(SecurityHeadersMiddleware, hsts=settings.base_url.startswith("https://"))
 
+    @app.exception_handler(ServiceError)
+    async def service_error(_request: Request, exc: ServiceError) -> JSONResponse:
+        """Map a typed service error to its HTTP status and JSON body.
+
+        Args:
+            _request: Incoming request (unused).
+            exc: The error raised by a service.
+
+        Returns:
+            JSON response with ``detail`` and ``code``.
+        """
+        status_code, body = http_error(exc)
+        return JSONResponse(body, status_code=status_code)
+
     @app.exception_handler(PermissionError)
-    async def permission_denied(_request: Request, exc: PermissionError) -> JSONResponse:
-        """Map service-layer ACL denials to HTTP 403.
+    async def untyped_permission_denied(_request: Request, exc: PermissionError) -> JSONResponse:
+        """Map a bare ``PermissionError`` to HTTP 403 (safety net for untyped denials).
+
+        An operating-system permission error (``errno`` set) is a server fault
+        and is re-raised.
 
         Args:
             _request: Incoming request (unused).
-            exc: The denial raised by a service.
+            exc: The denial.
 
         Returns:
-            JSON 403 response with the denial message.
+            JSON 403 response.
+
+        Raises:
+            PermissionError: When the error carries an ``errno``.
         """
-        return JSONResponse({"detail": str(exc) or "Forbidden"}, status_code=403)
-
-    @app.exception_handler(ValueError)
-    async def bad_value(_request: Request, exc: ValueError) -> JSONResponse:
-        """Map service-layer validation errors (bad ids, near-duplicates) to HTTP 400.
-
-        Args:
-            _request: Incoming request (unused).
-            exc: The validation error raised by a service.
-
-        Returns:
-            JSON 400 response with the error message.
-        """
-        return JSONResponse({"detail": str(exc) or "Bad request"}, status_code=400)
+        if exc.errno is not None:
+            raise exc
+        logger.warning("Untyped PermissionError reached the HTTP layer: %s", exc)
+        return JSONResponse(
+            {"detail": str(exc) or "Forbidden", "code": "forbidden"}, status_code=403
+        )
 
     app.include_router(oauth_router)
     app.include_router(api_router)
@@ -308,7 +325,11 @@ def create_app() -> FastAPI:
             """
             if full_path.startswith(("api/", "mcp", "oauth/", ".well-known/")):
                 return JSONResponse({"detail": "Not found"}, status_code=404)
-            candidate = (dist / full_path).resolve()
+            try:
+                candidate = (dist / full_path).resolve()
+            except ValueError:
+                # A NUL character in the path cannot name a file.
+                return JSONResponse({"detail": "Not found"}, status_code=404)
             if full_path and candidate.is_file() and dist.resolve() in candidate.parents:
                 return FileResponse(candidate)
             return FileResponse(index)

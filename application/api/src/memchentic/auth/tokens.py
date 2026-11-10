@@ -50,11 +50,20 @@ def decrypt_private_key(private_pem: str, settings: Settings) -> rsa.RSAPrivateK
         The RSA signing key.
 
     Raises:
-        ValueError: When ``ENCRYPTION_KEY`` does not match the stored key.
+        RuntimeError: When ``ENCRYPTION_KEY`` does not decrypt the stored key.
+            This is a server configuration fault, never a client error.
+        TypeError: When the stored key is not an RSA key.
     """
-    key = serialization.load_pem_private_key(
-        private_pem.encode(), password=settings.encryption_key.encode()
-    )
+    try:
+        key = serialization.load_pem_private_key(
+            private_pem.encode(), password=settings.encryption_key.encode()
+        )
+    except (ValueError, TypeError) as exc:
+        raise RuntimeError(
+            "ENCRYPTION_KEY does not decrypt the signing key stored in "
+            "internal_signing_keys. Restore the ENCRYPTION_KEY that was in use "
+            "when the key was created."
+        ) from exc
     if not isinstance(key, rsa.RSAPrivateKey):
         raise TypeError("Stored signing key is not RSA")
     return key
@@ -113,6 +122,23 @@ async def ensure_signing_key(session: AsyncSession) -> InternalSigningKey:
     await session.commit()
     await session.refresh(key)
     return key
+
+
+async def verify_signing_key(session: AsyncSession, settings: Settings | None = None) -> None:
+    """Fail fast when ``ENCRYPTION_KEY`` cannot decrypt the active signing key.
+
+    Creates the signing key when none exists (same as ``ensure_signing_key``).
+
+    Args:
+        session: Database session.
+        settings: Settings override; defaults to the cached settings.
+
+    Raises:
+        RuntimeError: When ``ENCRYPTION_KEY`` does not decrypt the stored key.
+    """
+    settings = settings or get_settings()
+    key = await ensure_signing_key(session)
+    decrypt_private_key(key.private_pem, settings)
 
 
 def _b64url_uint(val: int) -> str:
@@ -186,6 +212,10 @@ async def _verify_session_token(session: AsyncSession, token: str, settings: Set
         InvalidTokenError: When the key is unknown or the token is invalid.
     """
     kid = jwt.get_unverified_header(token).get("kid")
+    if not isinstance(kid, str) or not kid or len(kid) > 64 or "\x00" in kid:
+        # Reject before the value reaches the database: a missing, oversize
+        # or NUL-carrying kid is a bad token, not a database fault.
+        raise InvalidTokenError("Unknown signing key")
     result = await session.execute(
         select(InternalSigningKey).where(
             InternalSigningKey.kid == kid, InternalSigningKey.active.is_(True)
@@ -230,7 +260,7 @@ async def verify_access_token(
 
     try:
         return await _verify_session_token(session, token, settings)
-    except Exception:
+    except InvalidTokenError:
         # Fall through to IdP JWKS when external; re-raise for internal-only.
         if settings.oauth_provider == "internal":
             raise

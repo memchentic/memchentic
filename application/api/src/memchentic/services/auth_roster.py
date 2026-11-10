@@ -147,16 +147,16 @@ async def add_member_raw(
 
 
 async def _track_env_admin(session: AsyncSession, administrators: AuthGroup, admin: User) -> None:
-    """Demote the previous break-glass account when ``ADMIN_EMAIL`` changed.
+    """Demote the previous ``ADMIN_EMAIL`` account when ``ADMIN_EMAIL`` changed.
 
-    The id of the current break-glass account is stored in
+    The id of the current ``ADMIN_EMAIL`` account is stored in
     ``instance_settings``. When the stored id differs from ``admin.id``:
 
     * the previous account loses its Administrators row (the Users backfill
       in ``ensure_auth_groups`` places it in Users when that roster is
       unbound);
     * sessions, refresh tokens and API keys that ``admin`` held before it
-      became the break-glass account are revoked, so credentials issued to
+      became the ``ADMIN_EMAIL`` account are revoked, so credentials issued to
       an ordinary account do not become administrator credentials.
 
     Nothing is revoked on the first run (no stored id yet).
@@ -167,7 +167,7 @@ async def _track_env_admin(session: AsyncSession, administrators: AuthGroup, adm
             of the admin user; that context can see the admin's own
             ``api_keys`` rows.
         administrators: The Administrators auth group.
-        admin: Current break-glass user.
+        admin: Current ``ADMIN_EMAIL`` user.
     """
     row = await session.get(InstanceSetting, KEY_ENV_ADMIN_USER_ID)
     previous: uuid.UUID | None = None

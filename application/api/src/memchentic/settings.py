@@ -50,16 +50,6 @@ class Settings(BaseSettings):
     admin_password: str = Field(default="change-me", alias="ADMIN_PASSWORD")
     admin_api_key: str = Field(default="change-me-admin-api-key", alias="ADMIN_API_KEY")
 
-    @property
-    def admin_contact_email(self) -> str:
-        """Canonical email on the break-glass admin principal (login identity).
-
-        ``ADMIN_EMAIL`` is required in real deployments. Empty values fall back
-        to ``admin@example.com`` so local placeholders still boot.
-        """
-        email = self.admin_email.strip()
-        return email or "admin@example.com"
-
     postgres_user: str = Field(default="memchentic", alias="POSTGRES_USER")
     postgres_password: str = Field(default="memchentic", alias="POSTGRES_PASSWORD")
     # Runtime role (NOSUPERUSER, NOBYPASSRLS). Migrations use POSTGRES_USER.
@@ -77,54 +67,6 @@ class Settings(BaseSettings):
     # Encrypts secrets the app itself stores in Postgres (internal JWT signing keys).
     # Changing it makes existing signing keys unreadable; rotate by re-keying the rows.
     encryption_key: str = Field(default="", alias="ENCRYPTION_KEY")
-
-    @property
-    def postgres_ssl(self) -> str | ssl.SSLContext:
-        """Return the asyncpg ``ssl`` argument for ``POSTGRES_SSLMODE``.
-
-        ``verify-ca`` / ``verify-full`` build a context trusting
-        ``POSTGRES_SSLROOTCERT`` (system CAs when empty); ``verify-full`` also
-        checks the server hostname. Other modes pass through as libpq names.
-        """
-        mode = self.postgres_sslmode
-        if mode not in ("verify-ca", "verify-full"):
-            return mode
-        ctx = ssl.create_default_context(cafile=self.postgres_sslrootcert.strip() or None)
-        ctx.check_hostname = mode == "verify-full"
-        return ctx
-
-    def _dsn(self, *, user: str, password: str) -> str:
-        host = self.postgres_hostname.strip()
-        # ``quote(..., safe="")`` percent-encodes every reserved character and
-        # writes a space as ``%20``. Every consumer of this URL decodes with
-        # ``unquote`` (SQLAlchemy and the event listener), which reverses
-        # ``%20`` but not the ``+`` that ``quote_plus`` would write.
-        db = quote(self.postgres_db, safe="")
-        return (
-            f"postgresql+asyncpg://{quote(user, safe='')}:{quote(password, safe='')}"
-            f"@{host}:{self.postgres_port}/{db}"
-        )
-
-    @property
-    def migration_database_url(self) -> str:
-        """Owner/superuser DSN for Alembic (table owner; can CREATE ROLE)."""
-        return self._dsn(user=self.postgres_user, password=self.postgres_password)
-
-    @property
-    def database_url(self) -> str:
-        """Runtime DSN as the non-superuser app role (RLS enforced).
-
-        Raises:
-            RuntimeError: ``POSTGRES_APP_PASSWORD`` is empty. The owner role
-                bypasses RLS, so there is no fallback to the owner URL.
-        """
-        app_user = self.postgres_app_user.strip() or "memchentic_app"
-        app_password = self.postgres_app_password
-        if not app_password:
-            raise RuntimeError(
-                "POSTGRES_APP_PASSWORD is empty; refusing to use the owner role at runtime"
-            )
-        return self._dsn(user=app_user, password=app_password)
 
     near_dup_threshold: float = Field(default=0.92, alias="NEAR_DUP_THRESHOLD")
     rrf_k: int = Field(default=60, alias="RRF_K")
@@ -157,16 +99,6 @@ class Settings(BaseSettings):
     search_default_limit: int = Field(default=20, ge=1, alias="SEARCH_DEFAULT_LIMIT")
     browse_default_limit: int = Field(default=50, ge=1, alias="BROWSE_DEFAULT_LIMIT")
     result_max_limit: int = Field(default=100, ge=1, alias="RESULT_MAX_LIMIT")
-
-    def resolve_search_limit(self, limit: int | None) -> int:
-        """Clamp a search/find limit, substituting the env default when omitted."""
-        raw = self.search_default_limit if limit is None else limit
-        return max(1, min(int(raw), self.result_max_limit))
-
-    def resolve_browse_limit(self, limit: int | None) -> int:
-        """Clamp a browse/list limit, substituting the env default when omitted."""
-        raw = self.browse_default_limit if limit is None else limit
-        return max(1, min(int(raw), self.result_max_limit))
 
     cors_origins: str = Field(
         default="http://localhost:5173,http://127.0.0.1:5173", alias="CORS_ORIGINS"
@@ -204,6 +136,52 @@ class Settings(BaseSettings):
         return value
 
     @property
+    def admin_contact_email(self) -> str:
+        """Canonical email on the ``ADMIN_EMAIL`` administrator (login identity).
+
+        ``ADMIN_EMAIL`` is required in real deployments. Empty values fall back
+        to ``admin@example.com`` so local placeholders still boot.
+        """
+        email = self.admin_email.strip()
+        return email or "admin@example.com"
+
+    @property
+    def postgres_ssl(self) -> str | ssl.SSLContext:
+        """Return the asyncpg ``ssl`` argument for ``POSTGRES_SSLMODE``.
+
+        ``verify-ca`` / ``verify-full`` build a context trusting
+        ``POSTGRES_SSLROOTCERT`` (system CAs when empty); ``verify-full`` also
+        checks the server hostname. Other modes pass through as libpq names.
+        """
+        mode = self.postgres_sslmode
+        if mode not in ("verify-ca", "verify-full"):
+            return mode
+        ctx = ssl.create_default_context(cafile=self.postgres_sslrootcert.strip() or None)
+        ctx.check_hostname = mode == "verify-full"
+        return ctx
+
+    @property
+    def migration_database_url(self) -> str:
+        """Owner/superuser DSN for Alembic (table owner; can CREATE ROLE)."""
+        return self._dsn(user=self.postgres_user, password=self.postgres_password)
+
+    @property
+    def database_url(self) -> str:
+        """Runtime DSN as the non-superuser app role (RLS enforced).
+
+        Raises:
+            RuntimeError: ``POSTGRES_APP_PASSWORD`` is empty. The owner role
+                bypasses RLS, so there is no fallback to the owner URL.
+        """
+        app_user = self.postgres_app_user.strip() or "memchentic_app"
+        app_password = self.postgres_app_password
+        if not app_password:
+            raise RuntimeError(
+                "POSTGRES_APP_PASSWORD is empty; refusing to use the owner role at runtime"
+            )
+        return self._dsn(user=app_user, password=app_password)
+
+    @property
     def cookie_secure(self) -> bool:
         """Whether the session cookie carries ``Secure``.
 
@@ -215,8 +193,64 @@ class Settings(BaseSettings):
         host = (urlparse(self.base_url).hostname or "").casefold()
         return host not in {"localhost", "127.0.0.1", "::1"}
 
+    @property
+    def cors_origin_list(self) -> list[str]:
+        """Return ``CORS_ORIGINS`` as a list."""
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def mcp_resource_url(self) -> str:
+        """Return the public URL of the MCP endpoint."""
+        return f"{self.base_url.rstrip('/')}/mcp"
+
+    @property
+    def session_issuer(self) -> str:
+        """Issuer claim for memchentic-signed GUI/session access tokens.
+
+        Always this instance's ``BASE_URL``, even when ``OAUTH_PROVIDER`` is an
+        external IdP (IdP JWTs keep their own issuer via JWKS verification).
+        """
+        return self.base_url.rstrip("/")
+
+    @property
+    def effective_audience(self) -> str:
+        """Return ``OAUTH_AUDIENCE``, else the MCP resource URL."""
+        return self.oauth_audience or self.mcp_resource_url
+
+    @property
+    def web_oauth_enabled(self) -> bool:
+        """True when an external IdP client is configured for browser Sign-in."""
+        return self.oauth_provider != "internal" and bool(self.oauth_client_id.strip())
+
+    @property
+    def web_oauth_redirect_uri(self) -> str:
+        """Fixed browser OAuth callback registered on the IdP."""
+        return f"{self.base_url.rstrip('/')}/api/auth/oauth/callback"
+
+    def _dsn(self, *, user: str, password: str) -> str:
+        host = self.postgres_hostname.strip()
+        # ``quote(..., safe="")`` percent-encodes every reserved character and
+        # writes a space as ``%20``. Every consumer of this URL decodes with
+        # ``unquote`` (SQLAlchemy and the event listener), which reverses
+        # ``%20`` but not the ``+`` that ``quote_plus`` would write.
+        db = quote(self.postgres_db, safe="")
+        return (
+            f"postgresql+asyncpg://{quote(user, safe='')}:{quote(password, safe='')}"
+            f"@{host}:{self.postgres_port}/{db}"
+        )
+
+    def resolve_search_limit(self, limit: int | None) -> int:
+        """Clamp a search/find limit, substituting the env default when omitted."""
+        raw = self.search_default_limit if limit is None else limit
+        return max(1, min(int(raw), self.result_max_limit))
+
+    def resolve_browse_limit(self, limit: int | None) -> int:
+        """Clamp a browse/list limit, substituting the env default when omitted."""
+        raw = self.browse_default_limit if limit is None else limit
+        return max(1, min(int(raw), self.result_max_limit))
+
     def insecure_secret_problems(self, *, for_migration: bool = False) -> dict[str, str]:
-        """Explain which break-glass secrets are unusable and why.
+        """Explain which bootstrap secrets are unusable and why.
 
         Args:
             for_migration: True for the one-shot migration process, which
@@ -249,7 +283,7 @@ class Settings(BaseSettings):
         return problems
 
     def insecure_secret_names(self, *, for_migration: bool = False) -> list[str]:
-        """Name break-glass secrets that are empty, placeholders, or too short.
+        """Name bootstrap secrets that are empty, placeholders, or too short.
 
         Args:
             for_migration: Passed on to ``insecure_secret_problems``.
@@ -258,39 +292,6 @@ class Settings(BaseSettings):
             Env var names that must be changed before the process may start.
         """
         return list(self.insecure_secret_problems(for_migration=for_migration))
-
-    @property
-    def cors_origin_list(self) -> list[str]:
-        """Return ``CORS_ORIGINS`` as a list."""
-        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
-
-    @property
-    def mcp_resource_url(self) -> str:
-        """Return the public URL of the MCP endpoint."""
-        return f"{self.base_url.rstrip('/')}/mcp"
-
-    @property
-    def session_issuer(self) -> str:
-        """Issuer claim for memchentic-signed GUI/session access tokens.
-
-        Always this instance's ``BASE_URL``, even when ``OAUTH_PROVIDER`` is an
-        external IdP (IdP JWTs keep their own issuer via JWKS verification).
-        """
-        return self.base_url.rstrip("/")
-
-    @property
-    def effective_audience(self) -> str:
-        """Return ``OAUTH_AUDIENCE``, else the MCP resource URL."""
-        return self.oauth_audience or self.mcp_resource_url
-
-    @property
-    def web_oauth_enabled(self) -> bool:
-        """True when an external IdP client is configured for browser Sign-in."""
-        return self.oauth_provider != "internal" and bool(self.oauth_client_id.strip())
-
-    def web_oauth_redirect_uri(self) -> str:
-        """Fixed browser OAuth callback registered on the IdP."""
-        return f"{self.base_url.rstrip('/')}/api/auth/oauth/callback"
 
 
 @lru_cache

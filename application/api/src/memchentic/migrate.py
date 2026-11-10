@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from memchentic.db.migrate import run_migrations
 from memchentic.db.session import init_db
 from memchentic.settings import get_settings
 
@@ -23,16 +24,13 @@ async def migrate() -> None:
     Raises:
         RuntimeError: A required secret is empty, a placeholder, or too short.
     """
-    # Imported here: memchentic.main builds the FastAPI app when it is imported.
-    from memchentic.main import _run_migrations
-
     settings = get_settings()
     problems = settings.insecure_secret_problems(for_migration=True)
     if problems:
         details = "; ".join(f"{name} {reason}" for name, reason in problems.items())
         raise RuntimeError(f"Refusing to migrate: {details}")
     await init_db()
-    await asyncio.to_thread(_run_migrations)
+    await asyncio.to_thread(run_migrations)
     logger.info("Migrations applied")
 
 

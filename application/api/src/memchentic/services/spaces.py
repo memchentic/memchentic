@@ -79,8 +79,6 @@ async def list_member_spaces(session: AsyncSession, principal: Principal) -> lis
     Returns:
         The caller's personal space and groups, unarchived.
     """
-    if not principal.user_id:
-        return []
     result = await session.execute(
         select(Space)
         .join(SpaceMember, SpaceMember.space_id == Space.id)
@@ -114,8 +112,6 @@ async def create_group(session: AsyncSession, principal: Principal, *, name: str
         ForbiddenError: When the caller has no user id.
         ValidationError: On an invalid name.
     """
-    if not principal.user_id:
-        raise ForbiddenError("Authentication required")
     name = check_name(name, "name", limits.SPACE_NAME_MAX)
     owner_id = principal.user_id
     space_id = uuid.uuid4()
@@ -155,8 +151,6 @@ async def show_space(
         return None
     if principal.is_admin:
         return space
-    if not principal.user_id:
-        return None
     member_ids = {m.user_id for m in space.members if m.accepted_at is not None}
     if principal.user_id not in member_ids:
         return None
@@ -238,13 +232,13 @@ async def me_payload(
         the caller's memberships, and the pending invites (list or count).
     """
     spaces = await list_member_spaces(session, principal)
-    personal = await get_personal_space(session, principal.user_id) if principal.user_id else None
-    user = await session.get(User, principal.user_id) if principal.user_id else None
+    personal = await get_personal_space(session, principal.user_id)
+    user = await session.get(User, principal.user_id)
     default_shared = user.default_shared_space_id if user else None
     invites = await list_pending_invites(session, principal)
     payload: dict[str, Any] = {
         "default_shared_space_id": str(default_shared) if default_shared else None,
-        "id": str(principal.user_id) if principal.user_id else None,
+        "id": str(principal.user_id),
         "subject": principal.subject,
         "email": principal.email,
         "display_name": principal.display_name,
@@ -286,8 +280,6 @@ async def get_readable_space(
     """
     stmt = select(Space).where(Space.id == space_id)
     if not principal.is_admin:
-        if not principal.user_id:
-            return None
         stmt = stmt.join(SpaceMember, SpaceMember.space_id == Space.id).where(
             SpaceMember.user_id == principal.user_id,
             SpaceMember.accepted_at.is_not(None),
@@ -324,8 +316,6 @@ async def list_visible_groups_for_user(
             .order_by(Space.name.asc())
         )
         return list(result.scalars().unique())
-    if not principal.user_id:
-        return []
     target_m = aliased(SpaceMember)
     caller_m = aliased(SpaceMember)
     result = await session.execute(
@@ -349,7 +339,7 @@ def can_manage_group(space: Space, principal: Principal) -> bool:
     """Return True for an administrator or the group creator."""
     if principal.is_admin:
         return True
-    return bool(principal.user_id and space.created_by_user_id == principal.user_id)
+    return space.created_by_user_id == principal.user_id
 
 
 async def require_roster_manager(
@@ -438,8 +428,6 @@ async def accept_invite(session: AsyncSession, principal: Principal, space_id: u
         ForbiddenError: The caller is not authenticated.
         NotFoundError: The caller has no invite or membership in that group.
     """
-    if not principal.user_id:
-        raise ForbiddenError("Authentication required")
     result = await session.execute(
         select(SpaceMember).where(
             SpaceMember.space_id == space_id,
@@ -472,8 +460,6 @@ async def list_pending_invites(session: AsyncSession, principal: Principal) -> l
     Returns:
         One dict per pending invite: group id, group name, creator labels.
     """
-    if not principal.user_id:
-        return []
     creator = aliased(User)
     result = await session.execute(
         select(Space, creator)
@@ -517,7 +503,7 @@ async def remove_member(
         ForbiddenError: Caller may not manage the roster, or the target is
             the group creator.
     """
-    leaving_self = principal.user_id is not None and principal.user_id == user_id
+    leaving_self = principal.user_id == user_id
     space = await show_space(session, principal, space_id)
     if space is None and leaving_self:
         # Not a member yet: the caller may still delete their own pending row.
@@ -582,10 +568,10 @@ async def rename_space(
 
 
 def can_delete_group(space: Space, principal: Principal) -> bool:
-    """True when the caller owns the group (or is break-glass admin)."""
+    """True when the caller owns the group (or is an administrator)."""
     if space.kind != SpaceKind.group:
         return False
-    if principal.user_id and space.created_by_user_id == principal.user_id:
+    if space.created_by_user_id == principal.user_id:
         return True
     return bool(principal.is_admin)
 

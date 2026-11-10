@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import base64
-import hashlib
 import html
 import re
 import secrets
@@ -15,9 +13,18 @@ from urllib.parse import urlencode, urlparse
 import httpx
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from sqlalchemy import select, text, update
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from memchentic.auth.authorization_server import (
+    MAX_REDIRECT_URI_LEN,
+    OAuthRequestError,
+    TokenGrant,
+    issue_auth_code,
+    redeem_auth_code,
+    rotate_refresh_token,
+    validate_redirect_uri,
+)
 from memchentic.auth.principal import check_admin_password
 from memchentic.auth.providers import (
     authorization_server_metadata,
@@ -27,23 +34,17 @@ from memchentic.auth.rate_limit import check_rate_limit, client_ip
 from memchentic.auth.tokens import (
     ACCESS_TOKEN_SECONDS,
     ensure_signing_key,
-    hash_token,
-    issue_access_token,
     jwks,
-    new_opaque_token,
 )
 from memchentic.auth.users import authenticate_internal
 from memchentic.deps import db_session
-from memchentic.models.entities import AuthCode, AuthRefreshToken, OAuthClient
+from memchentic.models.entities import OAuthClient
 from memchentic.services.users import ensure_admin_user
 from memchentic.settings import get_settings
 
 router = APIRouter(tags=["oauth"])
 
 _OAUTH_CSRF_COOKIE = "memchentic_oauth_csrf"
-_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
-_SCHEME_NAME = re.compile(r"^[a-z][a-z0-9+.-]*$")
-_MAX_REDIRECT_URI_LEN = 1024  # auth_codes.redirect_uri is String(1024)
 _MAX_REDIRECT_URIS = 10
 _MAX_CLIENT_NAME_LEN = 255  # oauth_clients.name is String(255)
 _MAX_SCOPE_LEN = 512  # auth_codes.scope is String(512)
@@ -90,78 +91,6 @@ async def prune_stale_oauth_rows(session: AsyncSession, *, force: bool = False) 
         ),
         {"cutoff": wall - _UNUSED_CLIENT_RETENTION},
     )
-
-
-def validate_redirect_uri(uri: str) -> str:
-    """Validate a redirect URI for dynamic client registration.
-
-    Allows ``https://`` URLs without userinfo or fragment, and loopback
-    ``http://`` only for hosts in {127.0.0.1, localhost, [::1], ::1}.
-    Private-use schemes listed in ``OAUTH_NATIVE_REDIRECT_SCHEMES`` are
-    accepted for native clients.
-
-    Args:
-        uri: Candidate redirect URI string.
-
-    Returns:
-        The same URI when valid.
-
-    Raises:
-        HTTPException: 400 when the URI is empty, not a string, too long,
-            contains whitespace, control characters or a backslash, is
-            relative, or uses a disallowed scheme/host/userinfo/fragment.
-    """
-    if not uri or not isinstance(uri, str) or not uri.strip():
-        raise HTTPException(400, "Invalid redirect_uri: empty")
-    if len(uri) > _MAX_REDIRECT_URI_LEN:
-        raise HTTPException(
-            400, f"Invalid redirect_uri: longer than {_MAX_REDIRECT_URI_LEN} characters"
-        )
-    if any(ch.isspace() or ch == "\\" or ord(ch) < 0x20 or ord(ch) == 0x7F for ch in uri):
-        raise HTTPException(
-            400,
-            "Invalid redirect_uri: whitespace, control characters and backslashes are not allowed",
-        )
-    try:
-        parsed = urlparse(uri)
-    except ValueError as exc:
-        raise HTTPException(400, "Invalid redirect_uri: not a valid URL") from exc
-    scheme = (parsed.scheme or "").lower()
-    if not scheme:
-        raise HTTPException(400, "Invalid redirect_uri: relative URIs are not allowed")
-    if scheme in {"javascript", "data", "file"}:
-        raise HTTPException(400, f"Invalid redirect_uri: scheme {scheme!r} is not allowed")
-    if parsed.fragment:
-        raise HTTPException(400, "Invalid redirect_uri: fragment is not allowed")
-    if parsed.username is not None or parsed.password is not None:
-        raise HTTPException(400, "Invalid redirect_uri: userinfo is not allowed")
-    if scheme == "https":
-        if not parsed.hostname:
-            raise HTTPException(400, "Invalid redirect_uri: https host required")
-        return uri
-    if scheme == "http":
-        host = (parsed.hostname or "").lower()
-        if host not in _LOOPBACK_HOSTS:
-            raise HTTPException(
-                400,
-                "Invalid redirect_uri: http is only allowed for loopback "
-                "(127.0.0.1, localhost, ::1)",
-            )
-        return uri
-    native_schemes = {
-        name
-        for name in (
-            part.strip().lower() for part in get_settings().oauth_native_redirect_schemes.split(",")
-        )
-        if _SCHEME_NAME.match(name)
-    }
-    if scheme in native_schemes:
-        if not (parsed.netloc or parsed.path):
-            raise HTTPException(
-                400, "Invalid redirect_uri: a private-use URI needs a host or a path"
-            )
-        return uri
-    raise HTTPException(400, f"Invalid redirect_uri: scheme {scheme!r} is not allowed")
 
 
 # ``path`` is bound by the "/{path:path}" route variant and is not used.
@@ -223,7 +152,10 @@ async def dynamic_client_register(
         raise HTTPException(400, "redirect_uris must be a non-empty array of strings")
     if len(raw_uris) > _MAX_REDIRECT_URIS:
         raise HTTPException(400, f"redirect_uris: at most {_MAX_REDIRECT_URIS} entries")
-    validated = [validate_redirect_uri(u) for u in raw_uris]
+    try:
+        validated = [validate_redirect_uri(u) for u in raw_uris]
+    except OAuthRequestError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
     raw_name = body.get("client_name")
     if raw_name is not None and not isinstance(raw_name, str):
@@ -361,7 +293,7 @@ async def _require_registered_client(
     client = result.scalar_one_or_none()
     if (
         not client
-        or len(redirect_uri) > _MAX_REDIRECT_URI_LEN
+        or len(redirect_uri) > MAX_REDIRECT_URI_LEN
         or redirect_uri not in (client.redirect_uris or [])
     ):
         raise HTTPException(400, "Unknown client_id or unregistered redirect_uri")
@@ -439,7 +371,7 @@ async def authorize_post(
         session, client_id, redirect_uri, code_challenge, code_challenge_method
     )
     # Prefer a real DB user when email+password match. ensure_admin_user() syncs
-    # the ADMIN_EMAIL row with ADMIN_PASSWORD at startup, so the break-glass
+    # the ADMIN_EMAIL row with ADMIN_PASSWORD at startup, so the environment admin password
     # branch below is reached only if that row was changed after startup. It
     # binds to the re-ensured ADMIN_EMAIL user so tokens always carry a user id.
     user = await authenticate_internal(session, email=email, password=password)
@@ -461,45 +393,21 @@ async def authorize_post(
             client, fields, request=request, error="Invalid credentials", status_code=401
         )
 
-    code = new_opaque_token()
-    auth_code = AuthCode(
-        id=uuid.uuid4(),
-        code_hash=hash_token(code),
+    code = await issue_auth_code(
+        session,
         client_id=client_id,
         user_id=user_id,
         redirect_uri=redirect_uri,
         scope=scope,
-        code_challenge=code_challenge or None,
-        code_challenge_method=code_challenge_method or None,
-        expires_at=datetime.now(UTC) + timedelta(minutes=10),
+        code_challenge=code_challenge,
+        code_challenge_method=code_challenge_method,
     )
-    session.add(auth_code)
-    await session.commit()
 
     params = {"code": code}
     if state:
         params["state"] = state
     sep = "&" if "?" in redirect_uri else "?"
     return RedirectResponse(f"{redirect_uri}{sep}{urlencode(params)}", status_code=302)
-
-
-def _verify_pkce(code_verifier: str, challenge: str, method: str) -> bool:
-    if method != "S256":
-        return False
-    digest = hashlib.sha256(code_verifier.encode()).digest()
-    calc = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
-    return calc == challenge
-
-
-async def _revoke_refresh_family(session: AsyncSession, family_id: uuid.UUID) -> None:
-    await session.execute(
-        update(AuthRefreshToken)
-        .where(
-            AuthRefreshToken.family_id == family_id,
-            AuthRefreshToken.revoked_at.is_(None),
-        )
-        .values(revoked_at=datetime.now(UTC))
-    )
 
 
 _NO_STORE = {"Cache-Control": "no-store", "Pragma": "no-cache"}
@@ -522,6 +430,19 @@ def _token_error(error: str, description: str) -> JSONResponse:
     )
 
 
+def _token_response(grant: TokenGrant) -> JSONResponse:
+    return JSONResponse(
+        {
+            "access_token": grant.access_token,
+            "token_type": "Bearer",
+            "expires_in": ACCESS_TOKEN_SECONDS,
+            "refresh_token": grant.refresh_token,
+            "scope": grant.scope,
+        },
+        headers=_NO_STORE,
+    )
+
+
 @router.post("/oauth/token")
 async def token_endpoint(
     request: Request,
@@ -538,157 +459,31 @@ async def token_endpoint(
     settings = get_settings()
     if not grant_type:
         return _token_error("invalid_request", "grant_type is required")
-
-    if grant_type == "authorization_code":
-        if not code or not client_id:
-            return _token_error("invalid_request", "code and client_id are required")
-        result = await session.execute(
-            text(
-                """
-                UPDATE auth_codes
-                SET consumed_at = now()
-                WHERE code_hash = :h
-                  AND consumed_at IS NULL
-                  AND expires_at > now()
-                RETURNING id, client_id, user_id, redirect_uri, scope,
-                          code_challenge, code_challenge_method
-                """
-            ),
-            {"h": hash_token(code)},
-        )
-        row = result.mappings().first()
-        if not row:
-            await session.rollback()
-            return _token_error("invalid_grant", "Invalid code")
-        if row["client_id"] != client_id:
-            await session.rollback()
-            return _token_error("invalid_grant", "client_id mismatch")
-        if row["redirect_uri"] != redirect_uri:
-            await session.rollback()
-            return _token_error("invalid_grant", "redirect_uri mismatch")
-        client_row = await session.execute(
-            select(OAuthClient).where(OAuthClient.client_id == client_id)
-        )
-        client = client_row.scalar_one_or_none()
-        if not client:
-            await session.rollback()
-            return _token_error("invalid_client", "Unknown client_id")
-        if not (
-            row["code_challenge"]
-            and code_verifier
-            and _verify_pkce(
-                code_verifier, row["code_challenge"], row["code_challenge_method"] or ""
-            )
-        ):
-            await session.rollback()
-            return _token_error("invalid_grant", "PKCE verification failed")
-        subject, email_claim, provider = str(row["user_id"]), None, "internal"
-        token_user_id = row["user_id"]
-        access = await issue_access_token(
-            session,
-            subject=subject,
-            email=email_claim,
-            provider=provider,
-            settings=settings,
-        )
-        refresh = new_opaque_token()
-        family_id = uuid.uuid4()
-        session.add(
-            AuthRefreshToken(
-                id=uuid.uuid4(),
-                token_hash=hash_token(refresh),
-                family_id=family_id,
-                client_id=client_id,
-                user_id=token_user_id,
-                scope=row["scope"],
-                expires_at=datetime.now(UTC) + timedelta(days=30),
-            )
-        )
-        await session.commit()
-        return JSONResponse(
-            {
-                "access_token": access,
-                "token_type": "Bearer",
-                "expires_in": ACCESS_TOKEN_SECONDS,
-                "refresh_token": refresh,
-                "scope": row["scope"],
-            },
-            headers=_NO_STORE,
-        )
-
-    if grant_type == "refresh_token":
-        if not refresh_token or not client_id:
-            return _token_error("invalid_request", "refresh_token and client_id are required")
-        token_h = hash_token(refresh_token)
-        # Peek first for reuse detection (already-revoked presented again).
-        existing = (
-            await session.execute(
-                select(AuthRefreshToken).where(AuthRefreshToken.token_hash == token_h)
-            )
-        ).scalar_one_or_none()
-        if (
-            existing is not None
-            and existing.revoked_at is not None
-            and existing.client_id == client_id
-        ):
-            await _revoke_refresh_family(session, existing.family_id)
-            await session.commit()
-            return _token_error("invalid_grant", "Invalid refresh token")
-
-        # Atomic consume: only one concurrent refresh wins the row.
-        consumed = (
-            (
-                await session.execute(
-                    text(
-                        """
-                    UPDATE auth_refresh_tokens
-                    SET revoked_at = now()
-                    WHERE token_hash = :h
-                      AND revoked_at IS NULL
-                      AND expires_at > now()
-                      AND client_id = :cid
-                    RETURNING id, family_id, user_id, scope
-                    """
-                    ),
-                    {"h": token_h, "cid": client_id},
+    try:
+        if grant_type == "authorization_code":
+            if not code or not client_id:
+                return _token_error("invalid_request", "code and client_id are required")
+            return _token_response(
+                await redeem_auth_code(
+                    session,
+                    code=code,
+                    client_id=client_id,
+                    redirect_uri=redirect_uri,
+                    code_verifier=code_verifier,
+                    settings=settings,
                 )
             )
-            .mappings()
-            .first()
-        )
-        if not consumed:
-            await session.rollback()
-            return _token_error("invalid_grant", "Invalid refresh token")
-
-        new_refresh = new_opaque_token()
-        session.add(
-            AuthRefreshToken(
-                id=uuid.uuid4(),
-                token_hash=hash_token(new_refresh),
-                family_id=consumed["family_id"],
-                client_id=client_id,
-                user_id=consumed["user_id"],
-                scope=consumed["scope"],
-                expires_at=datetime.now(UTC) + timedelta(days=30),
+        if grant_type == "refresh_token":
+            if not refresh_token or not client_id:
+                return _token_error("invalid_request", "refresh_token and client_id are required")
+            return _token_response(
+                await rotate_refresh_token(
+                    session,
+                    refresh_token=refresh_token,
+                    client_id=client_id,
+                    settings=settings,
+                )
             )
-        )
-        access = await issue_access_token(
-            session,
-            subject=str(consumed["user_id"]),
-            email=None,
-            provider="internal",
-            settings=settings,
-        )
-        await session.commit()
-        return JSONResponse(
-            {
-                "access_token": access,
-                "token_type": "Bearer",
-                "expires_in": ACCESS_TOKEN_SECONDS,
-                "refresh_token": new_refresh,
-                "scope": consumed["scope"],
-            },
-            headers=_NO_STORE,
-        )
-
+    except OAuthRequestError as exc:
+        return _token_error(exc.error, exc.description)
     return _token_error("unsupported_grant_type", f"Unsupported grant_type: {grant_type}")

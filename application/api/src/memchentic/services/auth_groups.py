@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, TypedDict
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,6 +37,38 @@ if TYPE_CHECKING:
     from memchentic.auth.principal import Principal
 
 
+class AuthGroupOut(TypedDict):
+    """One auth group as returned by the admin API."""
+
+    id: str
+    slug: str
+    name: str
+    system: bool
+    member_count: int
+    roster_bound: bool
+    idp_group_id: str | None
+    idp_group_name: str | None
+
+
+class AuthGroupMemberOut(TypedDict):
+    """One auth group member as returned by the admin API."""
+
+    user_id: str
+    email: str | None
+    display_name: str | None
+    locked: bool
+    source: str
+
+
+class IdpBindOut(TypedDict):
+    """The IdP bind of one auth group."""
+
+    slug: str
+    idp_group_id: str | None
+    idp_group_name: str | None
+    roster_bound: bool
+
+
 async def idp_bound_user_ids(session: AsyncSession) -> set[uuid.UUID]:
     """Ids of all users that IdP sync placed on a currently bound auth group.
 
@@ -66,7 +98,7 @@ def _require_admin(principal: Principal) -> None:
         raise ForbiddenError("Administrators only")
 
 
-def _group_payload(group: AuthGroup, member_count: int) -> dict[str, Any]:
+def _group_payload(group: AuthGroup, member_count: int) -> AuthGroupOut:
     bound = group_bound(group)
     return {
         "id": str(group.id),
@@ -80,10 +112,10 @@ def _group_payload(group: AuthGroup, member_count: int) -> dict[str, Any]:
     }
 
 
-async def list_groups(session: AsyncSession, principal: Principal) -> list[dict[str, Any]]:
+async def list_groups(session: AsyncSession, principal: Principal) -> list[AuthGroupOut]:
     """List fixed Auth Groups with member counts and bind state."""
     _require_admin(principal)
-    rows: list[dict[str, Any]] = []
+    rows: list[AuthGroupOut] = []
     for slug, _name in SYSTEM_GROUPS:
         group = await get_by_slug(session, slug)
         if not group:
@@ -99,7 +131,7 @@ async def list_groups(session: AsyncSession, principal: Principal) -> list[dict[
 
 async def list_members(
     session: AsyncSession, principal: Principal, slug: str
-) -> list[dict[str, Any]]:
+) -> list[AuthGroupMemberOut]:
     """List members of a fixed Auth Group."""
     _require_admin(principal)
     group = await get_by_slug(session, slug)
@@ -114,7 +146,7 @@ async def list_members(
     members = list(result.scalars())
     settings = get_settings()
     roster_bound = group_bound(group)
-    out: list[dict[str, Any]] = []
+    out: list[AuthGroupMemberOut] = []
     for m in members:
         user = m.user
         env_locked = (
@@ -133,7 +165,7 @@ async def list_members(
     return out
 
 
-async def get_idp_bind(session: AsyncSession, principal: Principal, slug: str) -> dict[str, Any]:
+async def get_idp_bind(session: AsyncSession, principal: Principal, slug: str) -> IdpBindOut:
     """Return the IdP bind for one Auth Group."""
     _require_admin(principal)
     group = await get_by_slug(session, slug)
@@ -155,7 +187,7 @@ async def set_idp_bind(
     *,
     idp_group_id: str | None,
     idp_group_name: str | None,
-) -> dict[str, Any]:
+) -> IdpBindOut:
     """Set or clear the IdP group bind for an Auth Group.
 
     Clearing the bind restores manual membership. Setting a bind makes the
@@ -189,7 +221,7 @@ async def add_member(
     principal: Principal,
     slug: str,
     user_id: uuid.UUID,
-) -> dict[str, Any]:
+) -> AuthGroupMemberOut:
     """Add a user to a fixed Auth Group (exclusive — drops the other roster)."""
     _require_admin(principal)
     group = await get_by_slug(session, slug)

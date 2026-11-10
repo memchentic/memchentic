@@ -27,8 +27,6 @@ def _group_choices(groups: list[Space]) -> str:
 
 async def _member_groups(session: AsyncSession, principal: Principal) -> list[Space]:
     """Groups the caller belongs to (membership join — not admin instance-wide list)."""
-    if not principal.user_id:
-        return []
     result = await session.execute(
         select(Space)
         .join(SpaceMember, SpaceMember.space_id == Space.id)
@@ -118,8 +116,6 @@ async def resolve_write_space(
         NotFoundError: Inaccessible ``space_id``.
         SpaceResolveError: Group name or shared default cannot be resolved to one group.
     """
-    if not principal.user_id:
-        raise ForbiddenError("Authentication required")
     if space_id is not None:
         space = await get_readable_space(session, principal, space_id)
         if not space:
@@ -156,8 +152,6 @@ async def set_default_shared_space(
         PermissionError: Missing user principal, or the group is not one the
             caller belongs to.
     """
-    if not principal.user_id:
-        raise ForbiddenError("Default shared group needs a user principal")
     user = await session.get(User, principal.user_id)
     if not user:
         raise ForbiddenError("User not found")

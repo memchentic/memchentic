@@ -90,7 +90,7 @@ async def build_authorize_url(
     scopes = resolve_scopes(settings).replace(",", " ")
     params: dict[str, str] = {
         "client_id": settings.oauth_client_id,
-        "redirect_uri": settings.web_oauth_redirect_uri(),
+        "redirect_uri": settings.web_oauth_redirect_uri,
         "response_type": "code",
         "scope": scopes,
         "state": state,
@@ -152,7 +152,7 @@ async def _token_post(
     data = {
         "grant_type": "authorization_code",
         "code": code,
-        "redirect_uri": settings.web_oauth_redirect_uri(),
+        "redirect_uri": settings.web_oauth_redirect_uri,
         "client_id": settings.oauth_client_id,
         "code_verifier": code_verifier,
     }

@@ -227,7 +227,7 @@ async def ensure_admin_user(
     session: AsyncSession,
     settings: Settings | None = None,
 ) -> User:
-    """Ensure the break-glass admin exists as a real ``User`` row.
+    """Ensure the ``ADMIN_EMAIL`` administrator exists as a real ``User`` row.
 
     ``ADMIN_EMAIL`` / ``ADMIN_PASSWORD`` / ``ADMIN_DISPLAY_NAME`` stay the
     source of truth. Creates the user when missing, syncs password + display
@@ -297,8 +297,6 @@ async def directory_user_visible(
     """
     if principal.is_admin:
         return True
-    if not principal.user_id:
-        return False
     if principal.user_id == user_id:
         return True
     caller_m = aliased(SpaceMember)
@@ -335,8 +333,6 @@ async def list_directory_users(session: AsyncSession, principal: Principal) -> l
     """
     if principal.is_admin:
         return await list_users(session)
-    if not principal.user_id:
-        return []
     caller_m = aliased(SpaceMember)
     other_m = aliased(SpaceMember)
     result = await session.execute(

@@ -775,8 +775,3 @@ async def overlap_report(
         include_expired=include_expired,
         expiring_within_days=expiring_within_days,
     )
-
-
-def create_mcp() -> FastMCP:
-    """Return the FastMCP server with every memchentic tool registered."""
-    return mcp

@@ -9,6 +9,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 
+from fastapi import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -121,3 +122,15 @@ async def revoke_session(session: AsyncSession, raw: str) -> None:
     if row is not None:
         row.revoked_at = datetime.now(UTC)
         await session.commit()
+
+
+def set_session_cookie(response: Response, raw: str, persistent: bool, settings: Settings) -> None:
+    response.set_cookie(
+        SESSION_COOKIE,
+        raw,
+        max_age=(int(session_lifetime(True, settings).total_seconds()) if persistent else None),
+        path=SESSION_COOKIE_PATH,
+        secure=settings.cookie_secure,
+        httponly=True,
+        samesite="strict",
+    )

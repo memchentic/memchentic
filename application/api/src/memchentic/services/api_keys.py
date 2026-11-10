@@ -34,8 +34,6 @@ def _require_target(principal: Principal, user_id: uuid.UUID | None) -> uuid.UUI
         if not principal.is_admin and principal.user_id != user_id:
             raise ForbiddenError("Cannot manage keys for other users")
         return user_id
-    if not principal.user_id:
-        raise ForbiddenError("user_id required")
     return principal.user_id
 
 
@@ -95,8 +93,6 @@ async def list_api_keys(session: AsyncSession, principal: Principal) -> list[Api
     """
     stmt = select(ApiKey).where(ApiKey.revoked_at.is_(None)).order_by(ApiKey.created_at.desc())
     if not principal.is_admin:
-        if not principal.user_id:
-            return []
         stmt = stmt.where(ApiKey.user_id == principal.user_id)
     result = await session.execute(stmt)
     return list(result.scalars())

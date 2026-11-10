@@ -12,7 +12,6 @@ import asyncio
 import os
 import re
 from collections.abc import AsyncIterator, Iterator
-from pathlib import Path
 
 import pytest
 import pytest_asyncio
@@ -23,10 +22,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from memchentic.auth import passwords
 from memchentic.auth.rate_limit import reset_rate_limits
+from memchentic.db.migrate import run_migrations
 from memchentic.db.session import reset_engine, set_rls_context
 from memchentic.settings import get_settings
 
-_API_ROOT = Path(__file__).resolve().parents[1]
 _LIVE_DB_NAME = "memchentic"
 _TEST_DB_NAME = "memchentic_test"
 _SAFE_DB = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -153,27 +152,6 @@ async def _ensure_test_database(url: str) -> None:
         await engine.dispose()
 
 
-def _run_migrations(url: str) -> None:
-    """Apply Alembic migrations to head on the isolated test database.
-
-    Args:
-        url: Owner URL that was checked for isolation. ``alembic/env.py``
-            connects with ``get_settings().migration_database_url``; the two
-            must be the same database.
-    """
-    from alembic.config import Config
-
-    from alembic import command
-
-    assert url == get_settings().migration_database_url
-    cfg = Config(str(_API_ROOT / "alembic.ini"))
-    # The URL is not stored in the config: a percent-encoded password is not
-    # a valid ConfigParser value. A literal "%" in the path is written "%%".
-    cfg.set_main_option("script_location", str(_API_ROOT / "alembic").replace("%", "%%"))
-    cfg.attributes["configure_logger"] = False
-    command.upgrade(cfg, "head")
-
-
 @pytest.fixture(scope="session", autouse=True)
 def prepare_test_database() -> None:
     """Recreate ``memchentic_test`` and migrate it once per pytest process."""
@@ -182,7 +160,8 @@ def prepare_test_database() -> None:
     asyncio.run(_ensure_test_database(owner_url))
     get_settings.cache_clear()
     reset_engine()
-    _run_migrations(owner_url)
+    assert owner_url == get_settings().migration_database_url
+    run_migrations()
 
 
 @pytest.fixture(autouse=True)

@@ -1,4 +1,18 @@
-"""Entry and guide services shared by the REST API and the MCP tools."""
+"""Entry CRUD, listings and search over memories.
+
+Filter vocabulary used by the service functions, the REST query parameters
+and the MCP tool parameters:
+
+- ``kind``: ``entry`` or ``guide`` (the two memory kinds).
+- ``entry_type``: one closed entry type (``fact``, ``preference``, ...). The
+  MCP tools expose it as the parameter ``type``.
+- ``types``: a list of type tokens. Each token is an entry type or the word
+  ``guide``; ``resolve_type_tokens`` splits the list.
+
+``find`` and ``search`` both run the hybrid search. ``find`` backs the MCP
+``find`` tool; without ``types`` it returns entries only. ``search`` backs
+REST ``GET /api/memories/search`` and takes ``kind`` as well.
+"""
 
 from __future__ import annotations
 
@@ -449,7 +463,7 @@ async def browse(
     """List memories in readable spaces, newest first.
 
     Returns:
-        Digests for the requested page.
+        Full ``Memory`` rows, not digests. Callers serialise them with ``memory_to_dict``.
 
     Raises:
         ValidationError: On invalid filters.
@@ -487,7 +501,8 @@ async def since(
     """List memories in readable spaces updated in a time window.
 
     Returns:
-        Digests ordered by ``updated_at``.
+        ``Digest`` items built from the matching rows, not full rows. Callers
+        serialise them with ``digest_to_dict``.
     """
     if tags is not None:
         tags = check_tags(tags)
@@ -525,7 +540,8 @@ async def by_tag(
     ``mode`` is ``and`` (every tag must match) or ``or`` (any tag matches).
 
     Returns:
-        Digests, newest first.
+        ``Digest`` items built from the matching rows, not full rows. Callers
+        serialise them with ``digest_to_dict``.
 
     Raises:
         ValidationError: On invalid tags or mode.
@@ -713,8 +729,8 @@ async def about_path(
         offset: Rows to skip, for paging.
 
     Returns:
-        Newest-first digests. Empty when ``path`` and ``repo_hint`` are both
-        blank: a blank pattern would otherwise match every memory.
+        ``Digest`` items built from the matching rows, not full rows. Callers
+        serialise them with ``digest_to_dict``.
     """
     path = check_text(path, "path", limits.PATH_HINT_MAX)
     repo_hint = check_optional_text(repo_hint, "repo_hint", limits.REPO_HINT_MAX)

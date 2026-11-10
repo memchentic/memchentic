@@ -20,9 +20,9 @@ def _alembic_upgrade_head() -> None:
     # The application's own entry point. Its config sets
     # ``attributes["configure_logger"] = False`` (BUG-006), so this run does
     # not reconfigure logging for the tests that follow.
-    from memchentic.main import _run_migrations
+    from memchentic.db.migrate import run_migrations
 
-    _run_migrations()
+    run_migrations()
 
 
 async def _assert_waits_for_lock(start: Callable[[], Awaitable[None]]) -> None:

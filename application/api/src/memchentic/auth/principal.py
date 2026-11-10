@@ -1,4 +1,4 @@
-"""Request principals, API-key hashing and the break-glass admin password check."""
+"""Request principals, API-key hashing and the environment admin password check."""
 
 from __future__ import annotations
 
@@ -12,18 +12,27 @@ from memchentic.settings import Settings, get_settings
 
 @dataclass
 class Principal:
-    """Authenticated caller resolved from a bearer credential."""
+    """An authenticated caller. Every principal is backed by a ``User`` row."""
 
+    user_id: UUID
     is_admin: bool = False
-    user_id: UUID | None = None
     email: str | None = None
     display_name: str | None = None
     provider: str | None = None
 
+    def __post_init__(self) -> None:
+        """Reject a principal without a user id.
+
+        Raises:
+            TypeError: When ``user_id`` is ``None``.
+        """
+        if self.user_id is None:
+            raise TypeError("Principal requires a user id")
+
     @property
     def subject(self) -> str:
-        """Return the user id as text, or ``anonymous``."""
-        return str(self.user_id) if self.user_id else "anonymous"
+        """Return the user id as text."""
+        return str(self.user_id)
 
 
 def hash_api_key(raw: str) -> str:
@@ -32,9 +41,9 @@ def hash_api_key(raw: str) -> str:
 
 
 def check_admin_password(email: str, password: str, settings: Settings | None = None) -> bool:
-    """Constant-time check of the env break-glass admin credentials.
+    """Constant-time check of the ``ADMIN_EMAIL`` / ``ADMIN_PASSWORD`` credentials.
 
-    Break-glass login identity is ``ADMIN_EMAIL`` only (case-
+    The login identity is ``ADMIN_EMAIL`` only (case-
     insensitive). ``ADMIN_DISPLAY_NAME`` is a label, not a login
     alias. The password remains case-sensitive.
 

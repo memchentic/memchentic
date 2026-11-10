@@ -117,7 +117,7 @@ ignore = [
 # MCP tool names, parameter names and tool docstrings are the public tool contract (WP-11).
 "server.py" = ["A001", "A002", "RUF002"]
 # REST query parameter names "type" and "range" are part of the API.
-"router.py" = ["A002"]
+"**/api/routes/memories.py" = ["A002"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

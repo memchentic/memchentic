@@ -13,32 +13,26 @@ from pathlib import Path
 from types import FrameType
 from typing import Any
 
-from alembic.config import Config
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from alembic import command
 from memchentic import __version__
+from memchentic.api.errors import register_exception_handlers
 from memchentic.api.oauth import router as oauth_router
 from memchentic.api.router import api_router
 from memchentic.api.security_headers import SecurityHeadersMiddleware
 from memchentic.auth.bearer import resolve_bearer
 from memchentic.auth.passwords import require_bcrypt_length
-from memchentic.auth.providers import provider_label
-from memchentic.auth.tokens import verify_signing_key
+from memchentic.db.migrate import run_migrations
 from memchentic.db.session import get_session_factory, init_db, set_rls_context
 from memchentic.embeddings import get_embedder
 from memchentic.events import close_memory_streams, start_memory_listener, stop_memory_listener
 from memchentic.mcp.context import principal_var, session_var
-from memchentic.mcp.server import create_mcp
-from memchentic.services.auth_roster import ensure_auth_groups
-from memchentic.services.errors import ServiceError, http_error
-from memchentic.services.instance_settings import ensure_instance_settings, get_register_enabled
-from memchentic.services.memories import backfill_orphan_creators
-from memchentic.services.users import ensure_admin_user
+from memchentic.mcp.server import mcp as mcp_server
+from memchentic.services.bootstrap import bootstrap_instance
 from memchentic.settings import Settings, get_settings
 
 logger = logging.getLogger("memchentic")
@@ -196,30 +190,6 @@ class McpAuthMiddleware:
                 await session.rollback()
 
 
-def _alembic_config() -> Config:
-    """Build the Alembic config for a programmatic migration run.
-
-    The database URL is not stored here. ``alembic/env.py`` reads it from
-    ``get_settings().migration_database_url``. A ``ConfigParser`` value may
-    not contain a bare ``%``, so a percent-encoded password would raise and
-    the error message would print the whole URL.
-
-    Returns:
-        Config pointing at the bundled ``alembic.ini`` and script directory.
-    """
-    cfg = Config(str(API_ROOT / "alembic.ini"))
-    # ConfigParser interpolation: a literal "%" in a value is written "%%".
-    cfg.set_main_option("script_location", str(API_ROOT / "alembic").replace("%", "%%"))
-    # env.py must not call logging.config.fileConfig in the server process.
-    cfg.attributes["configure_logger"] = False
-    return cfg
-
-
-def _run_migrations() -> None:
-    """Apply Alembic migrations to head (blocking; run off the event loop)."""
-    command.upgrade(_alembic_config(), "head")
-
-
 def create_app() -> FastAPI:
     """Assemble the FastAPI application with MCP, REST, OAuth, and SPA routes.
 
@@ -227,7 +197,7 @@ def create_app() -> FastAPI:
         Configured FastAPI app.
     """
     settings = get_settings()
-    mcp_app = create_mcp().http_app(
+    mcp_app = mcp_server.http_app(
         path="/", transport="streamable-http", stateless_http=True, json_response=True
     )
 
@@ -249,26 +219,12 @@ def create_app() -> FastAPI:
         require_bcrypt_length(settings.admin_password, "ADMIN_PASSWORD")
         if settings.run_migrations_on_boot:
             await init_db()
-            await asyncio.to_thread(_run_migrations)
+            await asyncio.to_thread(run_migrations)
             logger.info("Migrations applied")
         else:
             logger.info("RUN_MIGRATIONS_ON_BOOT=false: extensions and migrations are skipped")
         async with get_session_factory()() as session:
-            await set_rls_context(session, user_id=None, is_admin=True)
-            admin = await ensure_admin_user(session, settings)
-            await ensure_auth_groups(session, admin)
-            await ensure_instance_settings(session, settings)
-            # Attribute orphan memories to the space owner only (never silently
-            # claim them as the env admin — that hides deleted-owner history).
-            # The helper binds its own admin RLS context: the calls above rebind
-            # and commit, and every commit clears the context.
-            backfilled = await backfill_orphan_creators(session)
-            if backfilled:
-                logger.info("Backfilled created_by on %s memories to space owner", backfilled)
-            if settings.oauth_provider == "internal":
-                # Refuse to start when ENCRYPTION_KEY cannot decrypt the stored
-                # signing key; otherwise every sign-in fails at request time.
-                await verify_signing_key(session, settings)
+            await bootstrap_instance(session, settings)
         # Fail closed before serving if MiniLM is missing (unless hash allowed).
         get_embedder()
         await start_memory_listener()
@@ -307,66 +263,10 @@ def create_app() -> FastAPI:
         docs_paths=("/docs", "/redoc") if docs_on else (),
     )
 
-    @app.exception_handler(ServiceError)
-    async def service_error(_request: Request, exc: ServiceError) -> JSONResponse:
-        """Map a typed service error to its HTTP status and JSON body.
-
-        Args:
-            _request: Incoming request (unused).
-            exc: The error raised by a service.
-
-        Returns:
-            JSON response with ``detail`` and ``code``.
-        """
-        status_code, body = http_error(exc)
-        return JSONResponse(body, status_code=status_code)
-
-    @app.exception_handler(PermissionError)
-    async def untyped_permission_denied(_request: Request, exc: PermissionError) -> JSONResponse:
-        """Map a bare ``PermissionError`` to HTTP 403 (safety net for untyped denials).
-
-        An operating-system permission error (``errno`` set) is a server fault
-        and is re-raised.
-
-        Args:
-            _request: Incoming request (unused).
-            exc: The denial.
-
-        Returns:
-            JSON 403 response.
-
-        Raises:
-            PermissionError: When the error carries an ``errno``.
-        """
-        if exc.errno is not None:
-            raise exc
-        logger.warning("Untyped PermissionError reached the HTTP layer: %s", exc)
-        return JSONResponse(
-            {"detail": str(exc) or "Forbidden", "code": "forbidden"}, status_code=403
-        )
+    register_exception_handlers(app)
 
     app.include_router(oauth_router)
     app.include_router(api_router)
-
-    @app.get("/api/provider")
-    async def provider_info() -> dict[str, object]:
-        """Expose non-secret auth configuration for the GUI.
-
-        Returns:
-            Active provider name, public URLs, and whether web OAuth Sign-in
-            is available (external IdP with ``OAUTH_CLIENT_ID`` set).
-        """
-        live = get_settings()
-        async with get_session_factory()() as session:
-            register_enabled = await get_register_enabled(session)
-        return {
-            "oauth_provider": live.oauth_provider,
-            "base_url": live.base_url,
-            "mcp_url": live.mcp_resource_url,
-            "web_oauth": live.web_oauth_enabled,
-            "oauth_label": provider_label(live),
-            "register_enabled": register_enabled,
-        }
 
     app.mount("/mcp", mcp_app)
 

@@ -20,6 +20,7 @@ from memchentic.auth.users import (
 from memchentic.models.entities import AuthGroup, AuthGroupMember, InstanceSetting, User
 from memchentic.services import limits
 from memchentic.services.errors import ForbiddenError, NotFoundError
+from memchentic.services.instance_settings import get_register_enabled
 from memchentic.services.validation import check_optional_text
 from memchentic.settings import Settings, get_settings
 
@@ -338,8 +339,6 @@ async def idp_signup_allowed(session: AsyncSession, idp_groups: Collection[str])
     Returns:
         True when a new account may be created.
     """
-    from memchentic.services.instance_settings import get_register_enabled
-
     groups = list(idp_groups)
     administrators = await _get_by_slug(session, SLUG_ADMINISTRATORS)
     if administrators is not None and _bind_matches(administrators, groups):
@@ -479,16 +478,16 @@ async def sync_user_from_idp_groups(
     idp_groups: Collection[str],
     *,
     settings: Settings | None = None,
-    commit: bool = True,
 ) -> None:
     """Apply Auth Group membership from IdP group claims (Administrators wins).
+
+    Does not commit; the caller owns the transaction.
 
     Args:
         session: Database session.
         user: Local user row.
         idp_groups: Group ids/names from the IdP login.
         settings: Optional settings override.
-        commit: Whether to commit (False when caller commits).
     """
     settings = settings or get_settings()
     administrators = await _ensure_group(session, SLUG_ADMINISTRATORS, "Administrators")
@@ -497,8 +496,6 @@ async def sync_user_from_idp_groups(
     if _is_env_admin(user, settings):
         await add_member_raw(session, administrators, user.id, source=SOURCE_MANUAL)
         await _remove_member_raw(session, users.id, user.id)
-        if commit:
-            await session.commit()
         return
 
     admin_match = _bind_matches(administrators, idp_groups)
@@ -536,9 +533,6 @@ async def sync_user_from_idp_groups(
                 await session.delete(row)
         elif not await user_is_administrator(session, user.id):
             await add_member_raw(session, users, user.id, source=SOURCE_MANUAL)
-
-    if commit:
-        await session.commit()
 
 
 async def add_member(

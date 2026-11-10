@@ -1,9 +1,10 @@
 """Postgres LISTEN/NOTIFY bus for memory mutations.
 
-One dedicated asyncpg connection listens on ``memchentic_memory``. Writers
-``NOTIFY`` after commit so every application replica (Compose, Swarm, Helm)
-receives the same event. Local SSE subscribers are asyncio queues fan-out
-from that listener.
+One dedicated asyncpg connection listens on ``memchentic_memory``. Writers call
+``pg_notify`` inside the transaction of the mutation; Postgres delivers the
+notification when that transaction commits, so every application replica
+(Compose, Swarm, Helm) receives the same event. Local SSE subscribers are
+asyncio queues fan-out from that listener.
 """
 
 from __future__ import annotations
@@ -368,11 +369,13 @@ def _encode_event(event: MemoryEvent) -> str:
 
 
 async def publish_memory_event(session: AsyncSession, event: MemoryEvent) -> None:
-    """Queue a NOTIFY in the caller's transaction (delivered at commit).
+    """Queue a NOTIFY inside the caller's open transaction.
+
+    Postgres delivers the notification when the transaction commits and drops
+    it when the transaction rolls back. Call this before the commit.
 
     Args:
-        session: Session used for the mutation (same connection; NOTIFY is
-            visible to listeners after commit).
+        session: Session used for the mutation (same connection and transaction).
         event: Compact mutation payload. Reduced by ``_encode_event`` when it
             would exceed the NOTIFY size limit.
     """

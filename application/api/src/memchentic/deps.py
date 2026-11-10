@@ -45,7 +45,6 @@ async def get_principal(
     if principal is None:
         raise HTTPException(status_code=401, detail="Unauthorized")
     await set_rls_context(session, user_id=principal.user_id, is_admin=principal.is_admin)
-    request.state.principal = principal
     return principal
 
 

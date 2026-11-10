@@ -41,7 +41,7 @@ async def create_session(
     subject: str,
     email: str | None,
     provider: str,
-    user_id: uuid.UUID | None,
+    user_id: uuid.UUID,
     persistent: bool,
     settings: Settings,
 ) -> tuple[str, GuiSession]:
@@ -52,7 +52,7 @@ async def create_session(
         subject: JWT subject for access tokens minted from this session.
         email: Email claim for minted access tokens.
         provider: Provider claim for minted access tokens.
-        user_id: Owning user, or None for the admin break-glass principal.
+        user_id: Owning user.
         persistent: True for "remember me" sessions.
         settings: App settings.
 

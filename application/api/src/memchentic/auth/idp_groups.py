@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
 import httpx
 
-from memchentic.auth.providers import resolve_issuer
+from memchentic.auth.providers import resolve_issuer, resolve_oidc_endpoints
 from memchentic.settings import Settings
 
-# Providers that can list directory groups via the configured OAuth client.
-_SUPPORTS_LIST = frozenset({"okta", "entra", "authentik", "keycloak", "auth0"})
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -35,7 +36,7 @@ class IdPGroupListResult:
 
 def provider_supports_groups(provider: str) -> bool:
     """True when this OAuth provider has a groups directory adapter."""
-    return provider in _SUPPORTS_LIST
+    return provider in _LISTERS
 
 
 def _same_host_https(base_url: str, next_url: str | None) -> str | None:
@@ -118,30 +119,29 @@ async def list_idp_groups(settings: Settings) -> IdPGroupListResult:
             error="OAUTH_CLIENT_ID and OAUTH_CLIENT_SECRET are required to list groups",
         )
     try:
-        if provider == "okta":
-            groups = await _list_okta(settings)
-        elif provider == "entra":
-            groups = await _list_entra(settings)
-        elif provider == "authentik":
-            groups = await _list_authentik(settings)
-        elif provider == "keycloak":
-            groups = await _list_keycloak(settings)
-        elif provider == "auth0":
-            groups = await _list_auth0(settings)
-        else:
-            groups = []
+        groups = await _LISTERS[provider](settings)
         return IdPGroupListResult(
             provider=provider,
             supports_groups=True,
             groups=groups,
             error=None,
         )
-    except Exception as exc:  # noqa: BLE001 - surface as UI error, not 500
+    except ValueError as exc:
+        # Raised by this module for missing or malformed configuration; safe to show.
         return IdPGroupListResult(
             provider=provider,
             supports_groups=True,
             groups=[],
             error=str(exc) or "Failed to list IdP groups",
+        )
+    except Exception:
+        # IdP/network failure becomes a UI error, not a 500.
+        logger.warning("IdP group listing failed for provider %s", provider, exc_info=True)
+        return IdPGroupListResult(
+            provider=provider,
+            supports_groups=True,
+            groups=[],
+            error="Failed to list IdP groups; see the server log",
         )
 
 
@@ -160,7 +160,6 @@ async def _client_credentials_token(
     client_secret: str,
     scope: str | None = None,
     audience: str | None = None,
-    extra: dict[str, str] | None = None,
 ) -> str:
     data: dict[str, str] = {
         "grant_type": "client_credentials",
@@ -171,8 +170,6 @@ async def _client_credentials_token(
         data["scope"] = scope
     if audience:
         data["audience"] = audience
-    if extra:
-        data.update(extra)
     async with httpx.AsyncClient(timeout=20.0) as client:
         resp = await client.post(token_url, data=data)
         resp.raise_for_status()
@@ -197,8 +194,6 @@ async def _list_okta(settings: Settings) -> list[IdPGroupOption]:
         )
     except httpx.HTTPError:
         # Fall back to the configured OIDC issuer token endpoint when present.
-        from memchentic.auth.providers import resolve_oidc_endpoints
-
         endpoints = await resolve_oidc_endpoints(settings)
         token = await _client_credentials_token(
             str(endpoints["token_endpoint"]),
@@ -279,8 +274,6 @@ async def _list_authentik(settings: Settings) -> list[IdPGroupOption]:
         raise ValueError("OAUTH_ISSUER is required for Authentik group listing")
     parsed = urlparse(issuer)
     base = f"{parsed.scheme}://{parsed.netloc}"
-    from memchentic.auth.providers import resolve_oidc_endpoints
-
     endpoints = await resolve_oidc_endpoints(settings)
     token = await _client_credentials_token(
         str(endpoints["token_endpoint"]),
@@ -379,3 +372,13 @@ async def _list_auth0(settings: Settings) -> list[IdPGroupOption]:
             if gid:
                 groups.append(IdPGroupOption(id=gid, name=name or gid))
     return groups
+
+
+# Providers that can list directory groups via the configured OAuth client.
+_LISTERS: dict[str, Callable[[Settings], Awaitable[list[IdPGroupOption]]]] = {
+    "okta": _list_okta,
+    "entra": _list_entra,
+    "authentik": _list_authentik,
+    "keycloak": _list_keycloak,
+    "auth0": _list_auth0,
+}

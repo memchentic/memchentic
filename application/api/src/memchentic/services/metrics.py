@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from sqlalchemy import ColumnElement, String, func, literal_column, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -45,7 +45,7 @@ def _parse_range(raw: str | None) -> MetricRange:
         return "30d"
     if raw not in _RANGE_DAYS:
         raise ValidationError(f"Invalid range {raw!r}; expected 7d, 30d, 90d, or all")
-    return raw  # type: ignore[return-value]
+    return cast(MetricRange, raw)
 
 
 def _empty_payload(range_token: MetricRange) -> dict[str, Any]:
@@ -238,12 +238,13 @@ async def memory_metrics(
     for day_val, kind, count in day_rows:
         if day_val is None:
             continue
+        # date_trunc() has no declared Python type; asyncpg returns a datetime.
         if hasattr(day_val, "astimezone"):
             key = day_val.astimezone(UTC).date().isoformat()
         else:
             key = str(day_val)[:10]
         bucket = by_day.setdefault(key, {"entries": 0, "guides": 0})
-        kind_key = kind.value if hasattr(kind, "value") else str(kind)
+        kind_key = kind.value
         if kind_key == MemoryKind.guide.value:
             bucket["guides"] += int(count)
         else:

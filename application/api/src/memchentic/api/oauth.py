@@ -1,3 +1,5 @@
+"""Internal OAuth 2.1 authorization server and MCP protected-resource metadata."""
+
 from __future__ import annotations
 
 import base64
@@ -30,7 +32,7 @@ from memchentic.auth.tokens import (
     jwks,
     new_opaque_token,
 )
-from memchentic.auth.users import authenticate_internal
+from memchentic.auth.users import authenticate_internal, ensure_admin_user
 from memchentic.deps import db_session
 from memchentic.models.entities import AuthCode, AuthRefreshToken, OAuthClient
 from memchentic.settings import get_settings
@@ -165,6 +167,7 @@ def validate_redirect_uri(uri: str) -> str:
 @router.get("/.well-known/oauth-protected-resource")
 @router.get("/.well-known/oauth-protected-resource/{path:path}")
 async def prm(path: str = "") -> dict:  # noqa: ARG001
+    """Serve OAuth protected-resource metadata for the MCP endpoint. Public."""
     return protected_resource_metadata(get_settings())
 
 
@@ -181,6 +184,7 @@ async def as_meta() -> dict:
 
 @router.get("/oauth/jwks")
 async def oauth_jwks(session: AsyncSession = Depends(db_session)) -> dict:
+    """Serve the public JWKS of the internal signing keys. Public."""
     await ensure_signing_key(session)
     return await jwks(session)
 
@@ -302,7 +306,7 @@ def _authorize_html(
     client: OAuthClient,
     fields: dict[str, str],
     *,
-    request: Request | None = None,
+    request: Request,
     error: str | None = None,
     status_code: int = 200,
 ) -> HTMLResponse:
@@ -318,9 +322,7 @@ def _authorize_html(
     # Secure when this request arrived over https, or when the public BASE_URL
     # is https (TLS terminated at a reverse proxy, so the socket scheme seen
     # here is http). A plain-http BASE_URL keeps the cookie usable over http.
-    secure = (
-        request is not None and request.url.scheme == "https"
-    ) or settings.base_url.lower().startswith("https://")
+    secure = request.url.scheme == "https" or settings.base_url.lower().startswith("https://")
     response.set_cookie(
         _OAUTH_CSRF_COOKIE,
         csrf,
@@ -339,7 +341,7 @@ async def _require_registered_client(
     code_challenge: str,
     code_challenge_method: str,
 ) -> OAuthClient:
-    """Reject unknown clients, unregistered redirect URIs, and public clients without PKCE.
+    """Reject unknown clients, unregistered redirect URIs, and requests without PKCE.
 
     Args:
         session: Database session.
@@ -362,9 +364,7 @@ async def _require_registered_client(
         or redirect_uri not in (client.redirect_uris or [])
     ):
         raise HTTPException(400, "Unknown client_id or unregistered redirect_uri")
-    if client.is_public and (
-        code_challenge_method != "S256" or not _PKCE_CHALLENGE.match(code_challenge)
-    ):
+    if code_challenge_method != "S256" or not _PKCE_CHALLENGE.match(code_challenge):
         raise HTTPException(400, "PKCE S256 with a valid code_challenge is required")
     return client
 
@@ -437,15 +437,15 @@ async def authorize_post(
     client = await _require_registered_client(
         session, client_id, redirect_uri, code_challenge, code_challenge_method
     )
-    # Prefer a real DB user when email+password match; break-glass binds to
-    # the ensured ADMIN_EMAIL user so tokens always carry a user id.
+    # Prefer a real DB user when email+password match. ensure_admin_user() syncs
+    # the ADMIN_EMAIL row with ADMIN_PASSWORD at startup, so the break-glass
+    # branch below is reached only if that row was changed after startup. It
+    # binds to the re-ensured ADMIN_EMAIL user so tokens always carry a user id.
     user = await authenticate_internal(session, email=email, password=password)
-    user_id: uuid.UUID | None
+    user_id: uuid.UUID
     if user:
         user_id = user.id
     elif check_admin_password(email, password, settings):
-        from memchentic.auth.users import ensure_admin_user
-
         user_id = (await ensure_admin_user(session, settings)).id
     else:
         fields = {
@@ -572,7 +572,7 @@ async def token_endpoint(
         if not client:
             await session.rollback()
             return _token_error("invalid_client", "Unknown client_id")
-        if (client.is_public or row["code_challenge"]) and not (
+        if not (
             row["code_challenge"]
             and code_verifier
             and _verify_pkce(
@@ -581,9 +581,6 @@ async def token_endpoint(
         ):
             await session.rollback()
             return _token_error("invalid_grant", "PKCE verification failed")
-        if row["user_id"] is None:
-            await session.rollback()
-            return _token_error("invalid_grant", "Invalid code")
         subject, email_claim, provider = str(row["user_id"]), None, "internal"
         token_user_id = row["user_id"]
         access = await issue_access_token(
@@ -658,7 +655,7 @@ async def token_endpoint(
             .mappings()
             .first()
         )
-        if not consumed or consumed["user_id"] is None:
+        if not consumed:
             await session.rollback()
             return _token_error("invalid_grant", "Invalid refresh token")
 

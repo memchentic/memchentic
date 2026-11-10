@@ -1,10 +1,11 @@
-"""Recompute every stored embedding with the active embedder backend.
+"""Operator CLI: recompute every stored embedding with the active embedder backend.
 
-Run after the MiniLM ONNX files are present so hash-fallback vectors are not
-mixed with model vectors, and after embedder changes that alter vectors
-(for example attention-mask / padding fixes)::
+The server never calls this module. Run it by hand after the MiniLM ONNX files
+are present, so hash-fallback vectors are not mixed with model vectors, and
+after embedder changes that alter vectors (for example attention-mask / padding
+fixes). From ``docker/``::
 
-    python -m memchentic.embeddings.reembed
+    docker compose exec application python -m memchentic.embeddings.reembed
 """
 
 from __future__ import annotations

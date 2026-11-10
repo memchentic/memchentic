@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import uuid
 from types import SimpleNamespace
@@ -11,6 +12,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from memchentic.auth import idp_groups
 from memchentic.auth.idp_groups import groups_from_claims
 from memchentic.auth.users import ensure_admin_user, register_internal_user
 from memchentic.db.session import set_rls_context
@@ -27,7 +29,7 @@ from memchentic.services.auth_groups import (
     user_is_administrator,
 )
 from memchentic.services.errors import ForbiddenError
-from memchentic.settings import get_settings
+from memchentic.settings import Settings, get_settings
 
 ADMIN_KEY = os.environ.get("ADMIN_API_KEY", "")
 
@@ -121,9 +123,11 @@ async def test_idp_sync_administrators_wins(session: AsyncSession) -> None:
         password="password-ok-12",
     )
     await sync_user_from_idp_groups(session, user, {"admins-id", "users-id"}, settings=settings)
+    await session.commit()
     assert await user_is_administrator(session, user.id)
 
     await sync_user_from_idp_groups(session, user, {"users-id"}, settings=settings)
+    await session.commit()
     assert not await user_is_administrator(session, user.id)
 
     # Clear binds for other tests sharing the DB.
@@ -412,3 +416,36 @@ async def test_add_to_users_refused_for_member_of_bound_administrators(
         await set_idp_bind(
             session, principal, SLUG_ADMINISTRATORS, idp_group_id=None, idp_group_name=None
         )
+
+
+def _okta_env(monkeypatch: pytest.MonkeyPatch, *, issuer: str) -> None:
+    monkeypatch.setenv("OAUTH_PROVIDER", "okta")
+    monkeypatch.setenv("OAUTH_CLIENT_ID", "client-id")
+    monkeypatch.setenv("OAUTH_CLIENT_SECRET", "not-a-real-secret")
+    monkeypatch.setenv("OAUTH_ISSUER", issuer)
+
+
+async def test_list_idp_groups_hides_upstream_error_detail(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An IdP failure is logged and reaches the UI as a fixed message."""
+    _okta_env(monkeypatch, issuer="https://example.okta.com")
+
+    async def _boom(*_args: object, **_kwargs: object) -> str:
+        raise RuntimeError("upstream detail 4f2a")
+
+    monkeypatch.setattr(idp_groups, "_client_credentials_token", _boom)
+    with caplog.at_level(logging.WARNING, logger="memchentic.auth.idp_groups"):
+        result = await idp_groups.list_idp_groups(Settings())
+    assert result.groups == []
+    assert result.error == "Failed to list IdP groups; see the server log"
+    assert "IdP group listing failed" in caplog.text
+
+
+async def test_list_idp_groups_keeps_configuration_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A configuration problem found by this module is still shown as-is."""
+    _okta_env(monkeypatch, issuer="not-a-url")
+    result = await idp_groups.list_idp_groups(Settings())
+    assert result.error == "OAUTH_ISSUER is required for Okta group listing"

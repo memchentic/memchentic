@@ -1,3 +1,5 @@
+"""Per-request principal and database session for MCP tools."""
+
 from __future__ import annotations
 
 from contextvars import ContextVar
@@ -11,6 +13,11 @@ session_var: ContextVar[AsyncSession | None] = ContextVar("session", default=Non
 
 
 def require_principal() -> Principal:
+    """Return the request principal.
+
+    Raises:
+        PermissionError: When the request is not authenticated.
+    """
     principal = principal_var.get()
     if principal is None:
         raise PermissionError("Unauthorized")
@@ -18,6 +25,11 @@ def require_principal() -> Principal:
 
 
 def require_session() -> AsyncSession:
+    """Return the request database session.
+
+    Raises:
+        RuntimeError: When no session is bound to the request.
+    """
     session = session_var.get()
     if session is None:
         raise RuntimeError("No database session in context")

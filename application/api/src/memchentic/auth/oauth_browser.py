@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 import secrets
 from typing import Any
+from urllib.parse import urlencode
 
 from fastapi import HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
@@ -22,6 +24,8 @@ from memchentic.auth.sessions import (
 )
 from memchentic.auth.users import upsert_oauth_user
 from memchentic.settings import Settings, get_settings
+
+logger = logging.getLogger(__name__)
 
 OAUTH_STATE_COOKIE = "memchentic_oauth"
 OAUTH_NONCE_COOKIE = "memchentic_oauth_nonce"
@@ -172,8 +176,6 @@ async def finish_oauth_login(
     base = settings.base_url.rstrip("/")
 
     def fail(message: str) -> RedirectResponse:
-        from urllib.parse import urlencode
-
         resp = RedirectResponse(f"{base}/sign-in?{urlencode({'error': message})}", status_code=302)
         _clear_oauth_state_cookie(resp, settings)
         _clear_oauth_nonce_cookie(resp, settings)
@@ -213,7 +215,9 @@ async def finish_oauth_login(
         )
     except ValueError as exc:
         return fail(str(exc) or "OAuth login failed")
-    except Exception:  # noqa: BLE001 - IdP/network errors become a sign-in flash
+    except Exception:
+        # IdP/network errors become a sign-in flash.
+        logger.warning("OAuth callback failed", exc_info=True)
         return fail("OAuth login failed")
 
     raw, _ = await create_session(

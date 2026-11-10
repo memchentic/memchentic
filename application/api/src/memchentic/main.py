@@ -27,12 +27,18 @@ from memchentic.api.router import api_router
 from memchentic.api.security_headers import SecurityHeadersMiddleware
 from memchentic.auth.passwords import require_bcrypt_length
 from memchentic.auth.principal import resolve_bearer
+from memchentic.auth.providers import provider_label
 from memchentic.auth.tokens import verify_signing_key
+from memchentic.auth.users import ensure_admin_user
 from memchentic.db.session import get_session_factory, init_db, set_rls_context
+from memchentic.embeddings import get_embedder
 from memchentic.events import close_memory_streams, start_memory_listener, stop_memory_listener
 from memchentic.mcp.context import principal_var, session_var
 from memchentic.mcp.server import create_mcp
+from memchentic.services.auth_groups import ensure_auth_groups
 from memchentic.services.errors import ServiceError, http_error
+from memchentic.services.instance_settings import ensure_instance_settings, get_register_enabled
+from memchentic.services.memories import backfill_orphan_creators
 from memchentic.settings import Settings, get_settings
 
 logger = logging.getLogger("memchentic")
@@ -248,11 +254,6 @@ def create_app() -> FastAPI:
         else:
             logger.info("RUN_MIGRATIONS_ON_BOOT=false: extensions and migrations are skipped")
         async with get_session_factory()() as session:
-            from memchentic.auth.users import ensure_admin_user
-            from memchentic.services.auth_groups import ensure_auth_groups
-            from memchentic.services.instance_settings import ensure_instance_settings
-            from memchentic.services.memories import backfill_orphan_creators
-
             await set_rls_context(session, user_id=None, is_admin=True)
             admin = await ensure_admin_user(session, settings)
             await ensure_auth_groups(session, admin)
@@ -268,8 +269,6 @@ def create_app() -> FastAPI:
                 # Refuse to start when ENCRYPTION_KEY cannot decrypt the stored
                 # signing key; otherwise every sign-in fails at request time.
                 await verify_signing_key(session, settings)
-        from memchentic.embeddings import get_embedder
-
         # Fail closed before serving if MiniLM is missing (unless hash allowed).
         get_embedder()
         await start_memory_listener()
@@ -357,10 +356,6 @@ def create_app() -> FastAPI:
             Active provider name, public URLs, and whether web OAuth Sign-in
             is available (external IdP with ``OAUTH_CLIENT_ID`` set).
         """
-        from memchentic.auth.providers import provider_label
-        from memchentic.db.session import get_session_factory
-        from memchentic.services.instance_settings import get_register_enabled
-
         live = get_settings()
         async with get_session_factory()() as session:
             register_enabled = await get_register_enabled(session)
@@ -409,7 +404,11 @@ app = create_app()
 
 
 def run() -> None:
-    """Run the development server with autoreload."""
+    """Run a development server with autoreload (the ``memchentic`` console script).
+
+    Development only: it binds every interface and enables reload. The image and
+    the Compose overlay start ``uvicorn memchentic.main:app`` and never call this.
+    """
     import uvicorn
 
     # Development entry point; inside the container the server must listen on all interfaces.

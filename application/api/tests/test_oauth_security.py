@@ -525,3 +525,9 @@ def test_non_ascii_csrf_is_400(client: TestClient) -> None:
     )
     assert res.status_code == 400
     assert res.json()["detail"] == "Invalid CSRF token"
+
+
+def test_as_metadata_advertises_only_public_clients(client: TestClient) -> None:
+    """The internal AS supports public clients only, so only ``none`` is advertised."""
+    meta = client.get("/.well-known/oauth-authorization-server").json()
+    assert meta["token_endpoint_auth_methods_supported"] == ["none"]

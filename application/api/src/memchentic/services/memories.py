@@ -1,3 +1,5 @@
+"""Entry and guide services shared by the REST API and the MCP tools."""
+
 from __future__ import annotations
 
 import uuid
@@ -97,6 +99,15 @@ def _parse_entry_type(value: str) -> EntryType:
 
 
 def memory_to_dict(m: Memory, *, full: bool = False) -> dict[str, Any]:
+    """Serialise a memory for REST and MCP responses.
+
+    Args:
+        m: Memory row.
+        full: Include the full-only fields (for example ``provenance``).
+
+    Returns:
+        A JSON-ready dict.
+    """
     data = {
         "id": str(m.id),
         "space_id": str(m.space_id),
@@ -264,6 +275,7 @@ async def _touch_digests(
 
 
 def digest_to_dict(d: Digest) -> dict[str, Any]:
+    """Serialise a search digest for REST and MCP responses."""
     return {
         "id": d.id,
         "title": d.title,
@@ -455,7 +467,7 @@ def resolve_type_tokens(
 ) -> list[str] | None:
     """Normalize type filters to tokens (entry types and/or ``guide``).
 
-    Explicit ``types`` wins. Legacy ``kind`` / ``entry_type`` map to tokens.
+    Explicit ``types`` wins. Otherwise ``kind`` / ``entry_type`` map to tokens.
     None means no type restriction.
 
     Raises:
@@ -583,10 +595,21 @@ async def remember(
     path_hint: str | None = None,
     repo_hint: str | None = None,
     force: bool = False,
-    provenance: dict | None = None,
     group: str | None = None,
     visibility: Visibility | None = None,
 ) -> Memory:
+    """Create an entry in a space the caller can write to.
+
+    Without a space, writes to the caller's personal space (or the named or
+    default shared group).
+
+    Returns:
+        The new memory.
+
+    Raises:
+        ServiceError: When the space is not writable, the entry is a
+            near-duplicate (unless ``force``), or the input is invalid.
+    """
     title = check_title(title)
     body = check_body(body)
     tags = check_tags(tags)
@@ -626,7 +649,8 @@ async def remember(
         repo_hint=repo_hint,
         expires_at=expiry,
         embedding=embedding,
-        provenance=provenance or {},
+        # Parked: provenance is stored empty until a writer is designed (SEC-011).
+        provenance={},
         created_by_user_id=principal.user_id,
     )
     session.add(memory)
@@ -765,6 +789,18 @@ async def revise(
     ttl_days: int | None = None,
     permanent: bool = False,
 ) -> Memory:
+    """Patch an entry or guide.
+
+    Allowed for its creator, the group creator, or an administrator.
+
+    Returns:
+        The updated memory.
+
+    Raises:
+        NotFoundError: When the memory is not readable.
+        ForbiddenError: When the caller may not change it.
+        ValidationError: On invalid input.
+    """
     if title is not None:
         title = check_title(title)
     if body is not None:
@@ -819,6 +855,14 @@ async def revise(
 
 
 async def forget(session: AsyncSession, principal: Principal, memory_id: uuid.UUID) -> None:
+    """Delete an entry or guide.
+
+    Allowed for its creator, the group creator, or an administrator.
+
+    Raises:
+        NotFoundError: When the memory is not readable.
+        ForbiddenError: When the caller may not delete it.
+    """
     memory = await open_memory(session, principal, memory_id=memory_id)
     if not memory:
         raise NotFoundError("Memory not found")
@@ -843,6 +887,14 @@ async def browse(
     include_expired: bool = False,
     tags: list[str] | None = None,
 ) -> list[Memory]:
+    """List memories in readable spaces, newest first.
+
+    Returns:
+        Digests for the requested page.
+
+    Raises:
+        ValidationError: On invalid filters.
+    """
     offset = check_offset(offset)
     if tags is not None:
         tags = check_tags(tags)
@@ -894,6 +946,11 @@ async def since(
     tags: list[str] | None = None,
     offset: int = 0,
 ) -> list[Digest]:
+    """List memories in readable spaces updated in a time window.
+
+    Returns:
+        Digests ordered by ``updated_at``.
+    """
     if tags is not None:
         tags = check_tags(tags)
     offset = check_offset(offset)
@@ -925,6 +982,16 @@ async def by_tag(
     include_expired: bool = False,
     offset: int = 0,
 ) -> list[Digest]:
+    """List memories in readable spaces by tag.
+
+    ``mode`` is ``and`` (every tag must match) or ``or`` (any tag matches).
+
+    Returns:
+        Digests, newest first.
+
+    Raises:
+        ValidationError: On invalid tags or mode.
+    """
     tags = check_tags(tags)
     offset = check_offset(offset)
     if not tags:
@@ -953,6 +1020,18 @@ async def relocate(
     memory_id: uuid.UUID,
     target_space_id: uuid.UUID,
 ) -> Memory:
+    """Move an entry or guide to another space.
+
+    Allowed for its creator, the group creator, or an administrator; the
+    destination must be writable.
+
+    Returns:
+        The moved memory.
+
+    Raises:
+        NotFoundError: When the memory is not readable.
+        ForbiddenError: When the move is not allowed.
+    """
     memory = await open_memory(session, principal, memory_id=memory_id)
     if not memory:
         raise NotFoundError("Memory not found")
@@ -985,6 +1064,14 @@ async def find(
     offset: int = 0,
     include_expired: bool = False,
 ) -> list[Digest]:
+    """Hybrid search over readable spaces (entries by default).
+
+    Returns:
+        Digests, best first.
+
+    Raises:
+        ValidationError: On invalid filters.
+    """
     query = check_query(query)
     offset = check_offset(offset)
     if tags is not None:
@@ -1041,7 +1128,7 @@ async def search(
     space_ids = await accessible_space_ids(session, principal, space_id, space_scope=space_scope)
     tokens = resolve_type_tokens(types=types, kind=kind, entry_type=entry_type)
     if tokens is None and kind is None and entry_type is None:
-        # Default REST search historically searched entries only.
+        # No type filter given: REST search covers entries only; guides need an explicit type.
         tokens = [e.value for e in EntryType]
     digests = await hybrid_search(
         session,
@@ -1165,6 +1252,11 @@ async def guide_find(
     tags: list[str] | None = None,
     offset: int = 0,
 ) -> list[Digest]:
+    """Hybrid search over guides in readable spaces.
+
+    Returns:
+        Digests, best first.
+    """
     query = check_query(query)
     if tags is not None:
         tags = check_tags(tags)
@@ -1241,6 +1333,11 @@ async def about_path(
 async def trace(
     session: AsyncSession, principal: Principal, memory_id: uuid.UUID
 ) -> dict[str, Any]:
+    """Return who created and last changed a memory, and when.
+
+    Raises:
+        NotFoundError: When the memory is not readable.
+    """
     memory = await open_memory(session, principal, memory_id=memory_id)
     if not memory:
         raise NotFoundError("Memory not found")

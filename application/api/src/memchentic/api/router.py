@@ -1,3 +1,5 @@
+"""REST API routes under ``/api`` for the GUI and HTTP clients."""
+
 from __future__ import annotations
 
 import asyncio
@@ -16,6 +18,8 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from memchentic.auth.idp_groups import list_idp_groups
+from memchentic.auth.oauth_browser import finish_oauth_login, start_oauth_login
 from memchentic.auth.passwords import password_too_long
 from memchentic.auth.principal import Principal, check_admin_password, resolve_bearer
 from memchentic.auth.rate_limit import check_rate_limit, client_ip
@@ -32,6 +36,7 @@ from memchentic.auth.users import (
     authenticate_internal,
     delete_user,
     directory_user_visible,
+    ensure_admin_user,
     get_user,
     get_user_by_email,
     list_directory_users,
@@ -43,7 +48,8 @@ from memchentic.auth.users import (
 )
 from memchentic.db.session import get_session_factory, set_rls_context
 from memchentic.deps import db_session, get_optional_principal, get_principal
-from memchentic.events import STREAM_CLOSED, subscribe_memory_events
+from memchentic.embeddings import get_embedder
+from memchentic.events import STREAM_CLOSED, memory_listener_state, subscribe_memory_events
 from memchentic.models.entities import User
 from memchentic.services import api_keys as api_key_service
 from memchentic.services import auth_groups as auth_group_service
@@ -83,6 +89,8 @@ TtlDays = Annotated[int, Field(ge=0, le=limits.TTL_DAYS_MAX)]
 
 
 class RegisterIn(BaseModel):
+    """Request body for internal-mode registration."""
+
     email: EmailStr
     password: str = Field(min_length=8)
     display_name: str | None = Field(default=None, max_length=limits.DISPLAY_NAME_MAX)
@@ -96,12 +104,16 @@ class RegisterIn(BaseModel):
 
 
 class LoginIn(BaseModel):
+    """Request body for email and password login."""
+
     email: str = Field(min_length=1, max_length=limits.EMAIL_MAX)
     password: str = Field(min_length=1, max_length=limits.PASSWORD_INPUT_MAX)
     remember: bool = False
 
 
 class RememberIn(BaseModel):
+    """Request body for creating an entry."""
+
     title: TitleStr
     body: BodyStr
     type: TypeStr = "note"
@@ -118,10 +130,14 @@ class RememberIn(BaseModel):
 
 
 class MeIn(BaseModel):
+    """Request body for updating the caller's preferences."""
+
     default_shared_space_id: IdStr | None = None
 
 
 class ReviseIn(BaseModel):
+    """Request body for patching an entry or guide."""
+
     title: TitleStr | None = None
     body: BodyStr | None = None
     type: TypeStr | None = None
@@ -135,15 +151,21 @@ class ReviseIn(BaseModel):
 
 
 class GroupIn(BaseModel):
+    """Request body for creating or renaming a group."""
+
     name: SpaceNameStr
 
 
 class MemberIn(BaseModel):
+    """Request body for adding a group member by user id or email."""
+
     user_id: IdStr | None = None
     email: EmailText | None = None
 
 
 class ApiKeyIn(BaseModel):
+    """Request body for creating an API key."""
+
     name: KeyNameStr = "default"
     user_id: IdStr | None = None
 
@@ -156,6 +178,8 @@ class ApiKeyCycleIn(BaseModel):
 
 
 class GuideIn(BaseModel):
+    """Request body for writing a guide."""
+
     title: TitleStr
     body: BodyStr
     tags: TagList = Field(default_factory=list)
@@ -176,10 +200,6 @@ async def health() -> dict[str, str]:
         listener is ``listening``; otherwise ``degraded``. ``events`` is the
         listener state: ``listening``, ``reconnecting`` or ``stopped``.
     """
-    from memchentic.embeddings import get_embedder
-    from memchentic.events import memory_listener_state
-    from memchentic.settings import get_settings
-
     settings = get_settings()
     try:
         backend = get_embedder().backend
@@ -211,8 +231,6 @@ async def ready() -> JSONResponse:
         JSON with ``status`` (``ready`` or ``not_ready``), ``database`` and
         ``embedder``. HTTP 503 when not ready.
     """
-    from memchentic.embeddings import get_embedder
-
     settings = get_settings()
     database = "ok"
     try:
@@ -242,17 +260,16 @@ async def ready() -> JSONResponse:
 _SSE_REAUTH_SECONDS = 10.0
 
 
-async def _reauth_memory_events(
-    token: str | None,
-) -> tuple[Principal, set[str]] | None:
+async def _reauth_memory_events(token: str | None) -> set[str] | None:
     """Re-resolve bearer auth and readable space ids on a fresh DB session.
 
     Args:
         token: Original Authorization bearer token (JWT or API key).
 
     Returns:
-        ``(principal, allowed_space_ids)`` when the token is still valid,
-        otherwise ``None`` (caller should end the SSE stream).
+        The readable space ids when the token is still valid, otherwise
+        ``None`` (caller should end the SSE stream). An empty set is a valid
+        result: the caller is authenticated and can read no space.
     """
     factory = get_session_factory()
     async with factory() as session:
@@ -260,10 +277,9 @@ async def _reauth_memory_events(
         if principal is None:
             return None
         await set_rls_context(session, user_id=principal.user_id, is_admin=principal.is_admin)
-        allowed = {
+        return {
             str(sid) for sid in await memory_service.accessible_space_ids(session, principal, None)
         }
-        return principal, allowed
 
 
 @api_router.get("/events/memories")
@@ -281,10 +297,10 @@ async def memory_events(request: Request) -> StreamingResponse:
     initial = await _reauth_memory_events(token)
     if initial is None:
         raise HTTPException(status_code=401, detail="Unauthorized")
-    principal, allowed = initial
+    allowed = initial
 
     async def gen() -> AsyncIterator[bytes]:
-        nonlocal principal, allowed
+        nonlocal allowed
         last_reauth = time.monotonic()
         yield b": connected\n\n"
         async with subscribe_memory_events() as queue:
@@ -295,7 +311,7 @@ async def memory_events(request: Request) -> StreamingResponse:
                     refreshed = await _reauth_memory_events(token)
                     if refreshed is None:
                         return
-                    principal, allowed = refreshed
+                    allowed = refreshed
                     last_reauth = time.monotonic()
                     yield b": keepalive\n\n"
                     continue
@@ -308,7 +324,7 @@ async def memory_events(request: Request) -> StreamingResponse:
                     refreshed = await _reauth_memory_events(token)
                     if refreshed is None:
                         return
-                    principal, allowed = refreshed
+                    allowed = refreshed
                     last_reauth = now
                 space_id = str(event.get("space_id") or "")
                 if space_id not in allowed:
@@ -334,6 +350,12 @@ async def register(
     session: AsyncSession = Depends(db_session),
     principal: Principal | None = Depends(get_optional_principal),
 ) -> dict:
+    """Register an internal user.
+
+    Internal mode only. Open while self-registration is enabled; otherwise
+    administrators only. Rate limited per client. Errors: 400 outside internal
+    mode, 403 when registration is closed, 429.
+    """
     settings = get_settings()
     ip = client_ip(request)
     check_rate_limit(f"register:{ip}", limit=10, window_seconds=60)
@@ -404,6 +426,11 @@ async def login(
     response: Response,
     session: AsyncSession = Depends(db_session),
 ) -> dict:
+    """Sign in with email and password and return an access token.
+
+    Public. Sets a GUI session cookie. Rate limited per client and per account.
+    Errors: 400 outside internal mode, 401 on bad credentials, 429.
+    """
     settings = get_settings()
     ip = client_ip(request)
     # Per-client cap first: a new email must not give a new allowance.
@@ -412,24 +439,22 @@ async def login(
     # (normalize_email: strip + casefold). Hashed so the key has a fixed size.
     email_key = hashlib.sha256(body.email.strip().casefold().encode("utf-8", "replace")).hexdigest()
     check_rate_limit(f"login:{ip}:{email_key}", limit=20, window_seconds=60)
-    # Prefer a real DB user when email+password match; break-glass is fallback.
+    # Prefer a real DB user when email+password match. ensure_admin_user() syncs
+    # the ADMIN_EMAIL row with ADMIN_PASSWORD at startup, so the break-glass
+    # branch below is reached only if that row was changed after startup (for
+    # example its email was rewritten by an IdP sign-in). It re-ensures the row.
     user = await authenticate_internal(session, email=body.email, password=body.password)
     if user:
-        from memchentic.services.auth_groups import user_is_administrator
-
         subject, email, provider, user_id = str(user.id), user.email, user.provider, user.id
         extra = {
-            "is_admin": await user_is_administrator(session, user.id),
+            "is_admin": await auth_group_service.user_is_administrator(session, user.id),
             "id": str(user.id),
             "email": user.email,
             "display_name": user.display_name,
         }
     elif check_admin_password(body.email, body.password, settings):
-        from memchentic.auth.users import ensure_admin_user
-        from memchentic.services.auth_groups import ensure_auth_groups
-
         admin = await ensure_admin_user(session, settings)
-        await ensure_auth_groups(session, admin)
+        await auth_group_service.ensure_auth_groups(session, admin)
         subject, email, provider, user_id = (
             str(admin.id),
             admin.email,
@@ -503,8 +528,6 @@ async def logout(
 @api_router.get("/auth/oauth/start", response_model=None)
 async def oauth_web_start(remember: bool = False) -> Response:
     """Begin browser OAuth against the configured external IdP."""
-    from memchentic.auth.oauth_browser import start_oauth_login
-
     return await start_oauth_login(remember=remember)
 
 
@@ -517,8 +540,6 @@ async def oauth_web_callback(
     error: str | None = None,
 ) -> Response:
     """Finish browser OAuth: upsert user, set session cookie, redirect home."""
-    from memchentic.auth.oauth_browser import finish_oauth_login
-
     return await finish_oauth_login(request, session, code=code, state=state, error=error)
 
 
@@ -527,6 +548,7 @@ async def me(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict[str, Any]:
+    """Return the caller's identity, spaces and pending invites. Authenticated callers."""
     return await space_service.me_payload(session, principal, invite_details=True)
 
 
@@ -536,6 +558,10 @@ async def patch_me(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict[str, Any]:
+    """Set the caller's default shared group. Authenticated callers.
+
+    Errors: 4xx when the group id is invalid or cannot be used.
+    """
     await space_service.set_default_shared_space(
         session, principal, parse_uuid(body.default_shared_space_id, "default_shared_space_id")
     )
@@ -661,6 +687,7 @@ async def spaces(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> list[dict]:
+    """List the spaces the caller can read. Authenticated callers."""
     rows = await space_service.list_spaces(session, principal)
     return [space_service.space_to_dict(s) for s in rows]
 
@@ -671,6 +698,7 @@ async def create_space(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict:
+    """Create a group owned by the caller. Authenticated users."""
     space = await space_service.create_group(session, principal, name=body.name)
     return space_service.space_to_dict(space)
 
@@ -681,6 +709,10 @@ async def show_space(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict:
+    """Return one space with its members. Callers who can read the space.
+
+    Errors: 404 when the space does not exist or is not readable.
+    """
     space = await space_service.show_space(session, principal, space_id)
     if not space:
         raise HTTPException(404, "Not found")
@@ -694,6 +726,10 @@ async def rename_space(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict:
+    """Rename a space. The group creator, the personal-space owner, or an administrator.
+
+    Errors: 403 when not allowed, 404 when the space does not exist.
+    """
     space = await space_service.rename_space(session, principal, space_id, body.name)
     return space_service.space_to_dict(space)
 
@@ -704,6 +740,10 @@ async def delete_space(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict:
+    """Delete a group. The group creator or an administrator.
+
+    Errors: 403 when not allowed, 404 when the space does not exist.
+    """
     await space_service.delete_space(session, principal, space_id)
     return {"status": "ok"}
 
@@ -755,6 +795,10 @@ async def remove_member(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict:
+    """Remove a member from a group.
+
+    Errors: 403 when not allowed, 404 when the space or member does not exist.
+    """
     await space_service.remove_member(session, principal, space_id, user_id)
     return {"status": "ok"}
 
@@ -798,6 +842,10 @@ async def browse_memories(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> list[dict]:
+    """List entries and guides in the spaces the caller can read, newest first.
+
+    Authenticated callers. Errors: 400 or 422 on invalid filters.
+    """
     rows = await memory_service.browse(
         session,
         principal,
@@ -832,6 +880,11 @@ async def search_memories(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> list[dict]:
+    """Hybrid search over the spaces the caller can read.
+
+    Authenticated callers. Without a type filter only entries are searched.
+    Errors: 400 or 422 on invalid filters.
+    """
     digests = await memory_service.search(
         session,
         principal,
@@ -858,6 +911,11 @@ async def create_memory(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict:
+    """Create an entry in a space the caller can write to.
+
+    Authenticated callers. Errors: 403 when the space is not writable,
+    4xx on a refused near-duplicate or invalid input.
+    """
     memory = await memory_service.remember(
         session,
         principal,
@@ -905,6 +963,10 @@ async def patch_memory(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict:
+    """Patch an entry or guide. Its creator, the group creator, or an administrator.
+
+    Errors: 403 when not allowed, 404 when it does not exist, 422 on invalid input.
+    """
     memory = await memory_service.revise(
         session,
         principal,
@@ -929,6 +991,10 @@ async def delete_memory(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict:
+    """Delete an entry or guide. Its creator, the group creator, or an administrator.
+
+    Errors: 403 when not allowed, 404 when it does not exist.
+    """
     await memory_service.forget(session, principal, memory_id)
     return {"status": "deleted", "id": str(memory_id)}
 
@@ -939,6 +1005,11 @@ async def create_guide(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict:
+    """Write a guide; a near-duplicate in the same space is updated instead.
+
+    Authenticated callers. Errors: 403 when the space is not writable,
+    422 on invalid input.
+    """
     memory = await memory_service.guide_write(
         session,
         principal,
@@ -980,6 +1051,11 @@ async def create_key(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict:
+    """Create an API key and return the raw key once.
+
+    Users create keys for themselves; administrators may pass ``user_id``.
+    Errors: 403 when creating a key for another user without admin rights.
+    """
     key, raw = await api_key_service.create_api_key(
         session, principal, name=body.name, user_id=parse_uuid(body.user_id, "user_id")
     )
@@ -1018,20 +1094,30 @@ async def revoke_key(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict:
+    """Revoke an API key. Its owner or an administrator.
+
+    Errors: 403 when not allowed, 404 when the key does not exist.
+    """
     await api_key_service.revoke_api_key(session, principal, key_id)
     return {"status": "revoked"}
 
 
 class AuthGroupMemberIn(BaseModel):
+    """Request body for adding a user to an auth group."""
+
     user_id: IdStr
 
 
 class AuthGroupIdpBindIn(BaseModel):
+    """Request body for binding an auth group to an IdP group."""
+
     idp_group_id: str | None = Field(default=None, max_length=limits.IDP_GROUP_MAX)
     idp_group_name: str | None = Field(default=None, max_length=limits.IDP_GROUP_MAX)
 
 
 class RegistrationSettingIn(BaseModel):
+    """Request body for turning self-registration on or off."""
+
     enabled: bool
 
 
@@ -1062,6 +1148,7 @@ async def list_auth_groups(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> list[dict[str, Any]]:
+    """List auth groups. Administrators only (403 otherwise)."""
     return await auth_group_service.list_groups(session, principal)
 
 
@@ -1072,8 +1159,6 @@ async def list_auth_idp_groups(
     """Admin: list IdP directory groups for the Bound IdP group dropdown."""
     if not principal.is_admin:
         raise HTTPException(403, "Administrators only")
-    from memchentic.auth.idp_groups import list_idp_groups
-
     result = await list_idp_groups(get_settings())
     return {
         "provider": result.provider,
@@ -1089,6 +1174,10 @@ async def get_auth_group_idp_bind(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict[str, Any]:
+    """Return the IdP group bound to an auth group.
+
+    Administrators only. Errors: 403, 404 when the group does not exist.
+    """
     return await auth_group_service.get_idp_bind(session, principal, slug)
 
 
@@ -1099,6 +1188,10 @@ async def put_auth_group_idp_bind(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict[str, Any]:
+    """Bind an auth group to an IdP group, or clear the bind.
+
+    Administrators only. Errors: 403, 404 when the group does not exist.
+    """
     return await auth_group_service.set_idp_bind(
         session,
         principal,
@@ -1114,6 +1207,10 @@ async def list_auth_group_members(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> list[dict[str, Any]]:
+    """List the members of an auth group.
+
+    Administrators only. Errors: 403, 404 when the group does not exist.
+    """
     return await auth_group_service.list_members(session, principal, slug)
 
 
@@ -1124,6 +1221,10 @@ async def add_auth_group_member(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict[str, Any]:
+    """Add a user to an auth group.
+
+    Administrators only. Errors: 403 (also for IdP-bound rosters), 404.
+    """
     return await auth_group_service.add_member(
         session, principal, slug, require_uuid(body.user_id, "user_id")
     )
@@ -1136,5 +1237,9 @@ async def remove_auth_group_member(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict[str, str]:
+    """Remove a user from an auth group.
+
+    Administrators only. Errors: 403 (also for IdP-bound rosters), 404.
+    """
     await auth_group_service.remove_member(session, principal, slug, user_id)
     return {"status": "removed"}

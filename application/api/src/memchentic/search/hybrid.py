@@ -1,3 +1,5 @@
+"""Hybrid vector and keyword search over memories, fused with RRF."""
+
 from __future__ import annotations
 
 import math
@@ -192,6 +194,8 @@ def rerank_score(
 
 @dataclass
 class Digest:
+    """Compact search or listing result for one memory."""
+
     id: str
     title: str
     score: float
@@ -232,6 +236,15 @@ def rrf_fuse(
     *,
     k: int,
 ) -> list[tuple[uuid.UUID, float]]:
+    """Fuse ranked id lists with reciprocal rank fusion.
+
+    Args:
+        ranked_lists: Id lists, best first.
+        k: RRF damping constant.
+
+    Returns:
+        ``(id, score)`` pairs, highest score first.
+    """
     scores: dict[uuid.UUID, float] = {}
     for ranked in ranked_lists:
         for rank, item_id in enumerate(ranked, start=1):
@@ -246,13 +259,20 @@ async def hybrid_search(
     space_ids: list[uuid.UUID] | None = None,
     type_tokens: Sequence[str] | None = None,
     tags: list[str] | None = None,
-    tag_mode: str = "and",
     path_hint: str | None = None,
     repo_hint: str | None = None,
     limit: int | None = None,
     offset: int = 0,
     include_expired: bool = False,
 ) -> list[Digest]:
+    """Search memories with vector and keyword legs fused by RRF.
+
+    The caller restricts ``space_ids`` to readable spaces; this function does
+    no access check.
+
+    Returns:
+        Digests for the requested page, best first.
+    """
     settings = get_settings()
     if not (query or "").strip():
         return []
@@ -291,10 +311,7 @@ async def hybrid_search(
     if repo_hint:
         base_filters.append(Memory.repo_hint.ilike(f"%{escape_ilike(repo_hint)}%", escape="\\"))
     if tags:
-        if tag_mode == "or":
-            base_filters.append(Memory.tags.overlap(tags))
-        else:
-            base_filters.append(Memory.tags.contains(tags))
+        base_filters.append(Memory.tags.contains(tags))
 
     # Vector branch. pgvector cosine_distance = 1 - cosine_similarity, and the
     # embeddings are unit vectors, so "similarity >= floor" is

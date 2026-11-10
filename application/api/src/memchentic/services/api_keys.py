@@ -1,3 +1,5 @@
+"""Per-user API keys: create, list, cycle and revoke."""
+
 from __future__ import annotations
 
 import secrets
@@ -79,46 +81,24 @@ async def create_api_key(
     return key, raw
 
 
-async def list_api_keys(
-    session: AsyncSession, principal: Principal, user_id: uuid.UUID | None = None
-) -> list[ApiKey]:
+async def list_api_keys(session: AsyncSession, principal: Principal) -> list[ApiKey]:
     """List active API keys.
 
-    Non-admins always see only their own keys. Admins see every active key
-    unless ``user_id`` narrows the list to one account.
+    Non-admins see only their own keys. Admins see every active key.
 
     Args:
         session: Database session.
         principal: Authenticated caller.
-        user_id: Optional filter; non-admins may only pass their own id.
 
     Returns:
         Active (non-revoked) keys, newest first.
     """
+    stmt = select(ApiKey).where(ApiKey.revoked_at.is_(None)).order_by(ApiKey.created_at.desc())
     if not principal.is_admin:
-        target = principal.user_id
-        if user_id is not None and user_id != target:
-            raise ForbiddenError("Cannot list other users' keys")
-        if not target:
+        if not principal.user_id:
             return []
-        result = await session.execute(
-            select(ApiKey)
-            .where(ApiKey.user_id == target, ApiKey.revoked_at.is_(None))
-            .order_by(ApiKey.created_at.desc())
-        )
-        return list(result.scalars())
-
-    if user_id is not None:
-        result = await session.execute(
-            select(ApiKey)
-            .where(ApiKey.user_id == user_id, ApiKey.revoked_at.is_(None))
-            .order_by(ApiKey.created_at.desc())
-        )
-        return list(result.scalars())
-
-    result = await session.execute(
-        select(ApiKey).where(ApiKey.revoked_at.is_(None)).order_by(ApiKey.created_at.desc())
-    )
+        stmt = stmt.where(ApiKey.user_id == principal.user_id)
+    result = await session.execute(stmt)
     return list(result.scalars())
 
 

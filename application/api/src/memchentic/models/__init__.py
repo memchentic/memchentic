@@ -1,31 +1,7 @@
-from memchentic.models.base import Base
-from memchentic.models.entities import (
-    ApiKey,
-    AuthCode,
-    AuthGroup,
-    AuthGroupMember,
-    AuthRefreshToken,
-    InternalSigningKey,
-    Memory,
-    OAuthClient,
-    Space,
-    SpaceMember,
-    User,
-    UserIdentity,
-)
+"""SQLAlchemy models. Importing this package registers every table on ``Base.metadata``."""
 
-__all__ = [
-    "ApiKey",
-    "AuthCode",
-    "AuthGroup",
-    "AuthGroupMember",
-    "AuthRefreshToken",
-    "Base",
-    "InternalSigningKey",
-    "Memory",
-    "OAuthClient",
-    "Space",
-    "SpaceMember",
-    "User",
-    "UserIdentity",
-]
+from memchentic.models import entities
+from memchentic.models.base import Base
+from memchentic.models.entities import Memory
+
+__all__ = ["Base", "Memory", "entities"]

@@ -9,15 +9,12 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from memchentic.auth.users import ensure_admin_user, get_user_by_email, upsert_oauth_user
+from memchentic.auth.users import get_user_by_email
 from memchentic.db.session import get_session_factory
-from memchentic.services.auth_groups import (
-    SLUG_ADMINISTRATORS,
-    SLUG_USERS,
-    ensure_auth_groups,
-    set_idp_bind,
-)
+from memchentic.services.auth_groups import set_idp_bind
+from memchentic.services.auth_roster import SLUG_ADMINISTRATORS, SLUG_USERS, ensure_auth_groups
 from memchentic.services.instance_settings import ensure_instance_settings, set_register_enabled
+from memchentic.services.users import ensure_admin_user, upsert_oauth_user
 
 ADMIN_KEY = os.environ.get("ADMIN_API_KEY", "")
 

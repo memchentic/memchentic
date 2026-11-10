@@ -11,18 +11,13 @@ from fastapi import HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from memchentic.auth.providers import (
-    build_authorize_url,
-    exchange_code_for_profile,
-    pkce_pair,
-)
 from memchentic.auth.sessions import (
-    SESSION_COOKIE,
     SESSION_COOKIE_PATH,
     create_session,
-    session_lifetime,
+    set_session_cookie,
 )
-from memchentic.auth.users import upsert_oauth_user
+from memchentic.auth.web_oauth import build_authorize_url, exchange_code_for_profile, pkce_pair
+from memchentic.services.users import upsert_oauth_user
 from memchentic.settings import Settings, get_settings
 
 logger = logging.getLogger(__name__)
@@ -98,18 +93,6 @@ def _read_oauth_state(request: Request) -> dict[str, Any] | None:
     if not raw:
         return None
     return _decode_oauth_state(raw)
-
-
-def _set_session_cookie(response: Response, raw: str, persistent: bool, settings: Settings) -> None:
-    response.set_cookie(
-        SESSION_COOKIE,
-        raw,
-        max_age=(int(session_lifetime(True, settings).total_seconds()) if persistent else None),
-        path=SESSION_COOKIE_PATH,
-        secure=settings.cookie_secure,
-        httponly=True,
-        samesite="strict",
-    )
 
 
 async def start_oauth_login(
@@ -230,7 +213,7 @@ async def finish_oauth_login(
         settings=settings,
     )
     response = RedirectResponse(f"{base}/", status_code=302)
-    _set_session_cookie(response, raw, remember, settings)
+    set_session_cookie(response, raw, remember, settings)
     _clear_oauth_state_cookie(response, settings)
     _clear_oauth_nonce_cookie(response, settings)
     return response

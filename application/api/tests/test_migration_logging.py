@@ -11,7 +11,7 @@ from alembic import command
 
 def test_boot_migrations_keep_process_logging() -> None:
     """The programmatic run used at boot leaves logging exactly as it was."""
-    from memchentic.main import _alembic_config
+    from memchentic.db.migrate import _alembic_config
 
     probe = logging.getLogger("memchentic.migration_logging_probe")
     uvicorn_error = logging.getLogger("uvicorn.error")

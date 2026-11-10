@@ -9,7 +9,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 import memchentic.search.hybrid as hybrid_module
+from memchentic.services import guides as guide_service
 from memchentic.services import memories as memory_service
+from memchentic.services import memory_hygiene
 
 
 class _AxisEmbedder:
@@ -43,6 +45,8 @@ def axis_embedder(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = _AxisEmbedder()
     monkeypatch.setattr(hybrid_module, "get_embedder", lambda: fake)
     monkeypatch.setattr(memory_service, "get_embedder", lambda: fake)
+    monkeypatch.setattr(memory_hygiene, "get_embedder", lambda: fake)
+    monkeypatch.setattr(guide_service, "get_embedder", lambda: fake)
 
 
 def _user(client: TestClient) -> dict[str, str]:

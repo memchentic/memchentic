@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any
 
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -15,8 +15,31 @@ from memchentic.auth.principal import Principal
 from memchentic.db.session import commit_with_rls, set_rls_context
 from memchentic.models.entities import Space, SpaceKind, SpaceMember, User
 from memchentic.services import limits
-from memchentic.services.errors import ForbiddenError, NotFoundError, ValidationError
-from memchentic.services.validation import check_name
+from memchentic.services.errors import ForbiddenError, NotFoundError
+from memchentic.services.validation import check_name, parse_space_scope
+
+
+async def _insert_space(
+    session: AsyncSession,
+    *,
+    space_id: uuid.UUID,
+    kind: SpaceKind,
+    name: str,
+    created_by: uuid.UUID,
+) -> None:
+    """Insert a space and its creator membership through ``app_insert_space``.
+
+    Args:
+        session: Database session with the creator bound as ``app.user_id``.
+        space_id: Id of the new space.
+        kind: Personal or group.
+        name: Space name.
+        created_by: User who owns the space and becomes its first member.
+    """
+    await session.execute(
+        text("SELECT app_insert_space(:id, CAST(:kind AS space_kind), :name, :created_by)"),
+        {"id": space_id, "kind": kind.value, "name": name, "created_by": created_by},
+    )
 
 
 async def ensure_personal_space(session: AsyncSession, user: User) -> Space:
@@ -34,14 +57,12 @@ async def ensure_personal_space(session: AsyncSession, user: User) -> Space:
     # SECURITY DEFINER helper evaluates WITH CHECK under the caller's GUC and
     # inserts the membership row in the same privileged statement (avoids the
     # INSERT…RETURNING + SELECT-policy race under FORCE RLS).
-    await session.execute(
-        text("SELECT app_insert_space(:id, CAST(:kind AS space_kind), :name, :created_by)"),
-        {
-            "id": space_id,
-            "kind": SpaceKind.personal.value,
-            "name": "Personal",
-            "created_by": user.id,
-        },
+    await _insert_space(
+        session,
+        space_id=space_id,
+        kind=SpaceKind.personal,
+        name="Personal",
+        created_by=user.id,
     )
     await session.flush()
     space = await session.get(Space, space_id)
@@ -79,8 +100,6 @@ async def list_member_spaces(session: AsyncSession, principal: Principal) -> lis
     Returns:
         The caller's personal space and groups, unarchived.
     """
-    if not principal.user_id:
-        return []
     result = await session.execute(
         select(Space)
         .join(SpaceMember, SpaceMember.space_id == Space.id)
@@ -114,19 +133,15 @@ async def create_group(session: AsyncSession, principal: Principal, *, name: str
         ForbiddenError: When the caller has no user id.
         ValidationError: On an invalid name.
     """
-    if not principal.user_id:
-        raise ForbiddenError("Authentication required")
     name = check_name(name, "name", limits.SPACE_NAME_MAX)
     owner_id = principal.user_id
     space_id = uuid.uuid4()
-    await session.execute(
-        text("SELECT app_insert_space(:id, CAST(:kind AS space_kind), :name, :created_by)"),
-        {
-            "id": space_id,
-            "kind": SpaceKind.group.value,
-            "name": name.strip(),
-            "created_by": owner_id,
-        },
+    await _insert_space(
+        session,
+        space_id=space_id,
+        kind=SpaceKind.group,
+        name=name.strip(),
+        created_by=owner_id,
     )
     # Load before commit: commit/check-in clears RLS GUCs and would hide the row.
     space = await session.get(Space, space_id)
@@ -155,8 +170,6 @@ async def show_space(
         return None
     if principal.is_admin:
         return space
-    if not principal.user_id:
-        return None
     member_ids = {m.user_id for m in space.members if m.accepted_at is not None}
     if principal.user_id not in member_ids:
         return None
@@ -238,13 +251,13 @@ async def me_payload(
         the caller's memberships, and the pending invites (list or count).
     """
     spaces = await list_member_spaces(session, principal)
-    personal = await get_personal_space(session, principal.user_id) if principal.user_id else None
-    user = await session.get(User, principal.user_id) if principal.user_id else None
+    personal = await get_personal_space(session, principal.user_id)
+    user = await session.get(User, principal.user_id)
     default_shared = user.default_shared_space_id if user else None
     invites = await list_pending_invites(session, principal)
     payload: dict[str, Any] = {
         "default_shared_space_id": str(default_shared) if default_shared else None,
-        "id": str(principal.user_id) if principal.user_id else None,
+        "id": str(principal.user_id),
         "subject": principal.subject,
         "email": principal.email,
         "display_name": principal.display_name,
@@ -286,8 +299,6 @@ async def get_readable_space(
     """
     stmt = select(Space).where(Space.id == space_id)
     if not principal.is_admin:
-        if not principal.user_id:
-            return None
         stmt = stmt.join(SpaceMember, SpaceMember.space_id == Space.id).where(
             SpaceMember.user_id == principal.user_id,
             SpaceMember.accepted_at.is_not(None),
@@ -324,8 +335,6 @@ async def list_visible_groups_for_user(
             .order_by(Space.name.asc())
         )
         return list(result.scalars().unique())
-    if not principal.user_id:
-        return []
     target_m = aliased(SpaceMember)
     caller_m = aliased(SpaceMember)
     result = await session.execute(
@@ -349,7 +358,7 @@ def can_manage_group(space: Space, principal: Principal) -> bool:
     """Return True for an administrator or the group creator."""
     if principal.is_admin:
         return True
-    return bool(principal.user_id and space.created_by_user_id == principal.user_id)
+    return space.created_by_user_id == principal.user_id
 
 
 async def require_roster_manager(
@@ -438,8 +447,6 @@ async def accept_invite(session: AsyncSession, principal: Principal, space_id: u
         ForbiddenError: The caller is not authenticated.
         NotFoundError: The caller has no invite or membership in that group.
     """
-    if not principal.user_id:
-        raise ForbiddenError("Authentication required")
     result = await session.execute(
         select(SpaceMember).where(
             SpaceMember.space_id == space_id,
@@ -472,8 +479,6 @@ async def list_pending_invites(session: AsyncSession, principal: Principal) -> l
     Returns:
         One dict per pending invite: group id, group name, creator labels.
     """
-    if not principal.user_id:
-        return []
     creator = aliased(User)
     result = await session.execute(
         select(Space, creator)
@@ -517,7 +522,7 @@ async def remove_member(
         ForbiddenError: Caller may not manage the roster, or the target is
             the group creator.
     """
-    leaving_self = principal.user_id is not None and principal.user_id == user_id
+    leaving_self = principal.user_id == user_id
     space = await show_space(session, principal, space_id)
     if space is None and leaving_self:
         # Not a member yet: the caller may still delete their own pending row.
@@ -581,15 +586,6 @@ async def rename_space(
     return space
 
 
-def can_delete_group(space: Space, principal: Principal) -> bool:
-    """True when the caller owns the group (or is break-glass admin)."""
-    if space.kind != SpaceKind.group:
-        return False
-    if principal.user_id and space.created_by_user_id == principal.user_id:
-        return True
-    return bool(principal.is_admin)
-
-
 async def delete_space(session: AsyncSession, principal: Principal, space_id: uuid.UUID) -> None:
     """Hard-delete a group the principal owns (memories and members cascade).
 
@@ -605,164 +601,42 @@ async def delete_space(session: AsyncSession, principal: Principal, space_id: uu
     space = await show_space(session, principal, space_id)
     if not space or space.kind != SpaceKind.group:
         raise NotFoundError("Group not found")
-    if not can_delete_group(space, principal):
+    if not can_manage_group(space, principal):
         raise ForbiddenError("Only the group owner can delete")
     await session.delete(space)
     await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
 
 
-Visibility = Literal["personal", "shared"]
-
-
-class SpaceResolveError(ValidationError):
-    """A write target (group name or shared default) did not resolve to one group."""
-
-
-def _group_choices(groups: list[Space]) -> str:
-    return ", ".join(f"{g.name} ({g.id})" for g in groups) or "none"
-
-
-async def _member_groups(session: AsyncSession, principal: Principal) -> list[Space]:
-    """Groups the caller belongs to (membership join — not admin instance-wide list)."""
-    if not principal.user_id:
-        return []
-    result = await session.execute(
-        select(Space)
-        .join(SpaceMember, SpaceMember.space_id == Space.id)
-        .where(
-            SpaceMember.user_id == principal.user_id,
-            SpaceMember.accepted_at.is_not(None),
-            Space.archived_at.is_(None),
-            Space.kind == SpaceKind.group,
-        )
-        .order_by(Space.name.asc())
-    )
-    return list(result.scalars())
-
-
-async def resolve_group_by_name(session: AsyncSession, principal: Principal, group: str) -> Space:
-    """Resolve a group name to exactly one unarchived group the caller belongs to.
-
-    Args:
-        session: Database session.
-        principal: Authenticated user principal.
-        group: Group name; matched case-insensitively and exactly.
-
-    Returns:
-        The single matching group.
-
-    Raises:
-        SpaceResolveError: When zero or several of the caller's groups match.
-    """
-    groups = await _member_groups(session, principal)
-    wanted = group.strip().casefold()
-    matches = [g for g in groups if g.name.strip().casefold() == wanted]
-    if len(matches) == 1:
-        return matches[0]
-    if not matches:
-        raise SpaceResolveError(
-            f"No group named {group!r} among yours; groups: {_group_choices(groups)}"
-        )
-    raise SpaceResolveError(
-        f"Group name {group!r} is ambiguous; pass space_id. Matches: {_group_choices(matches)}"
-    )
-
-
-async def _resolve_shared_default(session: AsyncSession, principal: Principal) -> Space:
-    groups = await _member_groups(session, principal)
-    user = await session.get(User, principal.user_id)
-    default_id = user.default_shared_space_id if user else None
-    for group_space in groups:
-        if group_space.id == default_id:
-            return group_space
-    if len(groups) == 1:
-        return groups[0]
-    if not groups:
-        raise SpaceResolveError("visibility=shared but you are not on any group")
-    raise SpaceResolveError(
-        "visibility=shared needs group, space_id, or a default shared group; "
-        f"groups: {_group_choices(groups)}"
-    )
-
-
-async def resolve_write_space(
+async def accessible_space_ids(
     session: AsyncSession,
     principal: Principal,
     space_id: uuid.UUID | None,
     *,
-    group: str | None = None,
-    visibility: Visibility | None = None,
-) -> Space:
-    """Pick the space a write lands in.
-
-    Precedence: explicit ``space_id``, then ``group`` name, then
-    ``visibility="shared"`` (default shared group, else the sole group), else
-    the caller's personal space.
+    space_scope: str | None = None,
+) -> list[uuid.UUID]:
+    """Return space ids the principal may read (optionally narrowed).
 
     Args:
         session: Database session.
         principal: Authenticated caller.
-        space_id: Explicit target; skips name and default resolution.
-        group: Group name to resolve among the caller's memberships.
-        visibility: ``"shared"`` to target the default/sole group;
-            ``"personal"`` or omitted for the personal space.
+        space_id: When set, return that id only if readable; else all readable.
+        space_scope: Optional ``personal`` or ``group`` filter when ``space_id``
+            is unset. Ignored when ``space_id`` is set.
 
     Returns:
-        The writable target space.
+        Zero or more space UUIDs.
 
     Raises:
-        ForbiddenError: Unauthenticated caller.
-        NotFoundError: Inaccessible ``space_id``.
-        SpaceResolveError: Group name or shared default cannot be resolved to one group.
+        NotFoundError: When ``space_id`` is set and the caller cannot read
+            that space.
     """
-    if not principal.user_id:
-        raise ForbiddenError("Authentication required")
-    if space_id is not None:
+    if space_id:
         space = await get_readable_space(session, principal, space_id)
         if not space:
             raise NotFoundError("Space not found or not accessible")
-        return space
-    if group and group.strip():
-        return await resolve_group_by_name(session, principal, group)
-    if visibility == "shared":
-        return await _resolve_shared_default(session, principal)
-    space = await get_personal_space(session, principal.user_id)
-    if not space:
-        user = await session.get(User, principal.user_id)
-        if not user:
-            raise ForbiddenError("User not found")
-        space = await ensure_personal_space(session, user)
-        await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
-    return space
-
-
-async def set_default_shared_space(
-    session: AsyncSession, principal: Principal, space_id: uuid.UUID | None
-) -> User:
-    """Set or clear the caller's default shared group.
-
-    Args:
-        session: Database session.
-        principal: Authenticated user principal.
-        space_id: Group to use for ``visibility="shared"``; None clears it.
-
-    Returns:
-        The updated user.
-
-    Raises:
-        PermissionError: Missing user principal, or the group is not one the
-            caller belongs to.
-    """
-    if not principal.user_id:
-        raise ForbiddenError("Default shared group needs a user principal")
-    user = await session.get(User, principal.user_id)
-    if not user:
-        raise ForbiddenError("User not found")
-    if space_id is not None:
-        groups = await _member_groups(session, principal)
-        if space_id not in {g.id for g in groups}:
-            raise NotFoundError("Default shared group must be an active group you belong to")
-    user.default_shared_space_id = space_id
-    await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
-    await session.refresh(user)
-    return user
+        return [space.id]
+    spaces = await list_spaces(session, principal)
+    if space_scope:
+        kind = parse_space_scope(space_scope)
+        spaces = [s for s in spaces if s.kind == kind]
+    return [s.id for s in spaces]

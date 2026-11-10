@@ -10,7 +10,8 @@ from urllib.parse import urlparse
 
 import httpx
 
-from memchentic.auth.providers import resolve_issuer, resolve_oidc_endpoints
+from memchentic.auth.providers import resolve_issuer
+from memchentic.auth.web_oauth import resolve_oidc_endpoints
 from memchentic.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -58,40 +59,6 @@ def _same_host_https(base_url: str, next_url: str | None) -> str | None:
     if (nxt.hostname or "").casefold() != (base.hostname or "").casefold():
         return None
     return next_url
-
-
-def groups_from_claims(claims: dict[str, Any]) -> set[str]:
-    """Extract IdP group ids/names from ID token / userinfo claims.
-
-    Args:
-        claims: Merged OIDC claims.
-
-    Returns:
-        Set of string ids and names suitable for bind matching.
-    """
-    out: set[str] = set()
-    raw = claims.get("groups")
-    if isinstance(raw, list):
-        for item in raw:
-            if isinstance(item, str) and item.strip():
-                out.add(item.strip())
-            elif isinstance(item, dict):
-                for key in ("id", "groupId", "value", "name"):
-                    val = item.get(key)
-                    if isinstance(val, str) and val.strip():
-                        out.add(val.strip())
-    elif isinstance(raw, str) and raw.strip():
-        out.add(raw.strip())
-
-    realm = claims.get("realm_access")
-    if isinstance(realm, dict):
-        roles = realm.get("roles")
-        if isinstance(roles, list):
-            for role in roles:
-                if isinstance(role, str) and role.strip():
-                    out.add(role.strip())
-
-    return out
 
 
 async def list_idp_groups(settings: Settings) -> IdPGroupListResult:

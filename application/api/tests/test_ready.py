@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-import memchentic.api.router as router_module
+import memchentic.api.routes.health as router_module
 
 
 class _UnreachableSession:

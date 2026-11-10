@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from memchentic.models.entities import EntryType, Memory, MemoryKind
 from memchentic.search.hybrid import rerank_score
-from memchentic.services.memories import resolve_expiry, slide_expiry
+from memchentic.services.memory_ttl import resolve_expiry, slide_expiry
 
 
 def _user(client: TestClient) -> dict[str, str]:

@@ -12,18 +12,13 @@ from jwt.exceptions import InvalidTokenError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from memchentic.auth.principal import resolve_bearer
-from memchentic.auth.providers import (
-    OAuthProfile,
-    _pin_discovery_origins,
-    build_authorize_url,
-    clear_discovery_cache,
-    clear_jwks_cache,
-    resolve_scopes,
-)
+from memchentic.auth.bearer import resolve_bearer
+from memchentic.auth.jwks import clear_jwks_cache
+from memchentic.auth.providers import _pin_discovery_origins, clear_discovery_cache, resolve_scopes
 from memchentic.auth.tokens import issue_access_token, verify_access_token
-from memchentic.auth.users import register_internal_user
+from memchentic.auth.web_oauth import OAuthProfile, build_authorize_url
 from memchentic.models.entities import UserIdentity
+from memchentic.services.users import register_internal_user
 from memchentic.settings import Settings, get_settings
 
 
@@ -83,7 +78,7 @@ async def test_idp_jwt_still_accepted_under_external_provider(
         return fake_claims
 
     with patch(
-        "memchentic.auth.providers.fetch_jwks_and_decode",
+        "memchentic.auth.tokens.fetch_jwks_and_decode",
         new=AsyncMock(side_effect=fake_decode),
     ):
         # Unsigned garbage cannot be a session JWT; falls through to IdP path.
@@ -103,7 +98,7 @@ def test_oauth_start_redirects_to_idp(client: TestClient, external_oauth: None) 
         "userinfo_endpoint": "https://openidconnect.googleapis.com/v1/userinfo",
     }
     with patch(
-        "memchentic.auth.providers.resolve_oidc_endpoints",
+        "memchentic.auth.web_oauth.resolve_oidc_endpoints",
         new=AsyncMock(return_value=endpoints),
     ):
         res = client.get("/api/auth/oauth/start?remember=true", follow_redirects=False)
@@ -132,7 +127,7 @@ def test_oauth_callback_sets_session(client: TestClient, external_oauth: None) -
         display_name="Web User",
     )
     with patch(
-        "memchentic.auth.providers.resolve_oidc_endpoints",
+        "memchentic.auth.web_oauth.resolve_oidc_endpoints",
         new=AsyncMock(return_value=endpoints),
     ):
         start = client.get("/api/auth/oauth/start", follow_redirects=False)
@@ -186,7 +181,7 @@ def test_oauth_callback_rejects_unverified_email(client: TestClient, external_oa
         display_name="Nope",
     )
     with patch(
-        "memchentic.auth.providers.resolve_oidc_endpoints",
+        "memchentic.auth.web_oauth.resolve_oidc_endpoints",
         new=AsyncMock(return_value=endpoints),
     ):
         start = client.get("/api/auth/oauth/start", follow_redirects=False)
@@ -236,7 +231,7 @@ async def test_resolve_bearer_upserts_external_subject(
     bearer = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.sig"
 
     with patch(
-        "memchentic.auth.tokens.verify_access_token",
+        "memchentic.auth.bearer.verify_access_token",
         new=AsyncMock(return_value=fake_claims),
     ):
         principal = await resolve_bearer(session, bearer, settings)
@@ -247,7 +242,7 @@ async def test_resolve_bearer_upserts_external_subject(
 
     # Second call finds the durable binding without re-upsert needing claims.
     with patch(
-        "memchentic.auth.tokens.verify_access_token",
+        "memchentic.auth.bearer.verify_access_token",
         new=AsyncMock(return_value={"sub": sub, "provider": "google"}),
     ):
         again = await resolve_bearer(session, bearer, settings)
@@ -267,7 +262,7 @@ async def test_idp_jwt_uuid_sub_is_not_a_local_user_id(
     )
     idp_claims = {"iss": settings.oauth_issuer, "sub": str(victim.id)}
     with patch(
-        "memchentic.auth.tokens.verify_access_token",
+        "memchentic.auth.bearer.verify_access_token",
         new=AsyncMock(return_value=idp_claims),
     ):
         principal = await resolve_bearer(session, "idp.jwt.token", settings)
@@ -289,7 +284,7 @@ async def test_idp_jwt_uuid_sub_provisions_by_identity(
         "name": "UUID Subject",
     }
     with patch(
-        "memchentic.auth.tokens.verify_access_token",
+        "memchentic.auth.bearer.verify_access_token",
         new=AsyncMock(return_value=idp_claims),
     ):
         principal = await resolve_bearer(session, "idp.jwt.token", settings)
@@ -323,7 +318,7 @@ async def test_idp_jwt_provider_claim_cannot_pick_the_binding(
         "provider": "internal",
     }
     with patch(
-        "memchentic.auth.tokens.verify_access_token",
+        "memchentic.auth.bearer.verify_access_token",
         new=AsyncMock(return_value=idp_claims),
     ):
         principal = await resolve_bearer(session, "idp.jwt.token", settings)
@@ -339,7 +334,7 @@ async def test_idp_issuer_equal_to_base_url_is_rejected(
     settings = get_settings()
     decode = AsyncMock(return_value={"sub": "x", "iss": "http://memchentic.test"})
     with (
-        patch("memchentic.auth.providers.fetch_jwks_and_decode", new=decode),
+        patch("memchentic.auth.tokens.fetch_jwks_and_decode", new=decode),
         pytest.raises(InvalidTokenError),
     ):
         await verify_access_token(session, "not.a.session.jwt", settings)
@@ -461,7 +456,7 @@ def test_first_idp_link_revokes_password_keys_and_sessions(
         display_name="Real Owner",
     )
     with patch(
-        "memchentic.auth.providers.resolve_oidc_endpoints",
+        "memchentic.auth.web_oauth.resolve_oidc_endpoints",
         new=AsyncMock(return_value=endpoints),
     ):
         start = client.get("/api/auth/oauth/start", follow_redirects=False)
@@ -486,7 +481,7 @@ def test_first_idp_link_revokes_password_keys_and_sessions(
 
     # The API key is not a JWT; stop the IdP fallback from reaching the network.
     with patch(
-        "memchentic.auth.providers.fetch_jwks_and_decode",
+        "memchentic.auth.tokens.fetch_jwks_and_decode",
         new=AsyncMock(side_effect=ValueError("not an IdP token")),
     ):
         assert client.get("/api/me", headers=key_auth).status_code == 401

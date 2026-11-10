@@ -8,7 +8,8 @@ from typing import Annotated
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from memchentic.auth.principal import Principal, resolve_bearer
+from memchentic.auth.bearer import resolve_bearer
+from memchentic.auth.principal import Principal, bearer_token_from_header
 from memchentic.db.session import get_session_factory, set_rls_context
 
 
@@ -39,8 +40,7 @@ async def get_principal(
     Raises:
         HTTPException: 401 when no valid admin key, API key, or JWT is presented.
     """
-    auth = request.headers.get("Authorization") or ""
-    token = auth[7:].strip() if auth.lower().startswith("bearer ") else None
+    token = bearer_token_from_header(request.headers.get("Authorization"))
     principal = await resolve_bearer(session, token)
     if principal is None:
         raise HTTPException(status_code=401, detail="Unauthorized")

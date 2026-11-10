@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 
 from sqlalchemy import text
 
-from memchentic.db.session import MIGRATION_LOCK_ID, get_engine, init_db
+from memchentic.db.session import MIGRATION_LOCK_ID, create_owner_engine, init_db
 
 _WAITERS = text(
     "SELECT count(*) FROM pg_locks "
@@ -20,14 +20,14 @@ def _alembic_upgrade_head() -> None:
     # The application's own entry point. Its config sets
     # ``attributes["configure_logger"] = False`` (BUG-006), so this run does
     # not reconfigure logging for the tests that follow.
-    from memchentic.main import _run_migrations
+    from memchentic.db.migrate import run_migrations
 
-    _run_migrations()
+    run_migrations()
 
 
 async def _assert_waits_for_lock(start: Callable[[], Awaitable[None]]) -> None:
     """Hold the lock on one connection and prove that ``start()`` blocks on it."""
-    engine = get_engine(migration=True)
+    engine = create_owner_engine()
     try:
         async with engine.connect() as holder, engine.connect() as observer:
             await holder.execute(text("SELECT pg_advisory_lock(:k)"), {"k": MIGRATION_LOCK_ID})

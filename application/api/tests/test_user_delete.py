@@ -10,15 +10,11 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from memchentic.auth.users import delete_user, ensure_admin_user, register_internal_user
 from memchentic.models.entities import Space
-from memchentic.services.auth_groups import (
-    SLUG_USERS,
-    add_member_raw,
-    ensure_auth_groups,
-    set_idp_bind,
-)
+from memchentic.services.auth_groups import set_idp_bind
+from memchentic.services.auth_roster import SLUG_USERS, add_member_raw, ensure_auth_groups
 from memchentic.services.spaces import get_personal_space
+from memchentic.services.users import delete_user, ensure_admin_user, register_internal_user
 
 ADMIN_KEY = os.environ.get("ADMIN_API_KEY", "")
 

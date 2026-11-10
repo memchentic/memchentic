@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from memchentic.auth.principal import Principal
 from memchentic.models.entities import Memory, MemoryKind, Space, User
 from memchentic.services.errors import ValidationError
-from memchentic.services.memories import accessible_space_ids
+from memchentic.services.spaces import accessible_space_ids
 
 MetricRange = Literal["7d", "30d", "90d", "all"]
 
@@ -69,41 +69,11 @@ def _empty_payload(range_token: MetricRange) -> dict[str, Any]:
     }
 
 
-async def memory_metrics(
-    session: AsyncSession,
-    principal: Principal,
-    *,
-    range_key: str | None = None,
-    space_scope: str | None = None,
-    space_id: uuid.UUID | None = None,
-) -> dict[str, Any]:
-    """Aggregate memory corpus stats visible to the principal.
-
-    KPI totals and categorical breakdowns count all ACL-visible rows.
-    ``created_per_day`` is limited to the selected time window.
-
-    Args:
-        session: Database session (RLS context already applied).
-        principal: Authenticated caller.
-        range_key: ``7d`` / ``30d`` / ``90d`` / ``all`` (default ``30d``).
-        space_scope: Optional ``personal`` or ``group`` when ``space_id`` unset.
-        space_id: Optional single space filter.
-
-    Returns:
-        Metrics payload for the GUI.
-
-    Raises:
-        ValidationError: Invalid ``range_key`` or ``space_scope``.
-    """
-    range_token = _parse_range(range_key)
-    space_ids = await accessible_space_ids(session, principal, space_id, space_scope=space_scope)
-    if not space_ids:
-        return _empty_payload(range_token)
-
-    base = Memory.space_id.in_(space_ids)
-    now = datetime.now(UTC)
+async def _totals(
+    session: AsyncSession, base: ColumnElement[bool], now: datetime
+) -> dict[str, int]:
+    """Count memories, entries, guides, soon-expiring rows and used spaces."""
     soon = now + timedelta(days=_EXPIRING_DAYS)
-
     totals_row = (
         await session.execute(
             select(
@@ -128,16 +98,27 @@ async def memory_metrics(
     guides = totals_row.guides
     expiring = totals_row.expiring
     spaces_used = totals_row.spaces_used
+    return {
+        "memories": int(total or 0),
+        "entries": int(entries or 0),
+        "guides": int(guides or 0),
+        "expiring_soon": int(expiring or 0),
+        "spaces": int(spaces_used or 0),
+    }
 
-    # Entry and guide are the only two kinds, so by_kind follows from the
-    # totals. Order: count descending, as before.
-    kind_counts = [(MemoryKind.entry, int(entries)), (MemoryKind.guide, int(guides))]
-    by_kind = [
+
+def _by_kind(totals: dict[str, int]) -> list[dict[str, Any]]:
+    """Derive the per-kind counts from the totals (no query), count descending."""
+    kind_counts = [(MemoryKind.entry, totals["entries"]), (MemoryKind.guide, totals["guides"])]
+    return [
         {"kind": kind.value, "count": count}
         for kind, count in sorted(kind_counts, key=lambda pair: pair[1], reverse=True)
         if count
     ]
 
+
+async def _by_type(session: AsyncSession, base: ColumnElement[bool]) -> list[dict[str, Any]]:
+    """Count entries per entry type."""
     type_rows = (
         await session.execute(
             select(Memory.entry_type, func.count())
@@ -147,7 +128,11 @@ async def memory_metrics(
         )
     ).all()
     by_type = [{"type": t.value, "count": int(c)} for t, c in type_rows if t is not None]
+    return by_type
 
+
+async def _by_space(session: AsyncSession, base: ColumnElement[bool]) -> list[dict[str, Any]]:
+    """Count memories per space; spaces beyond the top ten are summed as "Other"."""
     space_rows = (
         await session.execute(
             select(Memory.space_id, Space.name, func.count())
@@ -166,7 +151,11 @@ async def memory_metrics(
             other += int(count)
     if other:
         by_space.append({"space_id": None, "name": "Other", "count": other})
+    return by_space
 
+
+async def _top_tags(session: AsyncSession, base: ColumnElement[bool]) -> list[dict[str, Any]]:
+    """Count the most used tags."""
     tag_sq = (
         select(func.unnest(Memory.tags, type_=String).label("tag"))
         .where(base, func.cardinality(Memory.tags) > 0)
@@ -182,7 +171,11 @@ async def memory_metrics(
         )
     ).all()
     top_tags = [{"tag": tag, "count": int(count)} for tag, count in tag_rows]
+    return top_tags
 
+
+async def _top_creators(session: AsyncSession, base: ColumnElement[bool]) -> list[dict[str, Any]]:
+    """Count memories per creator."""
     creator_rows = (
         await session.execute(
             select(
@@ -207,7 +200,16 @@ async def memory_metrics(
         }
         for uid, email, display_name, c in creator_rows
     ]
+    return top_creators
 
+
+async def _created_per_day(
+    session: AsyncSession,
+    base: ColumnElement[bool],
+    range_token: MetricRange,
+    now: datetime,
+) -> list[dict[str, Any]]:
+    """Count created entries and guides per day inside the selected window."""
     days = _RANGE_DAYS[range_token]
     # Three-argument date_trunc truncates in the named zone, so the day
     # bucket does not depend on the database session time zone. The zone
@@ -264,17 +266,53 @@ async def memory_metrics(
             created_per_day.append(
                 {"day": d, "entries": bucket["entries"], "guides": bucket["guides"]}
             )
+    return created_per_day
 
+
+async def memory_metrics(
+    session: AsyncSession,
+    principal: Principal,
+    *,
+    range_key: str | None = None,
+    space_scope: str | None = None,
+    space_id: uuid.UUID | None = None,
+) -> dict[str, Any]:
+    """Aggregate memory corpus stats visible to the principal.
+
+    KPI totals and categorical breakdowns count all ACL-visible rows.
+    ``created_per_day`` is limited to the selected time window.
+
+    Args:
+        session: Database session (RLS context already applied).
+        principal: Authenticated caller.
+        range_key: ``7d`` / ``30d`` / ``90d`` / ``all`` (default ``30d``).
+        space_scope: Optional ``personal`` or ``group`` when ``space_id`` unset.
+        space_id: Optional single space filter.
+
+    Returns:
+        Metrics payload for the GUI.
+
+    Raises:
+        ValidationError: Invalid ``range_key`` or ``space_scope``.
+    """
+    range_token = _parse_range(range_key)
+    space_ids = await accessible_space_ids(session, principal, space_id, space_scope=space_scope)
+    if not space_ids:
+        return _empty_payload(range_token)
+
+    base = Memory.space_id.in_(space_ids)
+    now = datetime.now(UTC)
+    totals = await _totals(session, base, now)
+    by_kind = _by_kind(totals)
+    by_type = await _by_type(session, base)
+    by_space = await _by_space(session, base)
+    top_tags = await _top_tags(session, base)
+    top_creators = await _top_creators(session, base)
+    created_per_day = await _created_per_day(session, base, range_token, now)
     return {
         "range": range_token,
         "generated_at": now.isoformat(),
-        "totals": {
-            "memories": int(total or 0),
-            "entries": int(entries or 0),
-            "guides": int(guides or 0),
-            "expiring_soon": int(expiring or 0),
-            "spaces": int(spaces_used or 0),
-        },
+        "totals": totals,
         "created_per_day": created_per_day,
         "by_kind": by_kind,
         "by_type": by_type,

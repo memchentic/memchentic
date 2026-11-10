@@ -24,22 +24,31 @@ _session_factory: async_sessionmaker[AsyncSession] | None = None
 MIGRATION_LOCK_ID = 0x6D656D6D
 
 
-def get_engine(*, migration: bool = False) -> AsyncEngine:
-    """Return the shared async engine.
+def create_owner_engine() -> AsyncEngine:
+    """Return a new, uncached engine that connects as the owner role.
 
-    Args:
-        migration: When True, connect as the owner role (extensions / Alembic).
-            Runtime callers leave this False so RLS applies via ``memchentic_app``.
+    Used for ``CREATE EXTENSION`` before the app role connects. The caller
+    must dispose the engine.
+
+    Returns:
+        A new engine bound to ``migration_database_url``.
+    """
+    settings = get_settings()
+    return create_async_engine(
+        settings.migration_database_url,
+        echo=False,
+        pool_pre_ping=True,
+        connect_args={"ssl": settings.postgres_ssl},
+    )
+
+
+def get_engine() -> AsyncEngine:
+    """Return the shared async engine (app role, so RLS applies).
+
+    Returns:
+        The cached engine bound to ``database_url``.
     """
     global _engine
-    if migration:
-        settings = get_settings()
-        return create_async_engine(
-            settings.migration_database_url,
-            echo=False,
-            pool_pre_ping=True,
-            connect_args={"ssl": settings.postgres_ssl},
-        )
     if _engine is None:
         settings = get_settings()
         _engine = create_async_engine(
@@ -193,7 +202,7 @@ async def init_db() -> None:
     advisory lock serializes concurrent starts (replicas, rolling updates).
     """
     settings = get_settings()
-    engine = get_engine(migration=True)
+    engine = create_owner_engine()
     try:
         async with engine.begin() as conn:
             await conn.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": MIGRATION_LOCK_ID})

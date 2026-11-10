@@ -8,20 +8,19 @@
   },
   "metadata": {
     "description": "In-repo marketplace for the memchentic agent-memory plugin.",
-    "version": "0.1.0",
-    "pluginRoot": "./marketplace/plugins"
+    "version": "0.1.0"
   },
   "plugins": [
     {
       "name": "memchentic",
       "description": "memchentic MCP craft: gated recall/capture with personal+group spaces, entries vs guides, hybrid find. Pair with public global posture plugins.",
-      "version": "0.2.3",
+      "version": "0.2.4",
       "author": {
         "name": "nodadyoushutup",
         "email": "admin@nodadyoushutup.com"
       },
-      "homepage": "https://github.com/nodadyoushutup/memchentic",
-      "repository": "https://github.com/nodadyoushutup/memchentic",
+      "homepage": "https://github.com/memchentic/memchentic",
+      "repository": "https://github.com/memchentic/memchentic",
       "license": "MIT",
       "keywords": [
         "memchentic",
@@ -36,7 +35,7 @@
         "memchentic",
         "memory"
       ],
-      "source": "./memchentic"
+      "source": "./marketplace/plugins/memchentic"
     }
   ]
 }

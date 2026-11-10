@@ -231,6 +231,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Plugin manifests, hooks, rules and skills
+        run: python3 scripts/check_plugin.py
+
       - name: actionlint
         # Fails today on publish-app-image.yml: one expression error
         # (SEC-075) and three SC2129 reports (INFRA-015). Remove

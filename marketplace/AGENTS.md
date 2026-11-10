@@ -38,3 +38,7 @@ coding / planning craft lives in
 Before every commit that changes shipped content under
 `marketplace/plugins/memchentic/`, bump the plugin semver in all three host
 manifests and all four root catalogs (default patch).
+
+Run `python3 scripts/check_plugin.py` from the repository root before the
+commit. It fails when the seven files disagree on the plugin version, when a
+URL or path in them is wrong, or when the rules, skills and hook drift apart.

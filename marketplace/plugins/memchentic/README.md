@@ -10,15 +10,18 @@ demand.
 | --- | --- | --- |
 | `memchentic-recall` | always | Aggressive gated recall (`guide_find` / `find` / `about_path`) |
 | `memchentic-capture` | always | Save entries + guides after verified insights |
-| `memchentic-tools` | on demand | Full MCP tool routing by job |
 
 ## Session hook (Claude Code / Copilot CLI / Codex)
 
-`hooks/hooks.json` registers `SessionStart` and `sessionStart` for Claude Code
-and Copilot CLI. Codex loads `hooks/codex-hooks.json` (no `version` key) via
-the Codex plugin manifest. Trust the Codex SessionStart hook once via `/hooks`
-or Settings → Hooks; a hook-script change requires trust again. No per-session
-skill load and no `/memchentic` are required to start the habit.
+Each host has its own hook file, so no host parses another host's keys:
+`hooks/claude.json` (`SessionStart`, named in `.claude-plugin/plugin.json`),
+`hooks/codex.json` (`SessionStart`, named in `.codex-plugin/plugin.json`) and
+`hooks/hooks.json` (`sessionStart`, Copilot CLI). All three run
+`hooks/session-start.sh`, which injects the recall + capture loop. Install the
+plugin (and for Codex, enable hooks and trust this plugin’s SessionStart hook
+once via `/hooks` or Settings → Hooks; a hook-script change requires trust
+again). No per-session skill load and no `/memchentic` are required to start
+the habit.
 
 ## Skills (deeper playbooks)
 
@@ -27,6 +30,7 @@ skill load and no `/memchentic` are required to start the habit.
 | `memchentic` | Index / gate (explicit entry when unsure which playbook) |
 | `memchentic-recall` | Recall playbook |
 | `memchentic-capture` | Capture playbook (types, write targets, refuse) |
+| `memchentic-tools` | Full MCP tool routing by job (all 18 tools) |
 
 ## Commands
 
@@ -52,19 +56,9 @@ you (me)
 
 ### Entry types
 
-Closed enum on `remember` (default `note`). Labels for filter/recall — not
-separate pipelines. Prefer the best fit; do not leave `note` when another type
-matches (full pick map → capture rule/skill):
-
-| Type | Use when |
-| --- | --- |
-| `fact` | Stable truth about the world or codebase |
-| `preference` | How someone wants work done |
-| `decision` | A choice and its rationale |
-| `instruction` | Standing directive the agent should follow |
-| `feedback` | Correction after a mistake |
-| `insight` | Learned non-obvious finding |
-| `note` | Catch-all |
+Closed enum on `remember` (default `note`): `fact`, `preference`, `decision`,
+`instruction`, `feedback`, `insight`, `note`. Labels for filter/recall — not
+separate pipelines. Meanings and the pick map → skill `memchentic-capture`.
 
 Guides are not an entry type.
 

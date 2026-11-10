@@ -12,7 +12,9 @@ from fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 from memchentic.mcp.context import require_principal, require_session
+from memchentic.services import guides as guide_service
 from memchentic.services import memories as memory_service
+from memchentic.services import memory_hygiene, memory_serialize
 from memchentic.services import spaces as space_service
 from memchentic.services.errors import (
     NotFoundError,
@@ -21,8 +23,8 @@ from memchentic.services.errors import (
     tool_error_text,
 )
 from memchentic.services.memories import EntryTypeName, MemoryKindName
-from memchentic.services.spaces import Visibility
 from memchentic.services.validation import parse_datetime, parse_uuid, require_uuid
+from memchentic.services.write_target import Visibility
 
 SERVER_INSTRUCTIONS = (
     "memchentic is a shared memory store for AI agents. Entries and guides are written "
@@ -247,7 +249,7 @@ async def remember(
         repo_hint=repo_hint,
         force=force,
     )
-    return await memory_service.memory_out(session, memory, full=True)
+    return await memory_serialize.memory_out(session, memory, full=True)
 
 
 @mcp.tool(annotations=_READ_ONLY)
@@ -301,7 +303,7 @@ async def find(
         offset=offset,
         include_expired=include_expired,
     )
-    return await memory_service.digests_out(session, digests)
+    return await memory_serialize.digests_out(session, digests)
 
 
 @mcp.tool(annotations=_READ_ONLY)
@@ -346,7 +348,7 @@ async def open(
     )
     if not memory:
         raise NotFoundError("Memory not found")
-    return await memory_service.memory_out(session, memory, full=True)
+    return await memory_serialize.memory_out(session, memory, full=True)
 
 
 @mcp.tool(annotations=_DESTRUCTIVE)
@@ -398,7 +400,7 @@ async def revise(
         ttl_days=ttl_days,
         permanent=permanent,
     )
-    return await memory_service.memory_out(session, memory, full=True)
+    return await memory_serialize.memory_out(session, memory, full=True)
 
 
 @mcp.tool(annotations=_DESTRUCTIVE)
@@ -464,7 +466,7 @@ async def browse(
         include_expired=include_expired,
         tags=tags,
     )
-    return await memory_service.memories_out(session, rows)
+    return await memory_serialize.memories_out(session, rows)
 
 
 @mcp.tool(annotations=_READ_ONLY)
@@ -509,7 +511,7 @@ async def since(
         tags=tags,
         offset=offset,
     )
-    return await memory_service.digests_out(session, digests)
+    return await memory_serialize.digests_out(session, digests)
 
 
 @mcp.tool(annotations=_READ_ONLY)
@@ -551,7 +553,7 @@ async def by_tag(
         include_expired=include_expired,
         offset=offset,
     )
-    return await memory_service.digests_out(session, digests)
+    return await memory_serialize.digests_out(session, digests)
 
 
 @mcp.tool(annotations=_DESTRUCTIVE)
@@ -572,7 +574,7 @@ async def relocate(id: str, space_id: str) -> dict[str, Any]:
     memory = await memory_service.relocate(
         session, principal, require_uuid(id, "id"), require_uuid(space_id, "space_id")
     )
-    return await memory_service.memory_out(session, memory, full=True)
+    return await memory_serialize.memory_out(session, memory, full=True)
 
 
 @mcp.tool(annotations=_DESTRUCTIVE)
@@ -615,7 +617,7 @@ async def guide_write(
     """
     principal = require_principal()
     session = require_session()
-    memory = await memory_service.guide_write(
+    memory = await guide_service.guide_write(
         session,
         principal,
         title=title,
@@ -628,7 +630,7 @@ async def guide_write(
         permanent=permanent,
         expires_at=parse_datetime(expires_at, "expires_at"),
     )
-    return await memory_service.memory_out(session, memory, full=True)
+    return await memory_serialize.memory_out(session, memory, full=True)
 
 
 @mcp.tool(annotations=_READ_ONLY)
@@ -661,7 +663,7 @@ async def guide_find(
     """
     principal = require_principal()
     session = require_session()
-    digests = await memory_service.guide_find(
+    digests = await guide_service.guide_find(
         session,
         principal,
         query=query,
@@ -672,7 +674,7 @@ async def guide_find(
         tags=tags,
         offset=offset,
     )
-    return await memory_service.digests_out(session, digests)
+    return await memory_serialize.digests_out(session, digests)
 
 
 @mcp.tool(annotations=_READ_ONLY)
@@ -714,7 +716,7 @@ async def about_path(
         space_id=parse_uuid(space_id, "space_id"),
         offset=offset,
     )
-    return await memory_service.digests_out(session, digests)
+    return await memory_serialize.digests_out(session, digests)
 
 
 @mcp.tool(annotations=_READ_ONLY)
@@ -765,7 +767,7 @@ async def overlap_report(
     """
     principal = require_principal()
     session = require_session()
-    return await memory_service.overlap_report(
+    return await memory_hygiene.overlap_report(
         session,
         principal,
         space_id=parse_uuid(space_id, "space_id"),

@@ -11,11 +11,11 @@ from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from memchentic.auth.principal import Principal
-from memchentic.auth.users import register_internal_user
 from memchentic.db.session import set_rls_context
 from memchentic.models.entities import EntryType, Memory, MemoryKind
 from memchentic.services.metrics import memory_metrics
 from memchentic.services.spaces import get_personal_space
+from memchentic.services.users import register_internal_user
 
 
 def _user(client: TestClient) -> tuple[str, dict]:

@@ -8,7 +8,8 @@ from typing import Annotated
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from memchentic.auth.principal import Principal, resolve_bearer
+from memchentic.auth.bearer import resolve_bearer
+from memchentic.auth.principal import Principal
 from memchentic.db.session import get_session_factory, set_rls_context
 
 

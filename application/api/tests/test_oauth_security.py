@@ -17,8 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from memchentic.api.oauth import prune_stale_oauth_rows
 from memchentic.auth.tokens import ACCESS_TOKEN_SECONDS
-from memchentic.auth.users import register_internal_user
 from memchentic.models.entities import AuthRefreshToken, OAuthClient
+from memchentic.services.users import register_internal_user
 from memchentic.settings import get_settings
 
 _CSRF_RE = re.compile(r'name="csrf_token" value="([^"]+)"')

@@ -11,18 +11,14 @@ from fastapi import HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from memchentic.auth.providers import (
-    build_authorize_url,
-    exchange_code_for_profile,
-    pkce_pair,
-)
 from memchentic.auth.sessions import (
     SESSION_COOKIE,
     SESSION_COOKIE_PATH,
     create_session,
     session_lifetime,
 )
-from memchentic.auth.users import upsert_oauth_user
+from memchentic.auth.web_oauth import build_authorize_url, exchange_code_for_profile, pkce_pair
+from memchentic.services.users import upsert_oauth_user
 from memchentic.settings import Settings, get_settings
 
 logger = logging.getLogger(__name__)

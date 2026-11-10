@@ -14,14 +14,11 @@ from jwt.exceptions import InvalidAudienceError, InvalidTokenError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from memchentic.auth import providers
-from memchentic.auth.principal import resolve_bearer
-from memchentic.auth.providers import (
-    clear_discovery_cache,
-    clear_jwks_cache,
-    exchange_code_for_profile,
-    fetch_jwks_and_decode,
-)
+from memchentic.auth import jwks
+from memchentic.auth.bearer import resolve_bearer
+from memchentic.auth.jwks import clear_jwks_cache, fetch_jwks_and_decode
+from memchentic.auth.providers import clear_discovery_cache
+from memchentic.auth.web_oauth import exchange_code_for_profile
 from memchentic.settings import get_settings
 
 ISSUER = "https://idp.example.com"
@@ -81,7 +78,7 @@ def _seed_jwks(monkeypatch: pytest.MonkeyPatch, jwk: dict[str, Any]) -> None:
         return {"keys": [jwk]}
 
     monkeypatch.setattr(
-        "memchentic.auth.providers._fetch_jwks",
+        "memchentic.auth.jwks._fetch_jwks",
         _fake_fetch,
     )
 
@@ -207,7 +204,7 @@ async def test_jwks_outage_is_not_401(
     async def _down(_uri: str) -> dict[str, Any]:
         raise httpx.ConnectError("idp unreachable")
 
-    monkeypatch.setattr("memchentic.auth.providers._fetch_jwks", _down)
+    monkeypatch.setattr("memchentic.auth.jwks._fetch_jwks", _down)
     with pytest.raises(httpx.ConnectError):
         await resolve_bearer(session, token, idp_settings)
 
@@ -225,7 +222,7 @@ async def test_non_jwt_bearer_is_rejected_without_jwks_fetch(
         calls.append(uri)
         return {"keys": []}
 
-    monkeypatch.setattr("memchentic.auth.providers._fetch_jwks", _record)
+    monkeypatch.setattr("memchentic.auth.jwks._fetch_jwks", _record)
     assert await resolve_bearer(session, "not-a-jwt", idp_settings) is None
     assert calls == []
 
@@ -244,10 +241,10 @@ async def test_fetch_jwks_reports_bad_body_as_unavailable(
     def _client(**kwargs: Any) -> httpx.AsyncClient:
         return real_client(transport=httpx.MockTransport(_handler), **kwargs)
 
-    monkeypatch.setattr(providers.httpx, "AsyncClient", _client)
+    monkeypatch.setattr(jwks.httpx, "AsyncClient", _client)
     clear_jwks_cache()
-    with pytest.raises(providers.JwksUnavailableError):
-        await providers._fetch_jwks("https://idp.example.com/jwks")
+    with pytest.raises(jwks.JwksUnavailableError):
+        await jwks._fetch_jwks("https://idp.example.com/jwks")
     clear_jwks_cache()
 
 
@@ -332,7 +329,7 @@ async def test_oidc_exchange_uses_client_id_audience_and_discovered_jwks(
 
     real_client = httpx.AsyncClient
     monkeypatch.setattr(
-        "memchentic.auth.providers.httpx.AsyncClient",
+        "memchentic.auth.jwks.httpx.AsyncClient",
         lambda *args, **kwargs: real_client(
             *args, **{**kwargs, "transport": httpx.MockTransport(handler)}
         ),

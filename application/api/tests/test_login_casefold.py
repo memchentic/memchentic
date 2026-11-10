@@ -10,7 +10,8 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from memchentic.auth.principal import check_admin_password
-from memchentic.auth.users import authenticate_internal, register_internal_user
+from memchentic.auth.users import authenticate_internal
+from memchentic.services.users import register_internal_user
 
 
 def test_admin_login_email_is_case_insensitive() -> None:
@@ -52,10 +53,11 @@ async def test_password_hashing_runs_off_the_event_loop(
 ) -> None:
     """bcrypt must not block the event loop thread."""
     import memchentic.auth.users as users_module
+    import memchentic.services.users as services_users_module
 
     loop_thread = threading.get_ident()
     calls: list[tuple[str, int]] = []
-    real_hash = users_module.hash_password
+    real_hash = services_users_module.hash_password
     real_verify = users_module.verify_password
 
     def spy_hash(password: str) -> str:
@@ -66,7 +68,7 @@ async def test_password_hashing_runs_off_the_event_loop(
         calls.append(("verify", threading.get_ident()))
         return real_verify(password, password_hash)
 
-    monkeypatch.setattr(users_module, "hash_password", spy_hash)
+    monkeypatch.setattr(services_users_module, "hash_password", spy_hash)
     monkeypatch.setattr(users_module, "verify_password", spy_verify)
 
     email = f"thread-{uuid.uuid4().hex[:10]}@example.com"

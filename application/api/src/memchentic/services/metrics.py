@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from memchentic.auth.principal import Principal
 from memchentic.models.entities import Memory, MemoryKind, Space, User
 from memchentic.services.errors import ValidationError
-from memchentic.services.memories import accessible_space_ids
+from memchentic.services.spaces import accessible_space_ids
 
 MetricRange = Literal["7d", "30d", "90d", "all"]
 

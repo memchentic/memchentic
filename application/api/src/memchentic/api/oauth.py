@@ -32,9 +32,10 @@ from memchentic.auth.tokens import (
     jwks,
     new_opaque_token,
 )
-from memchentic.auth.users import authenticate_internal, ensure_admin_user
+from memchentic.auth.users import authenticate_internal
 from memchentic.deps import db_session
 from memchentic.models.entities import AuthCode, AuthRefreshToken, OAuthClient
+from memchentic.services.users import ensure_admin_user
 from memchentic.settings import get_settings
 
 router = APIRouter(tags=["oauth"])

@@ -10,18 +10,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from memchentic.auth.users import (
-    authenticate_internal,
-    ensure_admin_user,
-    get_user,
-    normalize_email,
-    providers_for,
-    register_internal_user,
-    upsert_oauth_user,
-)
+from memchentic.auth.users import authenticate_internal, get_user, normalize_email, providers_for
 from memchentic.db.session import set_rls_context
 from memchentic.models.entities import ApiKey, AuthRefreshToken, GuiSession, User
 from memchentic.services.spaces import get_personal_space
+from memchentic.services.users import ensure_admin_user, register_internal_user, upsert_oauth_user
 from memchentic.settings import get_settings
 
 

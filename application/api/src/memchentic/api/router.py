@@ -18,10 +18,11 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from memchentic.auth.bearer import resolve_bearer
 from memchentic.auth.idp_groups import list_idp_groups
 from memchentic.auth.oauth_browser import finish_oauth_login, start_oauth_login
 from memchentic.auth.passwords import password_too_long
-from memchentic.auth.principal import Principal, check_admin_password, resolve_bearer
+from memchentic.auth.principal import Principal, check_admin_password
 from memchentic.auth.rate_limit import check_rate_limit, client_ip
 from memchentic.auth.sessions import (
     SESSION_COOKIE,
@@ -32,20 +33,7 @@ from memchentic.auth.sessions import (
     touch_session,
 )
 from memchentic.auth.tokens import ACCESS_TOKEN_SECONDS, issue_access_token
-from memchentic.auth.users import (
-    authenticate_internal,
-    delete_user,
-    directory_user_visible,
-    ensure_admin_user,
-    get_user,
-    get_user_by_email,
-    list_directory_users,
-    lookup_user_by_email,
-    providers_for,
-    register_internal_user,
-    revoke_user_credentials,
-    user_delete_eligibility,
-)
+from memchentic.auth.users import authenticate_internal, get_user, get_user_by_email, providers_for
 from memchentic.db.session import get_session_factory, set_rls_context
 from memchentic.deps import db_session, get_optional_principal, get_principal
 from memchentic.embeddings import get_embedder
@@ -53,14 +41,27 @@ from memchentic.events import STREAM_CLOSED, memory_listener_state, subscribe_me
 from memchentic.models.entities import User
 from memchentic.services import api_keys as api_key_service
 from memchentic.services import auth_groups as auth_group_service
+from memchentic.services import auth_roster as auth_roster_service
+from memchentic.services import guides as guide_service
 from memchentic.services import instance_settings as instance_settings_service
-from memchentic.services import limits
+from memchentic.services import limits, memory_serialize
 from memchentic.services import memories as memory_service
 from memchentic.services import metrics as metrics_service
 from memchentic.services import spaces as space_service
+from memchentic.services import write_target as write_target_service
 from memchentic.services.errors import ValidationError
-from memchentic.services.spaces import Visibility
+from memchentic.services.users import (
+    delete_user,
+    directory_user_visible,
+    ensure_admin_user,
+    list_directory_users,
+    lookup_user_by_email,
+    register_internal_user,
+    revoke_user_credentials,
+    user_delete_eligibility,
+)
 from memchentic.services.validation import parse_datetime, parse_uuid, require_uuid
+from memchentic.services.write_target import Visibility
 from memchentic.settings import get_settings
 
 api_router = APIRouter(prefix="/api")
@@ -278,7 +279,7 @@ async def _reauth_memory_events(token: str | None) -> set[str] | None:
             return None
         await set_rls_context(session, user_id=principal.user_id, is_admin=principal.is_admin)
         return {
-            str(sid) for sid in await memory_service.accessible_space_ids(session, principal, None)
+            str(sid) for sid in await space_service.accessible_space_ids(session, principal, None)
         }
 
 
@@ -447,14 +448,14 @@ async def login(
     if user:
         subject, email, provider, user_id = str(user.id), user.email, user.provider, user.id
         extra = {
-            "is_admin": await auth_group_service.user_is_administrator(session, user.id),
+            "is_admin": await auth_roster_service.user_is_administrator(session, user.id),
             "id": str(user.id),
             "email": user.email,
             "display_name": user.display_name,
         }
     elif check_admin_password(body.email, body.password, settings):
         admin = await ensure_admin_user(session, settings)
-        await auth_group_service.ensure_auth_groups(session, admin)
+        await auth_roster_service.ensure_auth_groups(session, admin)
         subject, email, provider, user_id = (
             str(admin.id),
             admin.email,
@@ -562,7 +563,7 @@ async def patch_me(
 
     Errors: 4xx when the group id is invalid or cannot be used.
     """
-    await space_service.set_default_shared_space(
+    await write_target_service.set_default_shared_space(
         session, principal, parse_uuid(body.default_shared_space_id, "default_shared_space_id")
     )
     return await space_service.me_payload(session, principal, invite_details=True)
@@ -859,7 +860,7 @@ async def browse_memories(
         include_expired=include_expired,
         tags=_parse_types(tags),
     )
-    return await memory_service.memories_out(session, rows)
+    return await memory_serialize.memories_out(session, rows)
 
 
 @api_router.get("/memories/search")
@@ -902,7 +903,7 @@ async def search_memories(
         path_hint=path_hint,
         repo_hint=repo_hint,
     )
-    return await memory_service.digests_out(session, digests)
+    return await memory_serialize.digests_out(session, digests)
 
 
 @api_router.post("/memories")
@@ -933,7 +934,7 @@ async def create_memory(
         repo_hint=body.repo_hint,
         force=body.force,
     )
-    return await memory_service.memory_out(session, memory, full=True)
+    return await memory_serialize.memory_out(session, memory, full=True)
 
 
 @api_router.get("/memories/{memory_id}")
@@ -953,7 +954,7 @@ async def get_memory(
     memory = await memory_service.open_memory(session, principal, memory_id=memory_id, recall=touch)
     if not memory:
         raise HTTPException(404, "Not found")
-    return await memory_service.memory_out(session, memory, full=True)
+    return await memory_serialize.memory_out(session, memory, full=True)
 
 
 @api_router.patch("/memories/{memory_id}")
@@ -982,7 +983,7 @@ async def patch_memory(
         path_hint=body.path_hint,
         repo_hint=body.repo_hint,
     )
-    return await memory_service.memory_out(session, memory, full=True)
+    return await memory_serialize.memory_out(session, memory, full=True)
 
 
 @api_router.delete("/memories/{memory_id}")
@@ -1010,7 +1011,7 @@ async def create_guide(
     Authenticated callers. Errors: 403 when the space is not writable,
     422 on invalid input.
     """
-    memory = await memory_service.guide_write(
+    memory = await guide_service.guide_write(
         session,
         principal,
         title=body.title,
@@ -1023,7 +1024,7 @@ async def create_guide(
         ttl_days=body.ttl_days,
         permanent=body.permanent,
     )
-    return await memory_service.memory_out(session, memory, full=True)
+    return await memory_serialize.memory_out(session, memory, full=True)
 
 
 @api_router.get("/api-keys")

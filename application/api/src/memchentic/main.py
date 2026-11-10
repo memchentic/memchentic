@@ -25,20 +25,20 @@ from memchentic import __version__
 from memchentic.api.oauth import router as oauth_router
 from memchentic.api.router import api_router
 from memchentic.api.security_headers import SecurityHeadersMiddleware
+from memchentic.auth.bearer import resolve_bearer
 from memchentic.auth.passwords import require_bcrypt_length
-from memchentic.auth.principal import resolve_bearer
 from memchentic.auth.providers import provider_label
 from memchentic.auth.tokens import verify_signing_key
-from memchentic.auth.users import ensure_admin_user
 from memchentic.db.session import get_session_factory, init_db, set_rls_context
 from memchentic.embeddings import get_embedder
 from memchentic.events import close_memory_streams, start_memory_listener, stop_memory_listener
 from memchentic.mcp.context import principal_var, session_var
 from memchentic.mcp.server import create_mcp
-from memchentic.services.auth_groups import ensure_auth_groups
+from memchentic.services.auth_roster import ensure_auth_groups
 from memchentic.services.errors import ServiceError, http_error
 from memchentic.services.instance_settings import ensure_instance_settings, get_register_enabled
 from memchentic.services.memories import backfill_orphan_creators
+from memchentic.services.users import ensure_admin_user
 from memchentic.settings import Settings, get_settings
 
 logger = logging.getLogger("memchentic")

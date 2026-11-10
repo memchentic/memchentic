@@ -13,22 +13,19 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from memchentic.auth import idp_groups
-from memchentic.auth.idp_groups import groups_from_claims
-from memchentic.auth.users import ensure_admin_user, register_internal_user
+from memchentic.auth.claims import groups_from_claims
 from memchentic.db.session import set_rls_context
 from memchentic.models.entities import ApiKey
-from memchentic.services.auth_groups import (
+from memchentic.services.auth_groups import add_member, list_members, remove_member, set_idp_bind
+from memchentic.services.auth_roster import (
     SLUG_ADMINISTRATORS,
     SLUG_USERS,
-    add_member,
     ensure_auth_groups,
-    list_members,
-    remove_member,
-    set_idp_bind,
     sync_user_from_idp_groups,
     user_is_administrator,
 )
 from memchentic.services.errors import ForbiddenError
+from memchentic.services.users import ensure_admin_user, register_internal_user
 from memchentic.settings import Settings, get_settings
 
 ADMIN_KEY = os.environ.get("ADMIN_API_KEY", "")
@@ -215,7 +212,7 @@ def test_admin_key_request_cost_does_not_depend_on_user_count(
     """The admin key is resolved with a lookup, not a re-hash and a roster rebuild."""
     from sqlalchemy import event
 
-    import memchentic.auth.users as users_module
+    import memchentic.services.users as users_module
     from memchentic.db.session import get_engine
 
     admin_auth = {"Authorization": f"Bearer {ADMIN_KEY}"}

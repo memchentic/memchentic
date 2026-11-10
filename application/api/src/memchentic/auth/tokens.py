@@ -15,6 +15,8 @@ from jwt.exceptions import InvalidTokenError
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from memchentic.auth.jwks import fetch_jwks_and_decode
+from memchentic.auth.providers import resolve_issuer
 from memchentic.models.entities import InternalSigningKey
 from memchentic.settings import Settings, get_settings
 
@@ -285,8 +287,6 @@ async def verify_access_token(
         # Fall through to IdP JWKS when external; re-raise for internal-only.
         if settings.oauth_provider == "internal":
             raise
-
-    from memchentic.auth.providers import fetch_jwks_and_decode, resolve_issuer
 
     # resolve_bearer tells the two signers apart by ``iss``. Refuse a
     # configuration in which the external issuer equals this instance's own

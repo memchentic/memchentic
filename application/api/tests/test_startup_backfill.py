@@ -9,10 +9,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from memchentic.auth.users import ensure_admin_user
 from memchentic.db.session import _reset_rls_on_checkin, set_rls_context
-from memchentic.services.auth_groups import ensure_auth_groups
+from memchentic.services.auth_roster import ensure_auth_groups
 from memchentic.services.memories import backfill_orphan_creators
+from memchentic.services.users import ensure_admin_user
 from memchentic.settings import get_settings
 
 

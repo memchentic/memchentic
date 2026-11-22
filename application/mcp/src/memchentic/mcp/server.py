@@ -1002,8 +1002,18 @@ async def export(
 async def ingest_suggest(
     text: str,
     use_llm: bool = False,
+    messages: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
-    """Suggest memory candidates from prose without writing to the database."""
+    """Suggest memory candidates from prose without writing to the database.
+
+    Heuristic pipeline splits and classifies text (or role/content
+    ``messages``). Optional ``use_llm`` uses an admin-configured provider,
+    then the same quality gate. Confirm keepers with remember / guide_write.
+    """
     _ = require_principal()
-    candidates = await memory_ingest.suggest_candidates(text, use_llm=use_llm)
+    candidates = await memory_ingest.suggest_candidates(
+        text,
+        messages=messages,
+        use_llm=use_llm,
+    )
     return {"candidates": candidates}

@@ -269,5 +269,13 @@ npm only. None of the three is a release number.
   per-user API key, or `ADMIN_API_KEY`.
 - MCP tools and REST routes share `memchentic.services`; no divergent logic.
 - Python: typed boundaries, Google-style docstrings, Ruff clean.
+- Prefer **pull requests into `main`** for product work (app, nested docs,
+  website, Helm bumps). Do not land straight on the default branch when a PR
+  is practical. Open the PR, wait for required checks, fix failures on the
+  branch, then merge (squash or merge per repo default). This keeps history
+  reviewable and makes GitHub Release notes straightforward. Nested
+  `docs/` and `website/` get their own PRs on those remotes when their
+  content changes. Commit / push / open / merge still only when the user
+  asks (or when they have already authorized that PR workflow for the task).
 - Do not commit or push unless the user asks.
 - Homelab deployment and the parked AgentMemory cutover are out of scope.

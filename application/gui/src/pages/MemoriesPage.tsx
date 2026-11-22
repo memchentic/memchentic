@@ -92,10 +92,26 @@ export default function MemoriesPage() {
   const [showIngest, setShowIngest] = useState(false);
   const [ingestText, setIngestText] = useState("");
   const [ingestBusy, setIngestBusy] = useState(false);
-  const [ingestCandidates, setIngestCandidates] = useState<
-    { kind: string; title: string; body: string; entry_type?: string }[]
-  >([]);
+  type IngestCandidate = {
+    kind: string;
+    title: string;
+    body: string;
+    entry_type?: string;
+    confidence?: number;
+    reasons?: string[];
+    source?: string;
+    path_hint?: string;
+    repo_hint?: string;
+  };
+  const [ingestCandidates, setIngestCandidates] = useState<IngestCandidate[]>([]);
   const searching = filters.q.length > 0;
+
+  function ingestTargetSpaceId(): string | undefined {
+    if (filters.spaceScope === "group") {
+      return me?.default_shared_space_id || undefined;
+    }
+    return me?.personal_space_id || undefined;
+  }
 
   async function downloadExport() {
     try {
@@ -138,10 +154,8 @@ export default function MemoriesPage() {
     }
   }
 
-  async function confirmIngestCandidate(
-    c: { kind: string; title: string; body: string; entry_type?: string },
-  ) {
-    const spaceId = me?.personal_space_id || undefined;
+  async function confirmIngestCandidate(c: IngestCandidate) {
+    const spaceId = ingestTargetSpaceId();
     try {
       if (c.kind === "guide") {
         await api("/api/guides", {
@@ -150,6 +164,8 @@ export default function MemoriesPage() {
             title: c.title,
             body: c.body,
             space_id: spaceId,
+            path_hint: c.path_hint,
+            repo_hint: c.repo_hint,
           }),
         });
       } else {
@@ -160,6 +176,8 @@ export default function MemoriesPage() {
             body: c.body,
             type: c.entry_type || "note",
             space_id: spaceId,
+            path_hint: c.path_hint,
+            repo_hint: c.repo_hint,
           }),
         });
       }
@@ -169,6 +187,12 @@ export default function MemoriesPage() {
     } catch (err) {
       setError(errorMessage(err));
     }
+  }
+
+  function updateIngestCandidate(index: number, patch: Partial<IngestCandidate>) {
+    setIngestCandidates((prev) =>
+      prev.map((row, i) => (i === index ? { ...row, ...patch } : row)),
+    );
   }
   const loadRef = useRef<() => Promise<void>>(async () => {});
   const loadSeq = useRef(0);
@@ -417,7 +441,9 @@ export default function MemoriesPage() {
           <div className="panel mb-4 grid gap-3 p-4">
             <p className="text-xs text-muted">
               Paste notes or a transcript. Candidates are suggestions only —
-              confirm each one to store it.
+              edit if needed, then confirm each one to store it
+              {filters.spaceScope === "group" ? " in your shared space" : " in your personal space"}
+              .
             </p>
             <textarea
               className="input min-h-32"
@@ -425,7 +451,16 @@ export default function MemoriesPage() {
               value={ingestText}
               onChange={(e) => setIngestText(e.target.value)}
             />
-            <div className="flex justify-end">
+            <div className="flex justify-end gap-2">
+              {ingestCandidates.length > 0 ? (
+                <button
+                  className="btn btn-secondary"
+                  type="button"
+                  onClick={() => setIngestCandidates([])}
+                >
+                  Dismiss all
+                </button>
+              ) : null}
               <button
                 className="btn"
                 type="button"
@@ -442,18 +477,60 @@ export default function MemoriesPage() {
                     <div className="text-xs text-muted mb-1">
                       {c.kind}
                       {c.entry_type ? ` · ${c.entry_type}` : ""}
+                      {typeof c.confidence === "number"
+                        ? ` · ${Math.round(c.confidence * 100)}%`
+                        : ""}
+                      {c.source ? ` · ${c.source}` : ""}
                     </div>
-                    <div className="font-medium text-ink">{c.title}</div>
-                    <pre className="mt-1 whitespace-pre-wrap font-sans text-xs text-muted">
-                      {c.body}
-                    </pre>
-                    <button
-                      className="btn mt-2"
-                      type="button"
-                      onClick={() => void confirmIngestCandidate(c)}
-                    >
-                      Remember
-                    </button>
+                    {c.reasons && c.reasons.length > 0 ? (
+                      <div className="text-xs text-muted mb-2">{c.reasons.join(" · ")}</div>
+                    ) : null}
+                    <input
+                      className="input mb-2"
+                      aria-label={`Candidate ${i + 1} title`}
+                      value={c.title}
+                      onChange={(e) => updateIngestCandidate(i, { title: e.target.value })}
+                    />
+                    {c.kind === "entry" ? (
+                      <select
+                        className="input mb-2"
+                        aria-label={`Candidate ${i + 1} type`}
+                        value={c.entry_type || "note"}
+                        onChange={(e) =>
+                          updateIngestCandidate(i, { entry_type: e.target.value })
+                        }
+                      >
+                        {MEMORY_TYPE_TOKENS.map((t) => (
+                          <option key={t} value={t}>
+                            {t}
+                          </option>
+                        ))}
+                      </select>
+                    ) : null}
+                    <textarea
+                      className="input min-h-20 font-sans text-xs"
+                      aria-label={`Candidate ${i + 1} body`}
+                      value={c.body}
+                      onChange={(e) => updateIngestCandidate(i, { body: e.target.value })}
+                    />
+                    <div className="mt-2 flex gap-2">
+                      <button
+                        className="btn"
+                        type="button"
+                        onClick={() => void confirmIngestCandidate(c)}
+                      >
+                        Remember
+                      </button>
+                      <button
+                        className="btn btn-secondary"
+                        type="button"
+                        onClick={() =>
+                          setIngestCandidates((prev) => prev.filter((_, j) => j !== i))
+                        }
+                      >
+                        Dismiss
+                      </button>
+                    </div>
                   </li>
                 ))}
               </ul>

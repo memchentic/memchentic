@@ -214,11 +214,18 @@ class MemoryFeedbackIn(BaseModel):
     signal: TypeStr
 
 
+class MemoryIngestMessageIn(BaseModel):
+    """One role/content turn for ingest suggest."""
+
+    role: TypeStr
+    content: str = Field(min_length=0, max_length=limits.BODY_MAX)
+
+
 class MemoryIngestSuggestIn(BaseModel):
     """Heuristic or LLM extraction of memory candidates from prose."""
 
     text: BodyStr
-    messages: list[dict[str, str]] | None = None
+    messages: list[MemoryIngestMessageIn] | None = Field(default=None, max_length=200)
     use_llm: bool = False
 
 

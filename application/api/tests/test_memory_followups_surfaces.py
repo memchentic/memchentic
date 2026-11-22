@@ -73,9 +73,7 @@ def test_export_jsonl_entry_and_guide(client: TestClient) -> None:
     peer = register_user(client, prefix="peer").headers
     denied = client.get("/api/memories/export", headers=peer)
     assert denied.status_code == 200
-    peer_ids = {
-        json.loads(line)["id"] for line in denied.text.splitlines() if line.strip()
-    }
+    peer_ids = {json.loads(line)["id"] for line in denied.text.splitlines() if line.strip()}
     assert entry.json()["id"] not in peer_ids
     assert guide.json()["id"] not in peer_ids
 
@@ -579,9 +577,7 @@ async def test_export_service_paginates(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 @pytest.mark.asyncio
-async def test_export_service_yields_rows(
-    pooled_session: AsyncSession, client: TestClient
-) -> None:
+async def test_export_service_yields_rows(pooled_session: AsyncSession, client: TestClient) -> None:
     auth = register_user(client).headers
     resp = client.post(
         "/api/memories",
@@ -736,4 +732,3 @@ async def test_list_history_not_found_raises(session: AsyncSession) -> None:
     await set_rls_context(session, user_id=principal.user_id, is_admin=True)
     with pytest.raises(NotFoundError):
         await list_history(session, principal, uuid.uuid4())
-

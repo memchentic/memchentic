@@ -1,3 +1,5 @@
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { faCheck, faRotateLeft, faXmark } from "@fortawesome/free-solid-svg-icons";
 import { useMemo, useState } from "react";
 import {
   Cell,
@@ -242,81 +244,95 @@ export default function MetricsPage() {
               placeholder="Filter: kind:entry type:fact tag:ops space:personal …"
               aria-label="Metrics query"
             />
-            <button type="submit" className="btn btn-secondary">
-              Apply
+            <button
+              type="submit"
+              className="btn btn-secondary"
+              title="Apply"
+              aria-label="Apply"
+            >
+              <FontAwesomeIcon icon={faCheck} />
             </button>
           </div>
         </form>
 
         <div className="toolbar metrics-filter-bar mb-3">
-          <div className="metrics-range-presets" role="group" aria-label="Time range">
-            {RANGES.map((opt) => (
+          <div className="field">
+            <span>Range</span>
+            <div className="metrics-range-presets" role="group" aria-label="Time range">
+              {RANGES.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  className={`metrics-range-chip${
+                    !filters.custom && filters.range === opt.value
+                      ? " metrics-range-chip-active"
+                      : ""
+                  }`}
+                  onClick={() =>
+                    setFilters((p) => ({
+                      ...p,
+                      custom: false,
+                      fromDay: "",
+                      toDay: "",
+                      range: opt.value,
+                    }))
+                  }
+                >
+                  {opt.label}
+                </button>
+              ))}
               <button
-                key={opt.value}
                 type="button"
-                className={`metrics-range-chip${
-                  !filters.custom && filters.range === opt.value
-                    ? " metrics-range-chip-active"
-                    : ""
-                }`}
+                className={`metrics-range-chip${filters.custom ? " metrics-range-chip-active" : ""}`}
                 onClick={() =>
                   setFilters((p) => ({
                     ...p,
-                    custom: false,
-                    fromDay: "",
-                    toDay: "",
-                    range: opt.value,
+                    custom: true,
+                    fromDay: p.fromDay || new Date().toISOString().slice(0, 10),
+                    toDay: p.toDay || new Date().toISOString().slice(0, 10),
                   }))
                 }
               >
-                {opt.label}
+                Custom
               </button>
-            ))}
-            <button
-              type="button"
-              className={`metrics-range-chip${filters.custom ? " metrics-range-chip-active" : ""}`}
-              onClick={() =>
-                setFilters((p) => ({
-                  ...p,
-                  custom: true,
-                  fromDay: p.fromDay || new Date().toISOString().slice(0, 10),
-                  toDay: p.toDay || new Date().toISOString().slice(0, 10),
-                }))
-              }
-            >
-              Custom
-            </button>
-            {filters.custom ? (
-              <>
-                <label className="field toolbar-field">
-                  <span>From</span>
-                  <input
-                    type="date"
-                    className="input w-auto"
-                    value={filters.fromDay}
-                    onChange={(e) =>
-                      setFilters((p) => ({ ...p, fromDay: e.target.value, custom: true }))
-                    }
-                  />
-                </label>
-                <label className="field toolbar-field">
-                  <span>To</span>
-                  <input
-                    type="date"
-                    className="input w-auto"
-                    value={filters.toDay}
-                    onChange={(e) =>
-                      setFilters((p) => ({ ...p, toDay: e.target.value, custom: true }))
-                    }
-                  />
-                </label>
-              </>
-            ) : null}
-            {filters.custom ? (
-              <button type="button" className="btn btn-ghost text-sm" onClick={resetZoom}>
-                Reset zoom
-              </button>
-            ) : null}
+              {filters.custom ? (
+                <>
+                  <label className="field toolbar-field">
+                    <span>From</span>
+                    <input
+                      type="date"
+                      className="input w-auto"
+                      value={filters.fromDay}
+                      onChange={(e) =>
+                        setFilters((p) => ({ ...p, fromDay: e.target.value, custom: true }))
+                      }
+                    />
+                  </label>
+                  <label className="field toolbar-field">
+                    <span>To</span>
+                    <input
+                      type="date"
+                      className="input w-auto"
+                      value={filters.toDay}
+                      onChange={(e) =>
+                        setFilters((p) => ({ ...p, toDay: e.target.value, custom: true }))
+                      }
+                    />
+                  </label>
+                </>
+              ) : null}
+              {filters.custom ? (
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={resetZoom}
+                  title="Reset zoom"
+                  aria-label="Reset zoom"
+                >
+                  <FontAwesomeIcon icon={faRotateLeft} />
+                </button>
+              ) : null}
+            </div>
           </div>
           <div className="toolbar-divider" aria-hidden="true" />
           <SpaceScopeSelect
@@ -344,8 +360,14 @@ export default function MetricsPage() {
             selected={filters.types}
             onChange={(types) => setFilters((p) => ({ ...p, types }))}
           />
-          <button type="button" className="btn btn-ghost text-sm" onClick={clearAll}>
-            Clear
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={clearAll}
+            title="Clear"
+            aria-label="Clear"
+          >
+            <FontAwesomeIcon icon={faXmark} />
           </button>
         </div>
 

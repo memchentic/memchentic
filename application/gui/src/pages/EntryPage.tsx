@@ -1,5 +1,6 @@
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
+  faBan,
   faFloppyDisk,
   faPen,
   faThumbsDown,
@@ -238,16 +239,32 @@ export default function EntryPage() {
               </p>
             )}
             <div className="mt-4 flex flex-wrap gap-2" role="group" aria-label="Feedback">
-              <button className="btn" type="button" onClick={() => void sendFeedback("useful")}>
+              <button
+                className="btn"
+                type="button"
+                title="Useful"
+                aria-label="Useful"
+                onClick={() => void sendFeedback("useful")}
+              >
                 <FontAwesomeIcon icon={faThumbsUp} />
-                <span className="ml-2">Useful</span>
               </button>
-              <button className="btn" type="button" onClick={() => void sendFeedback("stale")}>
+              <button
+                className="btn"
+                type="button"
+                title="Stale"
+                aria-label="Stale"
+                onClick={() => void sendFeedback("stale")}
+              >
                 <FontAwesomeIcon icon={faThumbsDown} />
-                <span className="ml-2">Stale</span>
               </button>
-              <button className="btn" type="button" onClick={() => void sendFeedback("wrong")}>
-                Wrong
+              <button
+                className="btn"
+                type="button"
+                title="Wrong"
+                aria-label="Wrong"
+                onClick={() => void sendFeedback("wrong")}
+              >
+                <FontAwesomeIcon icon={faBan} />
               </button>
               {feedbackNote ? <span className="text-xs text-muted self-center">{feedbackNote}</span> : null}
             </div>

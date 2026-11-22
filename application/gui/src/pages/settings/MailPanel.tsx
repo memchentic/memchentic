@@ -203,18 +203,25 @@ export function MailPanel() {
           Use STARTTLS
         </label>
         <div className="flex flex-wrap gap-2">
-          <button type="button" className="btn" disabled={data == null || busy} onClick={() => void save()}>
+          <button
+            type="button"
+            className="btn"
+            disabled={data == null || busy}
+            title="Save"
+            aria-label="Save"
+            onClick={() => void save()}
+          >
             <FontAwesomeIcon icon={faFloppyDisk} />
-            Save
           </button>
           <button
             type="button"
             className="btn"
             disabled={data == null || !configured || testBusy || busy}
+            title="Send test"
+            aria-label="Send test"
             onClick={() => void sendTest()}
           >
             <FontAwesomeIcon icon={faPaperPlane} />
-            Send test
           </button>
         </div>
       </div>

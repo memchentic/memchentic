@@ -16,6 +16,7 @@ from memchentic.db.session import commit_with_rls, set_rls_context
 from memchentic.models.entities import Space, SpaceKind, SpaceMember, SpaceMemberRole, User
 from memchentic.services import limits
 from memchentic.services.errors import ForbiddenError, NotFoundError, ValidationError
+from memchentic.services.mail import send_group_invite
 from memchentic.services.validation import check_name, parse_space_scope
 
 
@@ -450,9 +451,11 @@ async def add_member(
     Raises:
         NotFoundError: When no user has ``user_id``.
     """
-    await require_roster_manager(session, principal, space_id)
-    if await session.get(User, user_id) is None:
+    space = await require_roster_manager(session, principal, space_id)
+    invitee = await session.get(User, user_id)
+    if invitee is None:
         raise NotFoundError("User not found")
+    self_join = user_id == principal.user_id
     # One statement instead of select-then-insert: an overlapping identical
     # add waits on the primary key and is then skipped, not raised.
     await session.execute(
@@ -460,7 +463,7 @@ async def add_member(
         .values(
             space_id=space_id,
             user_id=user_id,
-            accepted_at=datetime.now(UTC) if user_id == principal.user_id else None,
+            accepted_at=datetime.now(UTC) if self_join else None,
             role=SpaceMemberRole.user,
         )
         .on_conflict_do_nothing(index_elements=["space_id", "user_id"])
@@ -469,7 +472,16 @@ async def add_member(
         select(SpaceMember).where(SpaceMember.space_id == space_id, SpaceMember.user_id == user_id)
     )
     member = result.scalar_one()
+    was_pending = member.accepted_at is None
     await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
+    if was_pending and not self_join:
+        await send_group_invite(
+            session,
+            to=invitee.email,
+            group_name=space.name,
+            inviter_name=principal.display_name or "",
+            inviter_email=principal.email,
+        )
     return member
 
 

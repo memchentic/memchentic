@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from memchentic.api.schemas import LoginIn, RegisterIn
+from memchentic.api.schemas import LoginIn, RegisterIn, ResendVerificationIn, VerifyEmailIn
 from memchentic.auth.oauth_browser import finish_oauth_login, start_oauth_login
 from memchentic.auth.principal import Principal, check_admin_password
 from memchentic.auth.rate_limit import check_rate_limit, client_ip
@@ -22,9 +22,10 @@ from memchentic.auth.sessions import (
     touch_session,
 )
 from memchentic.auth.tokens import ACCESS_TOKEN_SECONDS, issue_access_token
-from memchentic.auth.users import authenticate_internal
+from memchentic.auth.users import authenticate_internal, normalize_email
 from memchentic.deps import db_session, get_optional_principal
 from memchentic.services import auth_roster as auth_roster_service
+from memchentic.services import email_verification as email_verification_service
 from memchentic.services import instance_settings as instance_settings_service
 from memchentic.services.users import ensure_admin_user, register_internal_user
 from memchentic.settings import get_settings
@@ -45,25 +46,70 @@ async def register(
     """Register an internal user.
 
     Internal mode only. Open while self-registration is enabled; otherwise
-    administrators only. Rate limited per client. Errors: 400 outside internal
-    mode, 403 when registration is closed, 429.
+    administrators only. When outbound mail is configured, a public signup
+    stays unverified until the confirmation link is used. Rate limited per
+    client. Errors: 400 outside internal mode, 403 when registration is
+    closed, 429.
     """
     settings = get_settings()
     ip = client_ip(request)
     check_rate_limit(f"register:{ip}", limit=10, window_seconds=60)
     if settings.oauth_provider != "internal":
         raise HTTPException(400, "Registration only in internal mode")
-    if not await instance_settings_service.get_register_enabled(session) and (
-        principal is None or not principal.is_admin
-    ):
+    is_admin = principal is not None and principal.is_admin
+    if not await instance_settings_service.get_register_enabled(session) and not is_admin:
         raise HTTPException(403, "Registration is disabled")
+    mail_on = await instance_settings_service.is_mail_configured(session)
+    require_verify = mail_on and not is_admin
     try:
         user = await register_internal_user(
-            session, email=body.email, password=body.password, display_name=body.display_name
+            session,
+            email=body.email,
+            password=body.password,
+            display_name=body.display_name,
+            email_verified=not require_verify,
         )
     except ValueError as exc:
         raise HTTPException(400, "Unable to register") from exc
-    return {"id": str(user.id), "email": user.email, "display_name": user.display_name}
+    if require_verify:
+        await email_verification_service.issue_verification_token(session, user, send=True)
+        await session.commit()
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "display_name": user.display_name,
+        "verification_required": require_verify,
+    }
+
+
+@router.post("/auth/verify-email")
+async def verify_email(
+    request: Request,
+    body: VerifyEmailIn,
+    session: AsyncSession = Depends(db_session),
+) -> dict[str, str]:
+    """Confirm an email address with a one-time token from the confirmation mail."""
+    check_rate_limit(f"verify-email:{client_ip(request)}", limit=20, window_seconds=60)
+    user = await email_verification_service.consume_verification_token(session, body.token)
+    if user is None:
+        raise HTTPException(400, "Invalid or expired confirmation link")
+    return {"status": "verified", "email": user.email}
+
+
+@router.post("/auth/resend-verification")
+async def resend_verification(
+    request: Request,
+    body: ResendVerificationIn,
+    session: AsyncSession = Depends(db_session),
+) -> dict[str, str]:
+    """Re-send a confirmation email. Always returns ok (no account enumeration)."""
+    check_rate_limit(f"resend-verify:{client_ip(request)}", limit=5, window_seconds=60)
+    try:
+        email = normalize_email(str(body.email))
+    except ValueError:
+        return {"status": "ok"}
+    await email_verification_service.resend_verification(session, email)
+    return {"status": "ok"}
 
 
 def _clear_session_cookie(response: Response) -> None:
@@ -124,6 +170,8 @@ async def login(
     # example its email was rewritten by an IdP sign-in). It re-ensures the row.
     user = await authenticate_internal(session, email=body.email, password=body.password)
     if user:
+        if await email_verification_service.must_confirm_email(session, user):
+            raise HTTPException(403, "Confirm your email")
         subject, email, provider, user_id = str(user.id), user.email, user.provider, user.id
         extra = {
             "is_admin": await auth_roster_service.user_is_administrator(session, user.id),

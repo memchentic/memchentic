@@ -43,6 +43,7 @@ async def register_internal_user(
     email: str,
     password: str,
     display_name: str | None = None,
+    email_verified: bool = True,
 ) -> User:
     """Create an internal (email/password) user.
 
@@ -51,6 +52,8 @@ async def register_internal_user(
         email: Required unique identity for the user.
         password: Plaintext password to hash.
         display_name: Optional display name; defaults to the local-part of email.
+        email_verified: Whether the address is already confirmed (False when
+            SMTP is configured and this is a public self-registration).
 
     Returns:
         The persisted user with a personal space.
@@ -71,6 +74,7 @@ async def register_internal_user(
         provider="internal",
         provider_subject=email_n,
         display_name=display_name or email_n.split("@")[0],
+        email_verified=email_verified,
     )
     try:
         # Savepoint: an overlapping registration of the same email loses on the
@@ -95,11 +99,11 @@ async def register_internal_user(
 async def _revoke_unverified_credentials(session: AsyncSession, user: User) -> None:
     """Revoke every credential created before an IdP proved ownership of the email.
 
-    Internal registration does not verify the email address. When an external
-    IdP first vouches for the address of a password-bearing account, the
-    password, the ``internal`` identity, GUI sessions, refresh tokens, pending
-    authorization codes and API keys may belong to somebody else. The caller
-    commits.
+    Internal registration may leave the address unconfirmed when SMTP was off
+    at signup. When an external IdP first vouches for the address of a
+    password-bearing account, the password, the ``internal`` identity, GUI
+    sessions, refresh tokens, pending authorization codes, verification tokens
+    and API keys may belong to somebody else. The caller commits.
 
     Args:
         session: Database session.
@@ -198,6 +202,7 @@ async def upsert_oauth_user(
         await ensure_identity(session, by_email, provider=provider, subject=subject_n)
         by_email.provider = provider
         by_email.provider_subject = subject_n
+        by_email.email_verified = True
         if display_name:
             by_email.display_name = display_name
         return await _finish(by_email)
@@ -212,6 +217,7 @@ async def upsert_oauth_user(
         provider=provider,
         provider_subject=subject_n,
         display_name=display_name or email_n.split("@")[0],
+        email_verified=True,
     )
     session.add(user)
     await session.flush()
@@ -253,6 +259,7 @@ async def ensure_admin_user(
             provider="internal",
             provider_subject=email_n,
             display_name=display,
+            email_verified=True,
         )
         session.add(user)
         await session.flush()
@@ -267,6 +274,8 @@ async def ensure_admin_user(
             user.password_hash = await asyncio.to_thread(hash_password, settings.admin_password)
         if user.display_name != display:
             user.display_name = display
+        if not user.email_verified:
+            user.email_verified = True
     await ensure_identity(session, user, provider="internal", subject=email_n)
     await ensure_personal_space(session, user)
     await session.flush()

@@ -12,10 +12,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from memchentic.auth.principal import Principal
 from memchentic.auth.tokens import hash_token
 from memchentic.db.session import advisory_xact_lock, commit_with_rls
-from memchentic.models.entities import ApiKey
+from memchentic.models.entities import ApiKey, User
 from memchentic.services import limits
+from memchentic.services.email_verification import must_confirm_email
 from memchentic.services.errors import ForbiddenError, NotFoundError
+from memchentic.services.mail import send_api_key_notice
 from memchentic.services.validation import check_text
+
+
+async def _require_verified_target(session: AsyncSession, user_id: uuid.UUID) -> User:
+    """Load the target user and refuse when email confirmation is still required."""
+    user = await session.get(User, user_id)
+    if user is None:
+        raise NotFoundError("User not found")
+    if await must_confirm_email(session, user):
+        raise ForbiddenError("Confirm your email before managing API keys")
+    return user
 
 
 def _require_target(principal: Principal, user_id: uuid.UUID | None) -> uuid.UUID:
@@ -84,6 +96,7 @@ async def create_api_key(
     """
     name = check_text(name.strip(), "name", limits.API_KEY_NAME_MAX)
     target = _require_target(principal, user_id)
+    owner = await _require_verified_target(session, target)
     # Same lock as cycle_api_key, so a create never lands between a cycle's
     # "select active keys" and its commit.
     await advisory_xact_lock(session, _key_lock(target))
@@ -91,6 +104,7 @@ async def create_api_key(
     session.add(key)
     await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
     await session.refresh(key)
+    await send_api_key_notice(session, to=owner.email, action="created")
     return key, raw
 
 
@@ -133,6 +147,7 @@ async def cycle_api_key(
     """
     name = check_text(name.strip(), "name", limits.API_KEY_NAME_MAX)
     target = _require_target(principal, user_id)
+    owner = await _require_verified_target(session, target)
     # Serialise cycles (and creates) for this user: the SELECT below then sees
     # every key an earlier overlapping call committed, and revokes it.
     await advisory_xact_lock(session, _key_lock(target))
@@ -147,6 +162,7 @@ async def cycle_api_key(
     session.add(key)
     await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
     await session.refresh(key)
+    await send_api_key_notice(session, to=owner.email, action="cycled")
     return key, raw
 
 

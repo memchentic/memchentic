@@ -7,6 +7,7 @@ import EntryPage from "./pages/EntryPage";
 import MemoriesPage from "./pages/MemoriesPage";
 import SettingsPage from "./pages/SettingsPage";
 import SignInPage from "./pages/SignInPage";
+import VerifyEmailPage from "./pages/VerifyEmailPage";
 import GroupDetailPage from "./pages/GroupDetailPage";
 import GroupsPage from "./pages/GroupsPage";
 import ProjectsPage from "./pages/ProjectsPage";
@@ -39,6 +40,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/sign-in" element={<SignInPage />} />
+      <Route path="/verify-email" element={<VerifyEmailPage />} />
       <Route
         path="/"
         element={

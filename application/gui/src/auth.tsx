@@ -65,7 +65,7 @@ type AuthState = {
     password: string,
     displayName?: string,
     remember?: boolean,
-  ) => Promise<void>;
+  ) => Promise<{ verification_required: boolean }>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
 };
@@ -140,11 +140,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const register = useCallback(
     async (email: string, password: string, displayName?: string, remember = false) => {
-      await api("/api/auth/register", {
+      const created = await api<{ verification_required?: boolean }>("/api/auth/register", {
         method: "POST",
         body: JSON.stringify({ email, password, display_name: displayName }),
       });
+      if (created.verification_required) {
+        return { verification_required: true };
+      }
       await login(email, password, remember);
+      return { verification_required: false };
     },
     [login],
   );

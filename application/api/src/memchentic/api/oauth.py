@@ -39,6 +39,7 @@ from memchentic.auth.tokens import (
 from memchentic.auth.users import authenticate_internal
 from memchentic.deps import db_session
 from memchentic.models.entities import OAuthClient
+from memchentic.services.email_verification import must_confirm_email
 from memchentic.services.users import ensure_admin_user
 from memchentic.settings import get_settings
 
@@ -377,6 +378,18 @@ async def authorize_post(
     user = await authenticate_internal(session, email=email, password=password)
     user_id: uuid.UUID
     if user:
+        if await must_confirm_email(session, user):
+            fields = {
+                "client_id": client_id,
+                "redirect_uri": redirect_uri,
+                "scope": scope,
+                "state": state,
+                "code_challenge": code_challenge,
+                "code_challenge_method": code_challenge_method,
+            }
+            return _authorize_html(
+                client, fields, request=request, error="Confirm your email", status_code=403
+            )
         user_id = user.id
     elif check_admin_password(email, password, settings):
         user_id = (await ensure_admin_user(session, settings)).id

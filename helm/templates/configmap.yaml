@@ -44,6 +44,11 @@ data:
   FORWARDED_ALLOW_IPS: {{ .Values.config.forwardedAllowIps | quote }}
   {{- end }}
   REGISTER_ENABLED: {{ .Values.config.registerEnabled | quote }}
+  SMTP_HOST: {{ .Values.config.smtpHost | default "" | quote }}
+  SMTP_PORT: {{ .Values.config.smtpPort | default "587" | quote }}
+  SMTP_USERNAME: {{ .Values.config.smtpUsername | default "" | quote }}
+  SMTP_FROM: {{ .Values.config.smtpFrom | default "" | quote }}
+  SMTP_USE_TLS: {{ .Values.config.smtpUseTls | default "true" | quote }}
   ENABLE_API_DOCS: {{ .Values.config.enableApiDocs | default "false" | quote }}
   POSTGRES_SSLMODE: {{ .Values.config.postgresSslmode | quote }}
   POSTGRES_SSLROOTCERT: {{ .Values.config.postgresSslrootcert | quote }}

@@ -15,7 +15,7 @@ import {
 import type { IconDefinition } from "@fortawesome/fontawesome-svg-core";
 import { useEffect, useState, type FormEvent } from "react";
 import { Navigate, useLocation, useSearchParams } from "react-router-dom";
-import { api } from "../api";
+import { ApiError, api } from "../api";
 import { useAuth } from "../auth";
 import { safeReturnPath } from "../returnPath";
 import { formatDocumentTitle } from "../documentTitle";
@@ -64,6 +64,8 @@ export default function SignInPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [provider, setProvider] = useState<Provider | null>(null);
+  const [pendingVerifyEmail, setPendingVerifyEmail] = useState<string | null>(null);
+  const [resendNote, setResendNote] = useState<string | null>(null);
 
   useEffect(() => {
     api<Provider>("/api/provider").then(setProvider).catch(() => setProvider(null));
@@ -92,9 +94,39 @@ export default function SignInPage() {
     e.preventDefault();
     setBusy(true);
     setError(null);
+    setResendNote(null);
     try {
-      if (mode === "login" || !registerEnabled) await login(email, password, remember);
-      else await register(email, password, displayName || undefined, remember);
+      if (mode === "login" || !registerEnabled) {
+        await login(email, password, remember);
+      } else {
+        const result = await register(email, password, displayName || undefined, remember);
+        if (result.verification_required) {
+          setPendingVerifyEmail(email);
+          return;
+        }
+      }
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 403 && /confirm your email/i.test(err.message)) {
+        setPendingVerifyEmail(email);
+        setError(null);
+      } else {
+        setError(errorMessage(err));
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resendVerification() {
+    if (!pendingVerifyEmail) return;
+    setBusy(true);
+    setResendNote(null);
+    try {
+      await api("/api/auth/resend-verification", {
+        method: "POST",
+        body: JSON.stringify({ email: pendingVerifyEmail }),
+      });
+      setResendNote("If that account needs confirmation, a new email was sent.");
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -118,6 +150,48 @@ export default function SignInPage() {
   function continueWithProvider() {
     const params = remember ? "?remember=true" : "";
     window.location.assign(`/api/auth/oauth/start${params}`);
+  }
+
+  if (pendingVerifyEmail) {
+    return (
+      <main className="auth-shell">
+        <section className="auth-card">
+          <header className="auth-header">
+            <h1>Confirm your email</h1>
+            <p>
+              We sent a confirmation link to <strong>{pendingVerifyEmail}</strong>.
+              Open that link, then sign in.
+            </p>
+          </header>
+          {error ? (
+            <div className="flash-error" role="alert">
+              {error}
+            </div>
+          ) : null}
+          {resendNote ? (
+            <p className="text-sm text-muted" role="status">
+              {resendNote}
+            </p>
+          ) : null}
+          <div className="flex flex-col gap-2">
+            <button className="btn w-full" type="button" disabled={busy} onClick={() => void resendVerification()}>
+              Resend confirmation email
+            </button>
+            <button
+              className="btn w-full"
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                setPendingVerifyEmail(null);
+                setMode("login");
+              }}
+            >
+              Back to sign in
+            </button>
+          </div>
+        </section>
+      </main>
+    );
   }
 
   return (

@@ -20,6 +20,7 @@ from memchentic.models.entities import (
     ApiKey,
     AuthCode,
     AuthRefreshToken,
+    EmailVerificationToken,
     GuiSession,
     User,
     UserIdentity,
@@ -242,6 +243,14 @@ async def revoke_credentials_raw(session: AsyncSession, user_id: uuid.UUID) -> N
     await session.execute(
         update(AuthCode)
         .where(AuthCode.user_id == user_id, AuthCode.consumed_at.is_(None))
+        .values(consumed_at=now)
+    )
+    await session.execute(
+        update(EmailVerificationToken)
+        .where(
+            EmailVerificationToken.user_id == user_id,
+            EmailVerificationToken.consumed_at.is_(None),
+        )
         .values(consumed_at=now)
     )
     await session.execute(

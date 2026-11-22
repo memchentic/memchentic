@@ -60,6 +60,12 @@ or too short. `openssl rand -hex 24` prints a value that satisfies each rule.
 | `SESSION_BROWSER_HOURS` | `12` | Lifetime of every other GUI session |
 | `SESSION_COOKIE_SECURE` | unset | `true` or `false` forces the `Secure` flag of the session cookie. Unset or blank: `Secure` unless the host of `BASE_URL` is a loopback host. Set `false` only for a plain `http` origin in development |
 | `REGISTER_ENABLED` | `true` | Self-registration with the internal provider. Used as the initial value when the database has no stored value; after that, admins change it in System Settings |
+| `SMTP_HOST` | empty | SMTP server hostname. Empty (or empty `SMTP_FROM`) disables outbound mail. First-boot value; afterwards System Settings → Mail |
+| `SMTP_PORT` | `587` | SMTP port |
+| `SMTP_USERNAME` | empty | Optional SMTP auth user |
+| `SMTP_PASSWORD` | empty | Optional SMTP auth password (stored encrypted in System Settings after first boot) |
+| `SMTP_FROM` | empty | From address for outbound mail |
+| `SMTP_USE_TLS` | `true` | Use STARTTLS |
 | `ENABLE_API_DOCS` | `false` | Serves the generated REST reference at `/docs`, `/redoc` and `/openapi.json`. Keep it off on a reachable deployment |
 | `FORWARDED_ALLOW_IPS` | unset | Read by uvicorn, not by the application settings. Comma-separated addresses or CIDR ranges of the reverse proxy that may set `X-Forwarded-For` and `X-Forwarded-Proto`. Set it when a reverse proxy is in front of the application; otherwise all clients share one rate-limit bucket |
 

@@ -44,9 +44,7 @@ def test_login_bucket_ignores_surrounding_whitespace(
     assert _login(client, email.upper()) == 429
 
 
-def test_login_bucket_key_has_a_fixed_size(
-    client: TestClient, fast_password_check: None
-) -> None:
+def test_login_bucket_key_has_a_fixed_size(client: TestClient, fast_password_check: None) -> None:
     """An oversized email still throttles through the shared limiter."""
     email = f"{'k' * 300}@example.com"
     assert _login(client, email) == 401

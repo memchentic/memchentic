@@ -32,9 +32,7 @@ async def bootstrap_instance(session: AsyncSession, settings: Settings) -> None:
         session: Database session (the caller opens and closes it).
         settings: Application settings.
     """
-    await session.execute(
-        text("SELECT pg_advisory_lock(:k)"), {"k": BOOTSTRAP_LOCK_ID}
-    )
+    await session.execute(text("SELECT pg_advisory_lock(:k)"), {"k": BOOTSTRAP_LOCK_ID})
     try:
         await set_rls_context(session, user_id=None, is_admin=True)
         admin = await ensure_admin_user(session, settings)
@@ -52,6 +50,4 @@ async def bootstrap_instance(session: AsyncSession, settings: Settings) -> None:
             # signing key; otherwise every sign-in fails at request time.
             await verify_signing_key(session, settings)
     finally:
-        await session.execute(
-            text("SELECT pg_advisory_unlock(:k)"), {"k": BOOTSTRAP_LOCK_ID}
-        )
+        await session.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": BOOTSTRAP_LOCK_ID})

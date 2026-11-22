@@ -56,10 +56,7 @@ async def check_rate_limit(bucket: str, *, limit: int, window_seconds: int) -> N
             await session.commit()
             raise HTTPException(429, "Too many requests")
         await session.execute(
-            text(
-                "INSERT INTO auth_rate_limit_hits (bucket, hit_at) "
-                "VALUES (:bucket, :hit_at)"
-            ),
+            text("INSERT INTO auth_rate_limit_hits (bucket, hit_at) VALUES (:bucket, :hit_at)"),
             {"bucket": bucket, "hit_at": now},
         )
         await session.commit()

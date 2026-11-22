@@ -69,9 +69,7 @@ async def _hygiene_automation_loop() -> None:
                     try:
                         await set_rls_context(session, user_id=None, is_admin=True)
                         counts = await run_hygiene_automation(session)
-                        forgotten = (
-                            counts["conflicts_forgotten"] + counts["near_dups_forgotten"]
-                        )
+                        forgotten = counts["conflicts_forgotten"] + counts["near_dups_forgotten"]
                         if forgotten:
                             logger.info(
                                 "Hygiene automation: conflicts=%s near_dups=%s",

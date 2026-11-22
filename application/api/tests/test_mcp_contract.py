@@ -177,6 +177,21 @@ _CONTRACT: dict[str, tuple[set[str], set[str]]] = {
     ),
     "resolve_conflict": ({"a", "b"}, {"a", "b"}),
     "resolve_near_duplicate": ({"keep", "drop"}, {"keep", "drop"}),
+    "history": ({"id", "limit", "offset"}, {"id"}),
+    "feedback": ({"id", "signal"}, {"id", "signal"}),
+    "export": (
+        {
+            "space_id",
+            "space_scope",
+            "kind",
+            "type",
+            "limit",
+            "include_expired",
+            "tags",
+        },
+        set(),
+    ),
+    "ingest_suggest": ({"text", "use_llm"}, {"text"}),
 }
 _READ_ONLY_TOOLS = {
     "me",
@@ -193,12 +208,16 @@ _READ_ONLY_TOOLS = {
     "about_path",
     "trace",
     "overlap_report",
+    "history",
+    "export",
+    "ingest_suggest",
 }
 _DESTRUCTIVE_TOOLS = {
     "guide_write",
     "revise",
     "relocate",
     "forget",
+    "feedback",
     "project_delete",
     "resolve_conflict",
     "resolve_near_duplicate",
@@ -448,7 +467,8 @@ def test_docstrings_state_what_the_tools_do(client: TestClient) -> None:
         assert "you created the group that holds it" in desc[name], name
     assert "case-insensitive substring" in desc["about_path"]
     assert "or repo hint" not in desc["about_path"]
-    assert "There is no edit history" in desc["trace"]
+    assert "history" in desc["trace"]
+    assert "provenance" in desc["trace"]
     assert "supersedes" in desc["overlap_report"]
     assert "conflicts" in desc["overlap_report"]
     assert "always an empty list" not in desc["overlap_report"]
@@ -492,7 +512,7 @@ def test_overlap_report_trust_marker_and_expiry_window(client: TestClient) -> No
     )
     report = _ok(_tool(client, token, "overlap_report", {}))
     assert report["content_trust"] == "untrusted"
-    assert {"near_duplicates", "expiring", "conflicts"} <= set(report)
+    assert {"near_duplicates", "proposals", "expiring", "conflicts"} <= set(report)
     assert {soon["id"], late["id"]} <= {r["id"] for r in report["expiring"]}
     window = _ok(_tool(client, token, "overlap_report", {"expiring_within_days": 7}))
     ids = {r["id"] for r in window["expiring"]}

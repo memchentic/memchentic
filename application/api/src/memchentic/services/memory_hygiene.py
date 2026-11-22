@@ -281,8 +281,12 @@ async def run_hygiene_automation(session: AsyncSession) -> dict[str, int]:
     from memchentic.services.users import ensure_admin_user
 
     flags = await instance_settings_service.get_automation_settings(session)
-    result = {"conflicts_forgotten": 0, "near_dups_forgotten": 0}
-    if not flags["resolve_supersedes"] and not flags["resolve_near_dups"]:
+    result = {"conflicts_forgotten": 0, "near_dups_forgotten": 0, "consolidations_applied": 0}
+    if not (
+        flags["resolve_supersedes"]
+        or flags["resolve_near_dups"]
+        or flags["auto_apply_consolidations"]
+    ):
         return result
 
     settings = get_settings()
@@ -334,6 +338,23 @@ async def run_hygiene_automation(session: AsyncSession) -> dict[str, int]:
             result["near_dups_forgotten"] += 1
             remaining -= 1
 
+    if flags["auto_apply_consolidations"] and remaining > 0:
+        for proposal in report.get("proposals", []):
+            if remaining <= 0:
+                break
+            await set_rls_context(session, user_id=principal.user_id, is_admin=True)
+            try:
+                await resolve_near_duplicate(
+                    session,
+                    principal,
+                    keep_id=uuid.UUID(proposal["keep"]),
+                    drop_id=uuid.UUID(proposal["drop"]),
+                )
+            except (NotFoundError, ValidationError):
+                continue
+            result["consolidations_applied"] += 1
+            remaining -= 1
+
     return result
 
 
@@ -360,10 +381,35 @@ async def _scan_rows(
     return rows, truncated
 
 
+def _consolidation_proposals(
+    near_duplicates: list[dict[str, Any]],
+    rows_by_id: dict[str, Memory],
+) -> list[dict[str, Any]]:
+    """Shape near-duplicate pairs as merge proposals (keep newer, drop older)."""
+    proposals: list[dict[str, Any]] = []
+    for pair in near_duplicates:
+        left = rows_by_id.get(pair["a"])
+        right = rows_by_id.get(pair["b"])
+        if left is None or right is None:
+            continue
+        drop_id = _older_memory_id(left, right)
+        keep_id = left.id if drop_id == right.id else right.id
+        proposals.append(
+            {
+                "keep": str(keep_id),
+                "drop": str(drop_id),
+                "action": "merge",
+                "title": pair.get("title", left.title),
+            }
+        )
+    return proposals
+
+
 def _overlap_payload(
     near_duplicates: list[dict[str, Any]],
     expiring: list[dict[str, Any]],
     conflicts: list[dict[str, Any]],
+    proposals: list[dict[str, Any]],
     scanned: int,
     truncated: bool,
     threshold: float,
@@ -371,6 +417,7 @@ def _overlap_payload(
     """Build the overlap report body in its fixed key order."""
     return {
         "near_duplicates": near_duplicates,
+        "proposals": proposals,
         "expiring": expiring,
         "conflicts": conflicts,
         "scanned": scanned,
@@ -538,13 +585,15 @@ async def overlap_report(
     limit = settings.resolve_search_limit(limit)
     space_ids = await accessible_space_ids(session, principal, space_id, space_scope=space_scope)
     if not space_ids:
-        return _overlap_payload([], [], [], 0, False, settings.near_dup_threshold)
+        return _overlap_payload([], [], [], [], 0, False, settings.near_dup_threshold)
 
     rows, truncated = await _scan_rows(
         session, space_ids, include_expired, settings.overlap_scan_limit
     )
 
     near_duplicates = _near_duplicate_pairs(rows, limit, settings.near_dup_threshold)
+    rows_by_id = {str(m.id): m for m in rows}
+    proposals = _consolidation_proposals(near_duplicates, rows_by_id)
     expiring = await _expiring_soon(session, space_ids, limit, expiring_within_days)
     conflicts = await _supersedes_conflicts(session, space_ids, limit, include_expired)
 
@@ -552,6 +601,7 @@ async def overlap_report(
         near_duplicates,
         expiring,
         conflicts,
+        proposals,
         len(rows),
         truncated,
         settings.near_dup_threshold,

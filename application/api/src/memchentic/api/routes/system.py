@@ -14,6 +14,7 @@ from memchentic.api.schemas import (
     AutomationSettingIn,
     MailSettingIn,
     RegistrationSettingIn,
+    WebhookSettingIn,
 )
 from memchentic.auth.idp_groups import list_idp_groups
 from memchentic.auth.principal import Principal
@@ -72,6 +73,8 @@ async def put_automation_setting(
         principal,
         resolve_supersedes=body.resolve_supersedes,
         resolve_near_dups=body.resolve_near_dups,
+        propose_consolidations=body.propose_consolidations,
+        auto_apply_consolidations=body.auto_apply_consolidations,
     )
 
 
@@ -90,6 +93,37 @@ async def run_automation_now(
     from memchentic.services.memory_hygiene import run_hygiene_automation
 
     return await run_hygiene_automation(session)
+
+
+@router.get("/system/webhooks")
+async def get_webhook_setting(
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(db_session),
+) -> dict[str, Any]:
+    """Admin: outbound webhook settings (secret never returned)."""
+    if not principal.is_admin:
+        raise HTTPException(403, "Administrators only")
+    return await instance_settings_service.webhook_settings_public(session)
+
+
+@router.put("/system/webhooks")
+async def put_webhook_setting(
+    body: WebhookSettingIn,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(db_session),
+) -> dict[str, Any]:
+    """Admin: enable or configure mutation webhooks."""
+    secret = body.secret
+    if secret == "" and not body.clear_secret:
+        secret = None
+    return await instance_settings_service.set_webhook_settings(
+        session,
+        principal,
+        enabled=body.enabled,
+        url=body.url,
+        secret=secret,
+        clear_secret=body.clear_secret,
+    )
 
 
 @router.get("/system/mail")

@@ -26,6 +26,12 @@ KEY_SMTP_FROM = "smtp_from"
 KEY_SMTP_USE_TLS = "smtp_use_tls"
 KEY_AUTOMATION_RESOLVE_SUPERSEDES = "automation_resolve_supersedes"
 KEY_AUTOMATION_RESOLVE_NEAR_DUPS = "automation_resolve_near_dups"
+KEY_AUTOMATION_PROPOSE_CONSOLIDATIONS = "automation_propose_consolidations"
+KEY_AUTOMATION_AUTO_APPLY_CONSOLIDATIONS = "automation_auto_apply_consolidations"
+KEY_WEBHOOK_ENABLED = "webhook_enabled"
+KEY_WEBHOOK_URL = "webhook_url"
+KEY_WEBHOOK_SECRET = "webhook_secret"  # noqa: S105
+KEY_WEBHOOK_FAIL_COUNT = "webhook_fail_count"
 
 _SMTP_KEYS = (
     KEY_SMTP_HOST,
@@ -104,6 +110,12 @@ async def ensure_instance_settings(session: AsyncSession, settings: Settings | N
         (KEY_SMTP_USE_TLS, "true" if settings.smtp_use_tls else "false"),
         (KEY_AUTOMATION_RESOLVE_SUPERSEDES, "false"),
         (KEY_AUTOMATION_RESOLVE_NEAR_DUPS, "false"),
+        (KEY_AUTOMATION_PROPOSE_CONSOLIDATIONS, "false"),
+        (KEY_AUTOMATION_AUTO_APPLY_CONSOLIDATIONS, "false"),
+        (KEY_WEBHOOK_ENABLED, "false"),
+        (KEY_WEBHOOK_URL, ""),
+        (KEY_WEBHOOK_SECRET, ""),
+        (KEY_WEBHOOK_FAIL_COUNT, "0"),
     ]
     password = settings.smtp_password
     seeds.append(
@@ -156,9 +168,13 @@ async def get_automation_settings(session: AsyncSession) -> dict[str, bool]:
     """Return hygiene Automation toggles (default off when unseeded)."""
     supersedes_raw = await _get_raw(session, KEY_AUTOMATION_RESOLVE_SUPERSEDES)
     near_dups_raw = await _get_raw(session, KEY_AUTOMATION_RESOLVE_NEAR_DUPS)
+    propose_raw = await _get_raw(session, KEY_AUTOMATION_PROPOSE_CONSOLIDATIONS)
+    apply_raw = await _get_raw(session, KEY_AUTOMATION_AUTO_APPLY_CONSOLIDATIONS)
     return {
         "resolve_supersedes": (False if supersedes_raw is None else _parse_bool(supersedes_raw)),
         "resolve_near_dups": False if near_dups_raw is None else _parse_bool(near_dups_raw),
+        "propose_consolidations": False if propose_raw is None else _parse_bool(propose_raw),
+        "auto_apply_consolidations": False if apply_raw is None else _parse_bool(apply_raw),
     }
 
 
@@ -168,6 +184,8 @@ async def set_automation_settings(
     *,
     resolve_supersedes: bool | None = None,
     resolve_near_dups: bool | None = None,
+    propose_consolidations: bool | None = None,
+    auto_apply_consolidations: bool | None = None,
 ) -> dict[str, bool]:
     """Admin-only update for hygiene Automation toggles.
 
@@ -178,6 +196,8 @@ async def set_automation_settings(
         principal: Caller (must be administrator).
         resolve_supersedes: When true, auto-forget superseded conflict targets.
         resolve_near_dups: When true, auto-forget the older near-duplicate.
+        propose_consolidations: When true, surface merge proposals in hygiene.
+        auto_apply_consolidations: When true, auto-apply merge proposals.
 
     Returns:
         The stored values.
@@ -193,6 +213,16 @@ async def set_automation_settings(
     next_near_dups = (
         current["resolve_near_dups"] if resolve_near_dups is None else resolve_near_dups
     )
+    next_propose = (
+        current["propose_consolidations"]
+        if propose_consolidations is None
+        else propose_consolidations
+    )
+    next_apply = (
+        current["auto_apply_consolidations"]
+        if auto_apply_consolidations is None
+        else auto_apply_consolidations
+    )
     await _upsert(
         session,
         KEY_AUTOMATION_RESOLVE_SUPERSEDES,
@@ -203,10 +233,22 @@ async def set_automation_settings(
         KEY_AUTOMATION_RESOLVE_NEAR_DUPS,
         "true" if next_near_dups else "false",
     )
+    await _upsert(
+        session,
+        KEY_AUTOMATION_PROPOSE_CONSOLIDATIONS,
+        "true" if next_propose else "false",
+    )
+    await _upsert(
+        session,
+        KEY_AUTOMATION_AUTO_APPLY_CONSOLIDATIONS,
+        "true" if next_apply else "false",
+    )
     await session.commit()
     return {
         "resolve_supersedes": next_supersedes,
         "resolve_near_dups": next_near_dups,
+        "propose_consolidations": next_propose,
+        "auto_apply_consolidations": next_apply,
     }
 
 
@@ -367,3 +409,90 @@ async def mail_settings_public(session: AsyncSession) -> dict[str, Any]:
         "configured": mail.configured,
         "password_set": mail.password_set,
     }
+
+
+@dataclass(frozen=True, slots=True)
+class WebhookSettings:
+    """Resolved outbound webhook configuration."""
+
+    enabled: bool
+    url: str
+    secret: str
+    fail_count: int
+
+    @property
+    def secret_set(self) -> bool:
+        return bool(self.secret)
+
+
+async def get_webhook_settings(session: AsyncSession) -> WebhookSettings:
+    """Load webhook settings from the database."""
+    enabled_raw = await _get_raw(session, KEY_WEBHOOK_ENABLED)
+    url_raw = await _get_raw(session, KEY_WEBHOOK_URL)
+    secret_raw = await _get_raw(session, KEY_WEBHOOK_SECRET)
+    fail_raw = await _get_raw(session, KEY_WEBHOOK_FAIL_COUNT)
+    settings = get_settings()
+    secret = ""
+    if secret_raw and is_encrypted_secret(secret_raw):
+        secret = decrypt_secret(secret_raw, settings)
+    elif secret_raw:
+        secret = secret_raw
+    fail_count = 0
+    if fail_raw is not None:
+        try:
+            fail_count = int(fail_raw.strip())
+        except ValueError:
+            fail_count = 0
+    return WebhookSettings(
+        enabled=False if enabled_raw is None else _parse_bool(enabled_raw),
+        url=(url_raw or "").strip(),
+        secret=secret,
+        fail_count=fail_count,
+    )
+
+
+async def webhook_settings_public(session: AsyncSession) -> dict[str, Any]:
+    """Admin-facing webhook settings without the secret."""
+    hook = await get_webhook_settings(session)
+    return {
+        "enabled": hook.enabled,
+        "url": hook.url,
+        "fail_count": hook.fail_count,
+        "secret_set": hook.secret_set,
+    }
+
+
+async def set_webhook_settings(
+    session: AsyncSession,
+    principal: Principal,
+    *,
+    enabled: bool | None = None,
+    url: str | None = None,
+    secret: str | None = None,
+    clear_secret: bool = False,
+) -> dict[str, Any]:
+    """Admin-only update for webhook delivery settings."""
+    _require_admin(principal)
+    settings = get_settings()
+    current = await get_webhook_settings(session)
+    next_enabled = current.enabled if enabled is None else enabled
+    next_url = current.url if url is None else url.strip()
+    await _upsert(session, KEY_WEBHOOK_ENABLED, "true" if next_enabled else "false")
+    await _upsert(session, KEY_WEBHOOK_URL, next_url)
+    if clear_secret:
+        await _upsert(session, KEY_WEBHOOK_SECRET, "")
+    elif secret is not None:
+        await _upsert(
+            session,
+            KEY_WEBHOOK_SECRET,
+            encrypt_secret(secret, settings) if secret else "",
+        )
+    await session.commit()
+    return await webhook_settings_public(session)
+
+
+async def increment_webhook_fail_count(session: AsyncSession) -> None:
+    """Bump the failed-delivery counter (admin session, own commit)."""
+    hook = await get_webhook_settings(session)
+    await _upsert(session, KEY_WEBHOOK_FAIL_COUNT, str(hook.fail_count + 1))
+    await session.commit()

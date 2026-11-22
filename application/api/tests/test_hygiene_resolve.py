@@ -202,7 +202,11 @@ def test_automation_run_now_admin_only(client: TestClient) -> None:
 
     idle = client.post("/api/system/automation/run", headers=admin)
     assert idle.status_code == 200, idle.text
-    assert idle.json() == {"conflicts_forgotten": 0, "near_dups_forgotten": 0}
+    assert idle.json() == {
+        "conflicts_forgotten": 0,
+        "near_dups_forgotten": 0,
+        "consolidations_applied": 0,
+    }
 
     space_id = create_group(client, auth, prefix="autorun")
     old_id = _entry(client, auth, space_id, title=f"RunOld {uuid.uuid4().hex[:8]}", body="old")
@@ -305,6 +309,8 @@ async def test_automation_pass_noop_when_off(session: AsyncSession) -> None:
     assert await get_automation_settings(session) == {
         "resolve_supersedes": False,
         "resolve_near_dups": False,
+        "propose_consolidations": False,
+        "auto_apply_consolidations": False,
     }
     await set_rls_context(session, user_id=principal.user_id, is_admin=True)
     marker = uuid.uuid4().hex[:8]
@@ -327,6 +333,10 @@ async def test_automation_pass_noop_when_off(session: AsyncSession) -> None:
     )
     await set_rls_context(session, user_id=principal.user_id, is_admin=True)
     counts = await run_hygiene_automation(session)
-    assert counts == {"conflicts_forgotten": 0, "near_dups_forgotten": 0}
+    assert counts == {
+        "conflicts_forgotten": 0,
+        "near_dups_forgotten": 0,
+        "consolidations_applied": 0,
+    }
     await set_rls_context(session, user_id=principal.user_id, is_admin=True)
     assert await memory_service.open_memory(session, principal, memory_id=old.id) is not None

@@ -94,6 +94,15 @@ class Settings(BaseSettings):
     )
     memory_max_ttl_days: int = Field(default=730, ge=0, alias="MEMORY_MAX_TTL_DAYS")
     memory_usage_score_weight: float = Field(default=0.05, ge=0, alias="MEMORY_USAGE_SCORE_WEIGHT")
+    search_usage_decay_weight: float = Field(
+        default=0.15, ge=0, le=1.0, alias="SEARCH_USAGE_DECAY_WEIGHT"
+    )
+    search_usage_decay_half_life_days: float = Field(
+        default=30.0, gt=0, alias="SEARCH_USAGE_DECAY_HALF_LIFE_DAYS"
+    )
+    memory_llm_base_url: str = Field(default="", alias="MEMORY_LLM_BASE_URL")
+    memory_llm_api_key: str = Field(default="", alias="MEMORY_LLM_API_KEY")
+    memory_llm_model: str = Field(default="gpt-4o-mini", alias="MEMORY_LLM_MODEL")
 
     # Default result counts when callers omit ``limit`` (MCP/REST/services).
     search_default_limit: int = Field(default=20, ge=1, alias="SEARCH_DEFAULT_LIMIT")

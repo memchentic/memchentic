@@ -179,6 +179,7 @@ def rerank_score(
     *,
     now: datetime,
     path_hint: str | None = None,
+    feedback_score: float = 0.0,
 ) -> float:
     """Adjust a fused RRF score for recency, path, guide confidence, and usage.
 
@@ -188,12 +189,18 @@ def rerank_score(
     approaches 1 for a very old one, so age alone can change a score by at
     most that ratio.
 
+    Usage decay multiplies by a factor that approaches ``1 -
+    SEARCH_USAGE_DECAY_WEIGHT`` when ``last_recalled_at`` (or ``updated_at`` when
+    never recalled) is old. Caller-supplied ``feedback_score`` is clamped to
+    ``[-2, 2]`` and applied as ``1 + 0.1 * feedback_score``.
+
     Args:
         memory: Loaded memory row.
         base: Reciprocal-rank-fusion score.
         now: Reference time for age.
         path_hint: Caller path filter; rows tagged with a matching ``path_hint``
             outrank body-only matches.
+        feedback_score: Aggregated usefulness signal for this memory.
 
     Returns:
         Re-ranked score.
@@ -207,6 +214,14 @@ def rerank_score(
         age_days = max(0.0, (now - updated).total_seconds() / 86400.0)
         freshness = 1.0 / (1.0 + age_days / settings.search_recency_half_life_days)
         score *= 1.0 + settings.search_recency_weight * freshness
+    usage_ref = memory.last_recalled_at or memory.updated_at or memory.created_at
+    if usage_ref is not None:
+        if usage_ref.tzinfo is None:
+            usage_ref = usage_ref.replace(tzinfo=UTC)
+        usage_age_days = max(0.0, (now - usage_ref).total_seconds() / 86400.0)
+        usage_fresh = 1.0 / (1.0 + usage_age_days / settings.search_usage_decay_half_life_days)
+        usage_factor = 1.0 - settings.search_usage_decay_weight * (1.0 - usage_fresh)
+        score *= usage_factor
     if path_hint and memory.path_hint and path_hint.casefold() in memory.path_hint.casefold():
         score *= 1.0 + settings.search_path_boost
     if memory.kind == MemoryKind.guide:
@@ -214,6 +229,8 @@ def rerank_score(
         score *= 1.0 + 0.1 * confidence
     if memory.recall_count:
         score *= 1.0 + math.log1p(memory.recall_count) * settings.memory_usage_score_weight
+    clamped_feedback = max(-2.0, min(2.0, feedback_score))
+    score *= 1.0 + 0.1 * clamped_feedback
     return score
 
 
@@ -420,10 +437,25 @@ async def hybrid_search(
         .scalars()
         .all()
     )
+    from memchentic.services.memory_feedback import feedback_scores_for_ids
+
+    feedback_scores = await feedback_scores_for_ids(session, list(rrf_map.keys()))
     # Sort by score, then by id, so equal scores have one fixed order and
     # every page is a slice of the same list.
     scored = sorted(
-        ((m, rerank_score(m, rrf_map[m.id], now=now, path_hint=path_hint)) for m in rows),
+        (
+            (
+                m,
+                rerank_score(
+                    m,
+                    rrf_map[m.id],
+                    now=now,
+                    path_hint=path_hint,
+                    feedback_score=feedback_scores.get(m.id, 0.0),
+                ),
+            )
+            for m in rows
+        ),
         key=lambda pair: (-pair[1], str(pair[0].id)),
     )[offset : offset + limit]
     digests: list[Digest] = []

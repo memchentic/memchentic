@@ -15,20 +15,33 @@ describe("AutomationPanel", () => {
         path === "/api/system/automation" &&
         (!init || init.method === undefined || init.method === "GET")
       ) {
-        return Promise.resolve({ resolve_supersedes: false, resolve_near_dups: false });
+        return Promise.resolve({
+          resolve_supersedes: false,
+          resolve_near_dups: false,
+          propose_consolidations: false,
+          auto_apply_consolidations: false,
+        });
       }
       if (path === "/api/system/automation" && init?.method === "PUT") {
         const body = JSON.parse(String(init.body ?? "{}")) as {
           resolve_supersedes?: boolean;
           resolve_near_dups?: boolean;
+          propose_consolidations?: boolean;
+          auto_apply_consolidations?: boolean;
         };
         return Promise.resolve({
           resolve_supersedes: body.resolve_supersedes ?? false,
           resolve_near_dups: body.resolve_near_dups ?? false,
+          propose_consolidations: body.propose_consolidations ?? false,
+          auto_apply_consolidations: body.auto_apply_consolidations ?? false,
         });
       }
       if (path === "/api/system/automation/run" && init?.method === "POST") {
-        return Promise.resolve({ conflicts_forgotten: 1, near_dups_forgotten: 0 });
+        return Promise.resolve({
+          conflicts_forgotten: 1,
+          near_dups_forgotten: 0,
+          consolidations_applied: 0,
+        });
       }
       return Promise.reject(new Error(`unexpected ${init?.method ?? "GET"} ${path}`));
     });

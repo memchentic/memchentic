@@ -10,6 +10,8 @@ import { errorMessage } from "../../errors";
 type AutomationSettings = {
   resolve_supersedes: boolean;
   resolve_near_dups: boolean;
+  propose_consolidations: boolean;
+  auto_apply_consolidations: boolean;
 };
 
 type EnablePrompt = {
@@ -28,6 +30,15 @@ const ENABLE_PROMPTS: Record<keyof AutomationSettings, Omit<EnablePrompt, "field
     label: "Auto-resolve near-duplicates",
     clearCopy:
       "Also forget the older memory in each pending near-duplicate pair right now? Later passes still run on the schedule.",
+  },
+  propose_consolidations: {
+    label: "Propose consolidations",
+    clearCopy: "Enable consolidation proposals in overlap reports and hygiene.",
+  },
+  auto_apply_consolidations: {
+    label: "Auto-apply consolidations",
+    clearCopy:
+      "Also merge pending consolidation proposals now (keep newer, drop older)?",
   },
 };
 
@@ -58,7 +69,11 @@ export function AutomationPanel() {
   }
 
   async function runNow() {
-    await api<{ conflicts_forgotten: number; near_dups_forgotten: number }>(
+    await api<{
+      conflicts_forgotten: number;
+      near_dups_forgotten: number;
+      consolidations_applied: number;
+    }>(
       "/api/system/automation/run",
       { method: "POST" },
     );
@@ -113,6 +128,35 @@ export function AutomationPanel() {
           onEnable={() => requestEnable("resolve_supersedes")}
           onDisable={() => void patch({ resolve_supersedes: false })}
           label="Auto-resolve conflicts"
+        />
+      </div>
+
+      <div className="mb-6">
+        <h4 className="text-sm font-medium text-ink mb-2">Consolidation proposals</h4>
+        <p className="text-xs text-muted mb-2">
+          Near-duplicate pairs can surface merge proposals (keep newer, drop older) in{" "}
+          <code className="text-ink">overlap_report</code>.
+        </p>
+        <TogglePair
+          value={data?.propose_consolidations ?? null}
+          busy={busy || data === null}
+          onEnable={() => requestEnable("propose_consolidations")}
+          onDisable={() => void patch({ propose_consolidations: false })}
+          label="Propose consolidations"
+        />
+      </div>
+
+      <div className="mb-6">
+        <h4 className="text-sm font-medium text-ink mb-2">Auto-apply consolidations</h4>
+        <p className="text-xs text-muted mb-2">
+          Scheduled passes can apply merge proposals without a manual Hygiene action.
+        </p>
+        <TogglePair
+          value={data?.auto_apply_consolidations ?? null}
+          busy={busy || data === null}
+          onEnable={() => requestEnable("auto_apply_consolidations")}
+          onDisable={() => void patch({ auto_apply_consolidations: false })}
+          label="Auto-apply consolidations"
         />
       </div>
 

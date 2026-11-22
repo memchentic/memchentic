@@ -1,5 +1,12 @@
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faFloppyDisk, faPen, faTrash, faXmark } from "@fortawesome/free-solid-svg-icons";
+import {
+  faFloppyDisk,
+  faPen,
+  faThumbsDown,
+  faThumbsUp,
+  faTrash,
+  faXmark,
+} from "@fortawesome/free-solid-svg-icons";
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
@@ -9,6 +16,14 @@ import { ErrorNote, PageHeader } from "../components/page";
 import { canForgetMemory, formatMemorySpace } from "../memory/rowFormat";
 import { formatDateTime } from "../format";
 import { errorMessage } from "../errors";
+
+type HistoryRow = {
+  id: string;
+  revised_at: string | null;
+  source: string;
+  changed_fields: string[];
+  revised_by: string | null;
+};
 
 /** Edit-form values for a memory row. */
 function draftFromRow(row: MemoryRow) {
@@ -28,6 +43,8 @@ export default function EntryPage() {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState({ title: "", body: "", type: "note", tags: "" });
   const [error, setError] = useState<string | null>(null);
+  const [history, setHistory] = useState<HistoryRow[]>([]);
+  const [feedbackNote, setFeedbackNote] = useState<string | null>(null);
 
   useEffect(() => {
     api<MemoryRow>(`/api/memories/${id}`)
@@ -36,9 +53,27 @@ export default function EntryPage() {
         setDraft(draftFromRow(row));
       })
       .catch((err) => setError(errorMessage(err)));
+    api<HistoryRow[]>(`/api/memories/${id}/history?limit=20`)
+      .then(setHistory)
+      .catch(() => setHistory([]));
   }, [id]);
 
   const [saving, setSaving] = useState(false);
+
+  async function sendFeedback(signal: "useful" | "stale" | "wrong") {
+    try {
+      await api(`/api/memories/${id}/feedback`, {
+        method: "POST",
+        body: JSON.stringify({ signal }),
+      });
+      setFeedbackNote(
+        signal === "useful" ? "Marked useful." : signal === "stale" ? "Marked stale." : "Marked wrong.",
+      );
+      setError(null);
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
 
   async function save() {
     if (saving) return;
@@ -202,6 +237,40 @@ export default function EntryPage() {
                 touches from before event logging began.
               </p>
             )}
+            <div className="mt-4 flex flex-wrap gap-2" role="group" aria-label="Feedback">
+              <button className="btn" type="button" onClick={() => void sendFeedback("useful")}>
+                <FontAwesomeIcon icon={faThumbsUp} />
+                <span className="ml-2">Useful</span>
+              </button>
+              <button className="btn" type="button" onClick={() => void sendFeedback("stale")}>
+                <FontAwesomeIcon icon={faThumbsDown} />
+                <span className="ml-2">Stale</span>
+              </button>
+              <button className="btn" type="button" onClick={() => void sendFeedback("wrong")}>
+                Wrong
+              </button>
+              {feedbackNote ? <span className="text-xs text-muted self-center">{feedbackNote}</span> : null}
+            </div>
+            <div className="panel p-4 mt-4">
+              <h3 className="metrics-chart-title">Edit history</h3>
+              {history.length === 0 ? (
+                <p className="text-sm text-muted">No revisions yet.</p>
+              ) : (
+                <ul className="entry-recall-list">
+                  {history.map((rev) => (
+                    <li key={rev.id}>
+                      <span className="entry-recall-when">
+                        {rev.revised_at ? formatDateTime(rev.revised_at) : "—"}
+                      </span>
+                      <span className="entry-recall-source">{rev.source}</span>
+                      <span className="entry-recall-who">
+                        {(rev.changed_fields || []).join(", ") || "—"}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           </section>
         ) : null}
         {editing ? (

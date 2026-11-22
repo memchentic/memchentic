@@ -1,6 +1,7 @@
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faEnvelope,
+  faLink,
   faRobot,
   faToggleOn,
   faUserGroup,
@@ -12,6 +13,7 @@ import { RegistrationPanel } from "./settings/RegistrationPanel";
 import { AuthGroupsPanel } from "./settings/AuthGroupsPanel";
 import { AutomationPanel } from "./settings/AutomationPanel";
 import { MailPanel } from "./settings/MailPanel";
+import { WebhooksPanel } from "./settings/WebhooksPanel";
 
 const CATEGORIES = [
   {
@@ -28,6 +30,11 @@ const CATEGORIES = [
     id: "automation",
     label: "Automation",
     icon: faRobot,
+  },
+  {
+    id: "webhooks",
+    label: "Webhooks",
+    icon: faLink,
   },
   {
     id: "mail",
@@ -83,6 +90,11 @@ export default function SettingsPage() {
           {category === "automation" ? (
             <div key="automation" className="settings-main-pane">
               <AutomationPanel />
+            </div>
+          ) : null}
+          {category === "webhooks" ? (
+            <div key="webhooks" className="settings-main-pane">
+              <WebhooksPanel />
             </div>
           ) : null}
           {category === "mail" ? (

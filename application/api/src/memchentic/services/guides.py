@@ -97,6 +97,24 @@ async def guide_write(
     )
     if dup:
         now = datetime.now(UTC)
+        changed_fields = ["title", "body", "confidence", "embedding", "recall_count", "updated_at"]
+        if tags is not None:
+            changed_fields.append("tags")
+        if explicit_ttl or (dup.expires_at is not None and dup.expires_at > now):
+            changed_fields.append("expires_at")
+        if project_id is not None:
+            changed_fields.append("project_id")
+        if resolved_supersedes is not None and resolved_supersedes != dup.id:
+            changed_fields.append("supersedes_id")
+        from memchentic.services.memory_revisions import record_revision
+
+        await record_revision(
+            session,
+            dup,
+            principal,
+            source="guide_write",
+            changed_fields=changed_fields,
+        )
         dup.confidence = min(GUIDE_CONFIDENCE_MAX, float(dup.confidence or 1.0) + 1.0)
         dup.body = body
         dup.title = title.strip()

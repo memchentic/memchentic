@@ -163,6 +163,26 @@ def test_resolve_and_slide_expiry_rules() -> None:
     assert capped == old + timedelta(days=730)
 
 
+def test_rerank_usage_decay_prefers_recent_recall() -> None:
+    now = datetime.now(UTC)
+    base: dict[str, Any] = {
+        "id": uuid.uuid4(),
+        "space_id": uuid.uuid4(),
+        "kind": MemoryKind.entry,
+        "entry_type": EntryType.fact,
+        "title": "t",
+        "body": "b",
+        "tags": [],
+        "confidence": 1.0,
+        "created_at": now - timedelta(days=120),
+        "updated_at": now - timedelta(days=120),
+        "recall_count": 3,
+    }
+    stale = Memory(**base, last_recalled_at=now - timedelta(days=90))
+    fresh = Memory(**{**base, "id": uuid.uuid4()}, last_recalled_at=now - timedelta(days=1))
+    assert rerank_score(fresh, 0.02, now=now) > rerank_score(stale, 0.02, now=now)
+
+
 def test_rerank_rewards_recall_count() -> None:
     now = datetime.now(UTC)
     base: dict[str, Any] = {

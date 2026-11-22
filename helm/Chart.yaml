@@ -2,5 +2,5 @@ apiVersion: v2
 name: memchentic
 description: Shared memory for AI agents — durable recall across sessions, tools, and teams
 type: application
-version: 0.2.3
-appVersion: "1.1.0"
+version: 0.2.4
+appVersion: "1.1.1"

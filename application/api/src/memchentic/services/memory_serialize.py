@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import uuid
 from collections.abc import Sequence
 from typing import Any
@@ -9,7 +10,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from memchentic.models.entities import Memory, Space, User
+from memchentic.models.entities import Memory, Project, Space, User
 from memchentic.search.hybrid import Digest, make_snippet
 
 
@@ -26,6 +27,7 @@ def memory_to_dict(m: Memory, *, full: bool = False) -> dict[str, Any]:
     data = {
         "id": str(m.id),
         "space_id": str(m.space_id),
+        "project_id": str(m.project_id) if m.project_id else None,
         "kind": m.kind.value,
         "type": m.entry_type.value if m.entry_type else None,
         "title": m.title,
@@ -59,6 +61,7 @@ def digest_to_dict(d: Digest) -> dict[str, Any]:
         "type": d.type,
         "tags": d.tags,
         "space_id": d.space_id,
+        "project_id": d.project_id,
         "kind": d.kind,
         "created_by": d.created_by,
         "updated_by": d.updated_by,
@@ -130,24 +133,34 @@ async def annotate_rows(session: AsyncSession, rows: list[dict[str, Any]]) -> li
     """
     await enrich_creator_fields(session, rows)
     space_ids: set[uuid.UUID] = set()
+    project_ids: set[uuid.UUID] = set()
     for row in rows:
         sid = row.get("space_id")
-        if not sid:
-            continue
-        try:
-            space_ids.add(uuid.UUID(str(sid)))
-        except ValueError:
-            continue
+        if sid:
+            with contextlib.suppress(ValueError):
+                space_ids.add(uuid.UUID(str(sid)))
+        pid = row.get("project_id")
+        if pid:
+            with contextlib.suppress(ValueError):
+                project_ids.add(uuid.UUID(str(pid)))
     spaces: dict[str, tuple[str | None, str | None]] = {}
     if space_ids:
         result = await session.execute(
             select(Space.id, Space.name, Space.kind).where(Space.id.in_(space_ids))
         )
         spaces = {str(sid): (name, kind.value) for sid, name, kind in result.all()}
+    projects: dict[str, str] = {}
+    if project_ids:
+        result = await session.execute(
+            select(Project.id, Project.name).where(Project.id.in_(project_ids))
+        )
+        projects = {str(row[0]): row[1] for row in result.all()}
     for row in rows:
         name, kind = spaces.get(str(row.get("space_id") or ""), (None, None))
         row["space_name"] = name
         row["space_kind"] = kind
+        pid = row.get("project_id")
+        row["project_name"] = projects.get(str(pid)) if pid else None
         row["content_trust"] = CONTENT_TRUST
     return rows
 
@@ -210,6 +223,7 @@ def digest_from_memory(m: Memory, *, score: float = 1.0) -> Digest:
         space_id=str(m.space_id),
         kind=m.kind.value,
         created_by=_creator_id(m),
+        project_id=str(m.project_id) if m.project_id else None,
         updated_by=str(m.updated_by_user_id) if m.updated_by_user_id else None,
         updated_at=m.updated_at.isoformat() if m.updated_at else None,
         expires_at=m.expires_at.isoformat() if m.expires_at else None,

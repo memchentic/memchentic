@@ -205,6 +205,9 @@ class Space(Base):
     memories: Mapped[list[Memory]] = relationship(
         back_populates="space", cascade="all, delete-orphan"
     )
+    projects: Mapped[list[Project]] = relationship(
+        back_populates="space", cascade="all, delete-orphan"
+    )
 
 
 class SpaceMember(Base):
@@ -232,6 +235,37 @@ class SpaceMember(Base):
     user: Mapped[User] = relationship(back_populates="memberships")
 
 
+class Project(Base):
+    """A named body of work inside a space. Not an ACL boundary."""
+
+    __tablename__ = "projects"
+    __table_args__ = (
+        Index("ix_projects_space_id", "space_id"),
+        Index(
+            "uq_projects_space_lower_name",
+            "space_id",
+            text("lower(btrim(name))"),
+            unique=True,
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    space_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("spaces.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    space: Mapped[Space] = relationship(back_populates="projects")
+    memories: Mapped[list[Memory]] = relationship(back_populates="project")
+
+
 class Memory(Base):
     """An entry or a guide in a space."""
 
@@ -248,11 +282,15 @@ class Memory(Base):
         ),
         Index("ix_memories_space_lower_title", "space_id", text("lower(btrim(title))")),
         Index("ix_memories_created_by_user_id", "created_by_user_id"),
+        Index("ix_memories_project_id", "project_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     space_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("spaces.id", ondelete="CASCADE"), nullable=False
+    )
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True
     )
     kind: Mapped[MemoryKind] = mapped_column(Enum(MemoryKind, name="memory_kind"), nullable=False)
     entry_type: Mapped[EntryType | None] = mapped_column(
@@ -290,6 +328,7 @@ class Memory(Base):
     )
 
     space: Mapped[Space] = relationship(back_populates="memories")
+    project: Mapped[Project | None] = relationship(back_populates="memories")
 
 
 class OAuthClient(Base):

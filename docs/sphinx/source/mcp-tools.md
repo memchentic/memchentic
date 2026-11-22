@@ -27,6 +27,11 @@ If nothing else is specified, new memories go to **personal**.
 | `space_list` | Lists your personal space and groups |
 | `space_create` | Creates a shared group (you become the creator) |
 | `space_show` | Shows detail and members for a space you can see (each member includes `role` of `user` or `admin`); fails with `not_found:` for a space you cannot read |
+| `project_list` | Lists projects in spaces you can read; optional `space_id` |
+| `project_create` | Creates a project in a space (`space_id`, `name`) |
+| `project_show` | Shows one project by id |
+| `project_rename` | Renames a project (creator, group admin, or instance admin) |
+| `project_delete` | Deletes a project; memories keep their rows with `project_id` cleared |
 
 ## Entries
 

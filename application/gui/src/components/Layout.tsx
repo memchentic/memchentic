@@ -8,6 +8,7 @@ import {
   faRightFromBracket,
   faUsers,
   faUserGroup,
+  faDiagramProject,
 } from "@fortawesome/free-solid-svg-icons";
 import { useEffect, useId, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
@@ -19,6 +20,7 @@ const links = [
   { to: "/", label: "Memories", icon: faBook, end: true },
   { to: "/metrics", label: "Metrics", icon: faChartLine },
   { to: "/groups", label: "Groups", icon: faUserGroup },
+  { to: "/projects", label: "Projects", icon: faDiagramProject },
   { to: "/users", label: "Users", icon: faUsers },
 ];
 

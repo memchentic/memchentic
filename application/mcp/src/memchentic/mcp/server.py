@@ -186,6 +186,82 @@ async def space_show(space_id: str) -> dict[str, Any]:
     return space_service.space_detail(space, principal)
 
 
+@mcp.tool(annotations=_READ_ONLY)
+@_reported
+async def project_list(space_id: str | None = None) -> list[dict[str, Any]]:
+    """List projects in spaces you can read.
+
+    Optional ``space_id`` limits the list to one space. Each item is
+    {id, space_id, name, created_by, created_at, updated_at}.
+    """
+    from memchentic.services import projects as project_service
+
+    principal = require_principal()
+    session = require_session()
+    rows = await project_service.list_projects(
+        session, principal, space_id=parse_uuid(space_id, "space_id")
+    )
+    return [project_service.project_to_dict(p) for p in rows]
+
+
+@mcp.tool(annotations=_ADDITIVE)
+@_reported
+async def project_create(space_id: str, name: str) -> dict[str, Any]:
+    """Create a project named ``name`` in a space you can write.
+
+    Returns {id, space_id, name, created_by, created_at, updated_at}.
+    """
+    from memchentic.services import projects as project_service
+
+    principal = require_principal()
+    session = require_session()
+    project = await project_service.create_project(
+        session,
+        principal,
+        space_id=require_uuid(space_id, "space_id"),
+        name=name,
+    )
+    return project_service.project_to_dict(project)
+
+
+@mcp.tool(annotations=_READ_ONLY)
+@_reported
+async def project_show(id: str) -> dict[str, Any]:
+    """Show one project you can read by id."""
+    from memchentic.services import projects as project_service
+
+    principal = require_principal()
+    session = require_session()
+    project = await project_service.get_project(session, principal, require_uuid(id, "id"))
+    if project is None:
+        raise NotFoundError("Project not found")
+    return project_service.project_to_dict(project)
+
+
+@mcp.tool(annotations=_ADDITIVE)
+@_reported
+async def project_rename(id: str, name: str) -> dict[str, Any]:
+    """Rename a project. Allowed for its creator, a group admin, or an instance admin."""
+    from memchentic.services import projects as project_service
+
+    principal = require_principal()
+    session = require_session()
+    project = await project_service.rename_project(session, principal, require_uuid(id, "id"), name)
+    return project_service.project_to_dict(project)
+
+
+@mcp.tool(annotations=_DESTRUCTIVE)
+@_reported
+async def project_delete(id: str) -> dict[str, str]:
+    """Delete a project. Memories keep their rows; their project_id is cleared."""
+    from memchentic.services import projects as project_service
+
+    principal = require_principal()
+    session = require_session()
+    await project_service.delete_project(session, principal, require_uuid(id, "id"))
+    return {"status": "ok", "id": id}
+
+
 @mcp.tool(annotations=_ADDITIVE)
 @_reported
 async def remember(
@@ -199,6 +275,7 @@ async def remember(
     permanent: bool = False,
     path_hint: str | None = None,
     repo_hint: str | None = None,
+    project_id: str | None = None,
     force: bool = False,
     group: str | None = None,
     visibility: Visibility | None = None,
@@ -227,7 +304,8 @@ async def remember(
     creation. Use ``permanent=true`` for a standing fact that must not expire.
 
     ``path_hint`` and ``repo_hint`` tie the entry to a file path and a
-    repository so that find and about_path can filter on them.
+    repository so that find and about_path can filter on them. Optional
+    ``project_id`` attaches the entry to a project in the same space.
 
     Returns the full entry. Never store secrets or credentials.
     """
@@ -248,6 +326,7 @@ async def remember(
         permanent=permanent,
         path_hint=path_hint,
         repo_hint=repo_hint,
+        project_id=parse_uuid(project_id, "project_id"),
         force=force,
     )
     return await memory_serialize.memory_out(session, memory, full=True)

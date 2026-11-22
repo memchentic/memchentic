@@ -9,6 +9,7 @@ import SettingsPage from "./pages/SettingsPage";
 import SignInPage from "./pages/SignInPage";
 import GroupDetailPage from "./pages/GroupDetailPage";
 import GroupsPage from "./pages/GroupsPage";
+import ProjectsPage from "./pages/ProjectsPage";
 import UserDetailPage from "./pages/UserDetailPage";
 import UsersPage from "./pages/UsersPage";
 
@@ -64,6 +65,7 @@ export default function App() {
         />
         <Route path="groups" element={<GroupsPage />} />
         <Route path="groups/:id" element={<GroupDetailPage />} />
+        <Route path="projects" element={<ProjectsPage />} />
         <Route path="users" element={<UsersPage />} />
         <Route path="users/:id" element={<UserDetailPage />} />
         <Route path="api-keys" element={<ApiKeysPage />} />

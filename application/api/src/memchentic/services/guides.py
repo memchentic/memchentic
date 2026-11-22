@@ -44,6 +44,7 @@ async def guide_write(
     expires_at: datetime | None = None,
     ttl_days: int | None = None,
     permanent: bool = False,
+    project_id: uuid.UUID | None = None,
 ) -> Memory:
     """Create a guide, or reinforce a near-duplicate guide of the caller.
 
@@ -61,6 +62,9 @@ async def guide_write(
     space = await resolve_write_space(
         session, principal, space_id, group=group, visibility=visibility
     )
+    from memchentic.services.projects import require_project_in_space
+
+    project_id = await require_project_in_space(session, principal, project_id, space.id)
     explicit_ttl = expires_at is not None or ttl_days is not None or permanent
     # Serialise check-then-write for guides in this space. Postgres releases
     # the lock at the commit below (or at rollback), so overlapping identical
@@ -92,6 +96,8 @@ async def guide_write(
         dup.recall_count = (dup.recall_count or 0) + 1
         dup.last_recalled_at = now
         dup.embedding = await get_embedder().aembed_memory_text(dup.title, dup.body)
+        if project_id is not None:
+            dup.project_id = project_id
         dup.updated_at = now
         dup.updated_by_user_id = principal.user_id
         return await publish_and_commit(session, principal, dup, "updated")
@@ -99,6 +105,7 @@ async def guide_write(
     memory = Memory(
         id=uuid.uuid4(),
         space_id=space.id,
+        project_id=project_id,
         kind=MemoryKind.guide,
         entry_type=None,
         title=title.strip(),

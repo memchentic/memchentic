@@ -55,6 +55,7 @@ async def browse_memories(
     offset: int = Query(0, ge=0, le=limits.OFFSET_MAX),
     include_expired: bool = False,
     tags: str | None = Query(None, max_length=limits.QUERY_MAX),
+    project_id: str | None = Query(None, max_length=limits.ID_TEXT_MAX),
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> list[dict]:
@@ -74,6 +75,7 @@ async def browse_memories(
         offset=offset,
         include_expired=include_expired,
         tags=_parse_types(tags),
+        project_id=parse_uuid(project_id, "project_id"),
     )
     return await memory_serialize.memories_out(session, rows)
 
@@ -93,6 +95,7 @@ async def search_memories(
     tags: str | None = Query(None, max_length=limits.QUERY_MAX),
     path_hint: str | None = Query(None, max_length=limits.PATH_HINT_MAX),
     repo_hint: str | None = Query(None, max_length=limits.REPO_HINT_MAX),
+    project_id: str | None = Query(None, max_length=limits.ID_TEXT_MAX),
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> list[dict]:
@@ -117,6 +120,7 @@ async def search_memories(
         tags=_parse_types(tags),
         path_hint=path_hint,
         repo_hint=repo_hint,
+        project_id=parse_uuid(project_id, "project_id"),
     )
     return await memory_serialize.digests_out(session, digests)
 
@@ -147,6 +151,7 @@ async def create_memory(
         permanent=body.permanent,
         path_hint=body.path_hint,
         repo_hint=body.repo_hint,
+        project_id=parse_uuid(body.project_id, "project_id"),
         force=body.force,
     )
     return await memory_serialize.memory_out(session, memory, full=True)
@@ -197,6 +202,10 @@ async def patch_memory(
         permanent=body.permanent,
         path_hint=body.path_hint,
         repo_hint=body.repo_hint,
+        project_id=parse_uuid(body.project_id, "project_id")
+        if "project_id" in body.model_fields_set
+        else None,
+        set_project="project_id" in body.model_fields_set,
     )
     return await memory_serialize.memory_out(session, memory, full=True)
 
@@ -238,5 +247,6 @@ async def create_guide(
         expires_at=parse_datetime(body.expires_at, "expires_at"),
         ttl_days=body.ttl_days,
         permanent=body.permanent,
+        project_id=parse_uuid(body.project_id, "project_id"),
     )
     return await memory_serialize.memory_out(session, memory, full=True)

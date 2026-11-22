@@ -87,6 +87,7 @@ class RememberIn(BaseModel):
     permanent: bool = False
     path_hint: str | None = Field(default=None, max_length=limits.PATH_HINT_MAX)
     repo_hint: str | None = Field(default=None, max_length=limits.REPO_HINT_MAX)
+    project_id: IdStr | None = None
     force: bool = False
 
 
@@ -109,6 +110,7 @@ class ReviseIn(BaseModel):
     permanent: bool = False
     path_hint: str | None = Field(default=None, max_length=limits.PATH_HINT_MAX)
     repo_hint: str | None = Field(default=None, max_length=limits.REPO_HINT_MAX)
+    project_id: IdStr | None = None
 
 
 class GroupIn(BaseModel):
@@ -156,6 +158,20 @@ class GuideIn(BaseModel):
     expires_at: DatetimeStr | None = None
     ttl_days: TtlDays | None = None
     permanent: bool = False
+    project_id: IdStr | None = None
+
+
+class ProjectIn(BaseModel):
+    """Request body for creating a project."""
+
+    name: SpaceNameStr
+    space_id: IdStr
+
+
+class ProjectPatch(BaseModel):
+    """Request body for renaming a project."""
+
+    name: SpaceNameStr
 
 
 class AuthGroupMemberIn(BaseModel):

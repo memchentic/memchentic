@@ -9,6 +9,7 @@ from typing import Any
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     DateTime,
     Enum,
@@ -553,6 +554,23 @@ class InstanceSetting(Base):
     value: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class AuthRateLimitHit(Base):
+    """One auth rate-limit hit shared across application replicas.
+
+    No RLS: every process must count the same bucket. Rows older than the
+    limiter retention window are deleted on the next check for that bucket.
+    """
+
+    __tablename__ = "auth_rate_limit_hits"
+    __table_args__ = (Index("ix_auth_rate_limit_hits_bucket_hit_at", "bucket", "hit_at"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    bucket: Mapped[str] = mapped_column(Text, nullable=False)
+    hit_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
 

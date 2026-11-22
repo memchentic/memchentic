@@ -258,9 +258,7 @@ def test_rerank_recency_boost_is_bounded() -> None:
     fresh = _memory(updated_at=now)
     ancient = _memory(updated_at=now - timedelta(days=3650))
     ratio = rerank_score(fresh, 0.03, now=now) / rerank_score(ancient, 0.03, now=now)
-    max_ratio = (1.0 + settings.search_recency_weight) / (
-        1.0 - settings.search_usage_decay_weight
-    )
+    max_ratio = (1.0 + settings.search_recency_weight) / (1.0 - settings.search_usage_decay_weight)
     assert 1.0 < ratio <= max_ratio + 1e-9
 
 

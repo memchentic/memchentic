@@ -247,12 +247,21 @@ def test_rerank_relevance_beats_recency() -> None:
 
 
 def test_rerank_recency_boost_is_bounded() -> None:
-    """Age changes a score by at most the factor 1 + SEARCH_RECENCY_WEIGHT."""
+    """Age boosts a fresh score relative to an ancient one within known knobs.
+
+    Recency multiplies up to ``1 + SEARCH_RECENCY_WEIGHT``. Usage decay can
+    further dampen the ancient row down toward ``1 - SEARCH_USAGE_DECAY_WEIGHT``,
+    so the ratio bound is their product.
+    """
     now = datetime.now(UTC)
+    settings = get_settings()
     fresh = _memory(updated_at=now)
     ancient = _memory(updated_at=now - timedelta(days=3650))
     ratio = rerank_score(fresh, 0.03, now=now) / rerank_score(ancient, 0.03, now=now)
-    assert 1.0 < ratio <= 1.0 + get_settings().search_recency_weight
+    max_ratio = (1.0 + settings.search_recency_weight) / (
+        1.0 - settings.search_usage_decay_weight
+    )
+    assert 1.0 < ratio <= max_ratio + 1e-9
 
 
 def _user_token(client: TestClient) -> tuple[str, str, str]:

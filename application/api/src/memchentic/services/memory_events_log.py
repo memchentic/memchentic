@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from memchentic.auth.principal import Principal
@@ -15,9 +17,14 @@ from memchentic.services.spaces import accessible_space_ids
 from memchentic.services.validation import check_offset
 from memchentic.settings import get_settings
 
+_log = logging.getLogger(__name__)
+
 
 async def append_memory_event(session: AsyncSession, event: MemoryEvent) -> None:
     """Insert a log row from ``event`` in the caller's open transaction.
+
+    Best-effort: a missing space (synthetic notify / race) must not abort
+    the caller's NOTIFY or mutation commit. Uses a nested savepoint.
 
     Args:
         session: Database session.
@@ -29,14 +36,24 @@ async def append_memory_event(session: AsyncSession, event: MemoryEvent) -> None
         memory_id = uuid.UUID(event.id)
     except ValueError:
         memory_id = None
-    session.add(
-        MemoryEventLog(
-            memory_id=memory_id,
-            space_id=uuid.UUID(event.space_id),
-            action=event.action,
-            payload=payload,
+    try:
+        async with session.begin_nested():
+            session.add(
+                MemoryEventLog(
+                    memory_id=memory_id,
+                    space_id=uuid.UUID(event.space_id),
+                    action=event.action,
+                    payload=payload,
+                )
+            )
+            await session.flush()
+    except IntegrityError:
+        _log.debug(
+            "skip durable memory_events row for space=%s memory=%s",
+            event.space_id,
+            event.id,
+            exc_info=True,
         )
-    )
 
 
 def _row_to_dict(row: MemoryEventLog) -> dict[str, Any]:

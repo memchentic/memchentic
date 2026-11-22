@@ -121,7 +121,6 @@ def upgrade() -> None:
         sa.Column(
             "memory_id",
             postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("memories.id", ondelete="SET NULL"),
             nullable=True,
         ),
         sa.Column(

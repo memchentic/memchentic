@@ -394,7 +394,7 @@ class MemoryRevision(Base):
     )
     source: Mapped[str] = mapped_column(String(32), nullable=False)
     changed_fields: Mapped[list[str]] = mapped_column(
-        ARRAY(String), nullable=False, server_default=text("'{}'")
+        ARRAY(Text), nullable=False, server_default=text("'{}'")
     )
     snapshot: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
@@ -437,9 +437,9 @@ class MemoryEventLog(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    memory_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("memories.id", ondelete="SET NULL"), nullable=True
-    )
+    # No FK to memories: delete and synthetic notify payloads may reference an
+    # id that is already gone (or never existed). The UUID stays in ``payload``.
+    memory_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     space_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("spaces.id", ondelete="CASCADE"), nullable=False
     )

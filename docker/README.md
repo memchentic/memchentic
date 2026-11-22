@@ -9,9 +9,10 @@
 | `Dockerfile` | Application image |
 | `.env.example` | Template for `.env`. Copy it, then set the required secrets |
 
-How to start the stack: `README.md` (published image) and `AGENTS.md`,
-section "Run and verify" (development). The Helm chart reads the same
-variables through `config.*` values and its Secret: `helm/README.md`.
+How to start the stack: [Docker docs](https://docs.memchentic.ai/docker.html)
+(published image) and `AGENTS.md`, section "Run and verify" (development).
+The Helm chart reads the same variables through `config.*` values and its
+Secret: `helm/README.md`.
 
 ## Variables read by Compose
 

@@ -100,9 +100,12 @@ def _state_for_row(row: dict[str, Any]) -> str:
 
 def _apply_answers(row: dict[str, Any], answers: dict[str, Any]) -> dict[str, Any] | None:
     """Mutate a shaped candidate from System One answers, or return None to drop."""
-    kind_ans = answers.get("kind") if isinstance(answers.get("kind"), dict) else {}
-    keep_ans = answers.get("keep") if isinstance(answers.get("keep"), dict) else {}
-    type_ans = answers.get("entry_type") if isinstance(answers.get("entry_type"), dict) else {}
+    kind_raw = answers.get("kind")
+    keep_raw = answers.get("keep")
+    type_raw = answers.get("entry_type")
+    kind_ans: dict[str, Any] = kind_raw if isinstance(kind_raw, dict) else {}
+    keep_ans: dict[str, Any] = keep_raw if isinstance(keep_raw, dict) else {}
+    type_ans: dict[str, Any] = type_raw if isinstance(type_raw, dict) else {}
 
     kind_choice = str(kind_ans.get("choice") or "").strip().lower()
     keep_noul = keep_ans.get("noul")

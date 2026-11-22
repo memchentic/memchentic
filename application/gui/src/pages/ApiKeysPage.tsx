@@ -38,13 +38,20 @@ export default function ApiKeysPage() {
   }, [secret]);
 
   async function copySecret(text: string) {
-    if (await copyText(text)) {
+    const input = secretInputRef.current;
+    const ok = await copyText(text, navigator.clipboard, () => {
+      if (!input) return false;
+      input.focus();
+      input.select();
+      return document.execCommand("copy");
+    });
+    if (ok) {
       setCopyState("copied");
       return;
     }
     setCopyState("failed");
-    secretInputRef.current?.focus();
-    secretInputRef.current?.select();
+    input?.focus();
+    input?.select();
   }
 
   const load = useCallback(async () => {

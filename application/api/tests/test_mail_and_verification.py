@@ -277,7 +277,8 @@ def test_resend_verification_is_silent(client: TestClient) -> None:
         raw_token.clear()
         resend = client.post("/api/auth/resend-verification", json={"email": email})
         assert resend.status_code == 200, resend.text
-        assert raw_token.get("value") and raw_token["value"] != first
+        assert raw_token.get("value")
+        assert raw_token["value"] != first
 
     silent = client.post(
         "/api/auth/resend-verification",

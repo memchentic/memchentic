@@ -84,14 +84,19 @@ the agent a real place to put knowledge, with isolation and a clear contract.
 The tool set is deliberately small and obvious:
 
 - **Who am I / which spaces** — identity and the places memory can live
-- **Remember and revise** — write durable entries; update or forget them
+- **Projects** — optional labels inside a space (not a second ACL)
+- **Remember and revise** — write durable entries; update or forget them;
+  optionally mark what a memory **supersedes**
 - **Find, browse, and open** — search or list, then load the full text
+  (opens include recent recall history)
 - **Guides** — capture and retrieve standing advice with confidence over time
 - **Path-aware recall** — “what do we know about this part of the codebase?”
-- **Housekeeping** — spot overlaps and stale items without silent auto-delete
+- **Hygiene** — spot conflicts, near-duplicates, and soon-to-expire items;
+  resolve them by hand or with admin automation
 
 A small set on purpose — enough to remember and find things, not a sprawling
-tool catalog.
+tool catalog. The web UI also has **Metrics** for corpus and retrieval
+charts over the spaces you can read.
 
 ## Why people adopt it
 
@@ -108,8 +113,8 @@ tool catalog.
 
 Ready to try it? Check {doc}`requirements`, then {doc}`docker` or
 {doc}`helm`, then {doc}`connect-mcp` and {doc}`install-marketplace`. Deeper
-pages cover {doc}`memory`, {doc}`groups`, {doc}`mcp-tools`, and the
-{doc}`marketplace` plugin.
+pages cover {doc}`memory`, {doc}`groups`, {doc}`projects`, {doc}`hygiene`,
+{doc}`metrics`, {doc}`mcp-tools`, and the {doc}`marketplace` plugin.
 
 ```{toctree}
 :caption: Getting Started
@@ -133,6 +138,9 @@ install-marketplace
 
 memory
 groups
+projects
+hygiene
+metrics
 mcp-tools
 marketplace
 ```

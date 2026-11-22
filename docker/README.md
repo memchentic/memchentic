@@ -47,7 +47,7 @@ or too short. `openssl rand -hex 24` prints a value that satisfies each rule.
 | `ADMIN_API_KEY` | 16 or more characters | Bearer token with admin rights. Break-glass only; agents use per-user API keys |
 | `POSTGRES_PASSWORD` | 16 or more characters | Password of the owner role. Postgres keeps the value it was first started with |
 | `POSTGRES_APP_PASSWORD` | 16 or more characters | Password of the app role |
-| `ENCRYPTION_KEY` | 32 or more characters | Encrypts the signing keys stored in Postgres. After a change the stored keys cannot be read |
+| `ENCRYPTION_KEY` | 32 or more characters | Encrypts signing keys and the SMTP password stored in Postgres. After a change those values cannot be read |
 
 ## Origin, HTTP and sessions
 

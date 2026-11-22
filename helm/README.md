@@ -55,7 +55,7 @@ five is missing, a placeholder, or too short:
 | `ADMIN_API_KEY` | 16 or more characters |
 | `POSTGRES_PASSWORD` | 16 or more characters; password of the owner role (migrations) |
 | `POSTGRES_APP_PASSWORD` | 16 or more characters; password of the app role `memchentic_app` (all request queries) |
-| `ENCRYPTION_KEY` | 32 or more characters; after a change the stored signing keys cannot be read |
+| `ENCRYPTION_KEY` | 32 or more characters; encrypts signing keys and the SMTP password; after a change those values cannot be read |
 | `OAUTH_CLIENT_SECRET` | May be empty when `OAUTH_PROVIDER=internal` |
 
 ### Vault (homelab-style)

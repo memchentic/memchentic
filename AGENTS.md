@@ -146,8 +146,11 @@ tracked in this repository.
 
 When MCP tools or the plugin change, update `docs/sphinx/source/mcp-tools.md`
 and `docs/sphinx/source/marketplace.md` in the same change, and commit them
-in the nested `docs/` repo too. New user pages belong in `memchentic/docs`,
-which publishes the docs image with its **Publish Docs Image** workflow.
+in the nested `docs/` repo too. When projects, hygiene/supersedes, metrics,
+or mail/automation behaviour changes, update the matching concept pages
+(`projects.md`, `hygiene.md`, `metrics.md`, `environment-variables.md`) in
+that nested repo as well. New user pages belong in `memchentic/docs`, which
+publishes the docs image with its **Publish Docs Image** workflow.
 
 ## Runtime surfaces
 
@@ -159,15 +162,17 @@ Every environment variable is described in `docker/README.md` (Compose) and
 `application/api/src/memchentic/api/routes/`). Routes that need a caller
 accept a Bearer token: a JWT, a per-user API key, or `ADMIN_API_KEY`. Route
 groups: `/api/auth/*` (register, login, refresh, logout, browser sign-in with
-a provider), `/api/me`, `/api/users*` (`/api/users/{user_id}/revoke-credentials`
-revokes the sessions and keys of a user), `/api/spaces*` (spaces, members,
-and `/api/spaces/{space_id}/accept` for a group invitation), `/api/memories*`
-(entries and guides: list, search, create, read, change, delete),
-`/api/guides`, `/api/api-keys*` (`/api/api-keys/cycle` revokes the active
-keys of a user and issues one new key), `/api/provider`, `/api/health`
-(liveness) and `/api/ready` (readiness). Set `ENABLE_API_DOCS=true` to serve
-the generated reference at `/docs`, `/redoc` and `/openapi.json`. It is off by
-default.
+a provider, verify-email / resend), `/api/me`, `/api/users*`
+(`/api/users/{user_id}/revoke-credentials` revokes the sessions and keys of a
+user), `/api/spaces*` (spaces, members, roles, and
+`/api/spaces/{space_id}/accept` for a group invitation), `/api/projects*`
+(projects inside spaces), `/api/memories*` (entries and guides: list, search,
+create, read, change, delete, overlap report, resolve-conflict,
+resolve-near-duplicate), `/api/guides`, `/api/api-keys*`
+(`/api/api-keys/cycle` revokes the active keys of a user and issues one new
+key), `/api/provider`, `/api/health` (liveness) and `/api/ready` (readiness).
+Set `ENABLE_API_DOCS=true` to serve the generated reference at `/docs`,
+`/redoc` and `/openapi.json`. It is off by default.
 
 **Live updates.** `GET /api/events/memories` is a Server-Sent Events stream
 of memory changes (`event: memory`) in the spaces that the caller can read.
@@ -182,13 +187,13 @@ aggregates for the Metrics page, limited to the spaces that the caller can
 read. Time window: `range` (`7d` / `30d` / `90d` / `all`) or absolute
 `from` / `to` (ISO). Facets: `space_id`, `space_scope`, `kind`, `types`,
 `tags`, `project_id`, `q` (title contains). Payload includes corpus KPIs,
-`created_per_day`, categorical breakdowns (windowed when the range is
-bounded), `accessed_per_day`, retrieval KPIs, `top_accessed`, and
-`accesses_by_source`. Recall events are rows in `memory_recalls`, written
-when `touch_memories` bumps usage (debounced) or a guide near-dup reinforce
-runs. Full memory open (`GET /api/memories/{id}` and MCP `open`) also
-returns `recent_recalls` (newest first) alongside `recall_count` and
-`last_recalled_at`.
+`created_per_day`, categorical breakdowns (`by_kind`, `by_type`, `by_space`,
+`by_project`, windowed when the range is bounded), `accessed_per_day`,
+`top_tags`, `top_creators`, `top_accessed`, and `accesses_by_source`. Recall
+events are rows in `memory_recalls`, written when `touch_memories` bumps
+usage (debounced) or a guide near-dup reinforce runs. Full memory open
+(`GET /api/memories/{id}` and MCP `open`) also returns `recent_recalls`
+(newest first) alongside `recall_count` and `last_recalled_at`.
 
 **Auth groups.** Two fixed auth groups, `administrators` and `users`, decide
 who is an admin. An auth group is not a space. Admins manage them under
@@ -200,6 +205,14 @@ provider sign-in and cannot be edited by hand.
 **Registration switch.** `GET` and `PUT /api/system/registration` (admin
 only) read and set whether self-registration is open. It applies to the
 internal provider. `REGISTER_ENABLED` supplies the initial value.
+
+**Mail and automation.** `GET` / `PUT /api/system/mail` (admin) read and set
+outbound SMTP (password never returned; stored encrypted with
+`ENCRYPTION_KEY`). `SMTP_*` env vars are first-boot only. When mail is
+configured, new internal registrations must confirm email before sign-in or
+API-key create. `GET` / `PUT /api/system/automation` and
+`POST /api/system/automation/run` control optional hygiene auto-resolve
+(supersedes conflicts and near-duplicates; both off by default).
 
 **OAuth for MCP clients.** With `OAUTH_PROVIDER=internal`, memchentic is its
 own authorization server: `/.well-known/oauth-protected-resource`,
@@ -215,9 +228,9 @@ in a separate step (`python -m memchentic.migrate`) when
 the Helm value `migrations.initContainer.enabled`). The app role
 (`POSTGRES_APP_USER`, default `memchentic_app`) serves every request.
 Row-level security is enabled and forced on `spaces`, `space_members`,
-`memories` and `api_keys`. Service code (`application/api/src/memchentic/services/`)
-commits with `commit_with_rls`, because a plain commit clears the
-row-level-security context of the session.
+`memories`, `projects`, `memory_recalls` and `api_keys`. Service code
+(`application/api/src/memchentic/services/`) commits with `commit_with_rls`,
+because a plain commit clears the row-level-security context of the session.
 
 **Memory lifetime.** A new memory expires after `MEMORY_DEFAULT_TTL_DAYS`
 unless the caller gives a lifetime. Each recall of a live memory (a search

@@ -15,10 +15,12 @@ Do not load a skill or run `/memchentic` just to start that habit.
 
 - **Personal vs groups** — private memory by default; shared groups when you
   choose them
+- **Projects** — optional labels inside a space when organising work
 - **Entry vs guide** — records of what is true vs standing advice that can
   get stronger over time
 - **Short results first** — search starts with summaries; open the full text
   when you need it
+- **Hygiene** — spot overlaps and declared replacements; resolve carefully
 - **Only when connected** — if Memchentic is not connected, the plugin stays
   out of the way
 - **No secrets** — do not store passwords, tokens, or private personal data in

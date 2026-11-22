@@ -537,20 +537,19 @@ export default function MetricsPage() {
                   />
                 </ChartCard>
 
-                {byProject.length > 0 ? (
-                  <ChartCard
-                    title="By project"
-                    summary={summarize(byProject, (r) => r.name)}
-                    empty={false}
-                  >
-                    <HorizontalBarChart
-                      data={byProject}
-                      categoryKey="name"
-                      rowKey={(row) => row.project_id}
-                      fill={(_row, index) => categoryFill(index)}
-                    />
-                  </ChartCard>
-                ) : null}
+                <ChartCard
+                  title="By project"
+                  summary={summarize(byProject, (r) => r.name)}
+                  empty={byProject.length === 0}
+                  emptyLabel="No projects yet"
+                >
+                  <HorizontalBarChart
+                    data={byProject}
+                    categoryKey="name"
+                    rowKey={(row) => row.project_id}
+                    fill={(_row, index) => categoryFill(index)}
+                  />
+                </ChartCard>
               </div>
             </div>
 

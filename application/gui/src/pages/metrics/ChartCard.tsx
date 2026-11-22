@@ -4,6 +4,7 @@ export function ChartCard({
   title,
   summary,
   empty,
+  emptyLabel = "No data yet",
   className,
   children,
 }: {
@@ -11,6 +12,8 @@ export function ChartCard({
   /** Text alternative read instead of the chart. */
   summary: string;
   empty?: boolean;
+  /** Shown when ``empty`` is true. */
+  emptyLabel?: string;
   className?: string;
   children: ReactNode;
 }) {
@@ -18,7 +21,9 @@ export function ChartCard({
     <section className={`metrics-chart panel${className ? ` ${className}` : ""}`}>
       <h3 className="metrics-chart-title">{title}</h3>
       {empty ? (
-        <p className="text-sm text-muted">No data yet.</p>
+        <div className="metrics-chart-empty" role="status" aria-label={`${title}: ${emptyLabel}`}>
+          <p className="metrics-chart-empty-label">{emptyLabel}</p>
+        </div>
       ) : (
         <div role="img" aria-label={`${title}: ${summary}`}>
           {children}

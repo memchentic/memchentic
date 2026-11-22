@@ -175,6 +175,8 @@ _CONTRACT: dict[str, tuple[set[str], set[str]]] = {
         },
         set(),
     ),
+    "resolve_conflict": ({"a", "b"}, {"a", "b"}),
+    "resolve_near_duplicate": ({"keep", "drop"}, {"keep", "drop"}),
 }
 _READ_ONLY_TOOLS = {
     "me",
@@ -192,7 +194,15 @@ _READ_ONLY_TOOLS = {
     "trace",
     "overlap_report",
 }
-_DESTRUCTIVE_TOOLS = {"guide_write", "revise", "relocate", "forget", "project_delete"}
+_DESTRUCTIVE_TOOLS = {
+    "guide_write",
+    "revise",
+    "relocate",
+    "forget",
+    "project_delete",
+    "resolve_conflict",
+    "resolve_near_duplicate",
+}
 
 
 def _user(client: TestClient) -> tuple[str, str, str]:

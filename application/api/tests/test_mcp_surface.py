@@ -63,4 +63,6 @@ def test_tool_surface_is_memchentic_native(client: TestClient) -> None:
         "about_path",
         "trace",
         "overlap_report",
+        "resolve_conflict",
+        "resolve_near_duplicate",
     }

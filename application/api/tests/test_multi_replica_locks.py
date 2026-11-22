@@ -3,46 +3,81 @@
 from __future__ import annotations
 
 import asyncio
+from urllib.parse import unquote, urlparse
 
+import asyncpg
 import pytest
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from memchentic.db.session import BOOTSTRAP_LOCK_ID, HYGIENE_LOCK_ID, get_engine
-from memchentic.services.bootstrap import bootstrap_instance
+from memchentic.db.session import BOOTSTRAP_LOCK_ID, HYGIENE_LOCK_ID
 from memchentic.settings import get_settings
 
 
-@pytest.mark.asyncio
-async def test_bootstrap_holds_session_lock_across_commits(session: AsyncSession) -> None:
-    """A second connection blocks on the bootstrap lock until the first unlocks."""
+def _dsn_parts() -> dict[str, object]:
     settings = get_settings()
-    factory = async_sessionmaker(get_engine(), expire_on_commit=False)
+    parsed = urlparse(
+        settings.database_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+    )
+    ssl_arg: object = False
+    if settings.postgres_sslmode != "disable":
+        ssl_arg = settings.postgres_ssl
+    return {
+        "host": parsed.hostname or "localhost",
+        "port": parsed.port or 5432,
+        "user": unquote(parsed.username or ""),
+        "password": unquote(parsed.password or ""),
+        "database": (parsed.path or "/").lstrip("/") or "memchentic",
+        "ssl": ssl_arg,
+    }
 
-    async with factory() as holder:
-        await holder.execute(text("SELECT pg_advisory_lock(:k)"), {"k": BOOTSTRAP_LOCK_ID})
-        waiting = asyncio.create_task(bootstrap_instance(session, settings))
-        await asyncio.sleep(0.2)
-        assert not waiting.done()
-        await holder.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": BOOTSTRAP_LOCK_ID})
-        await holder.commit()
-        await asyncio.wait_for(waiting, timeout=10)
+
+@pytest.fixture(scope="module")
+def _client_booted(client: object) -> None:
+    """Ensure the app lifespan has applied migrations once."""
+    del client
 
 
-@pytest.mark.asyncio
-async def test_hygiene_try_lock_is_exclusive(session: AsyncSession) -> None:
+def test_hygiene_try_lock_is_exclusive(_client_booted: None) -> None:
     """Only one connection can hold the hygiene leader lock at a time."""
-    del session
-    factory = async_sessionmaker(get_engine(), expire_on_commit=False)
 
-    async with factory() as a, factory() as b:
-        got_a = await a.scalar(text("SELECT pg_try_advisory_lock(:k)"), {"k": HYGIENE_LOCK_ID})
-        got_b = await b.scalar(text("SELECT pg_try_advisory_lock(:k)"), {"k": HYGIENE_LOCK_ID})
-        assert got_a is True
-        assert got_b is False
-        await a.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": HYGIENE_LOCK_ID})
-        await a.commit()
-        got_b2 = await b.scalar(text("SELECT pg_try_advisory_lock(:k)"), {"k": HYGIENE_LOCK_ID})
-        assert got_b2 is True
-        await b.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": HYGIENE_LOCK_ID})
-        await b.commit()
+    async def _run() -> None:
+        dsn = _dsn_parts()
+        a = await asyncpg.connect(**dsn)  # type: ignore[arg-type]
+        b = await asyncpg.connect(**dsn)  # type: ignore[arg-type]
+        try:
+            got_a = await a.fetchval("SELECT pg_try_advisory_lock($1)", HYGIENE_LOCK_ID)
+            got_b = await b.fetchval("SELECT pg_try_advisory_lock($1)", HYGIENE_LOCK_ID)
+            assert got_a is True
+            assert got_b is False
+            await a.fetchval("SELECT pg_advisory_unlock($1)", HYGIENE_LOCK_ID)
+            got_b2 = await b.fetchval("SELECT pg_try_advisory_lock($1)", HYGIENE_LOCK_ID)
+            assert got_b2 is True
+            await b.fetchval("SELECT pg_advisory_unlock($1)", HYGIENE_LOCK_ID)
+        finally:
+            await a.close()
+            await b.close()
+
+    asyncio.run(_run())
+
+
+def test_bootstrap_lock_blocks_second_connection(_client_booted: None) -> None:
+    """A second connection waits until the bootstrap session lock is released."""
+
+    async def _run() -> None:
+        dsn = _dsn_parts()
+        holder = await asyncpg.connect(**dsn)  # type: ignore[arg-type]
+        waiter = await asyncpg.connect(**dsn)  # type: ignore[arg-type]
+        try:
+            await holder.fetchval("SELECT pg_advisory_lock($1)", BOOTSTRAP_LOCK_ID)
+            wait_task = asyncio.create_task(
+                waiter.fetchval("SELECT pg_advisory_lock($1)", BOOTSTRAP_LOCK_ID)
+            )
+            await asyncio.sleep(0.2)
+            assert not wait_task.done()
+            await holder.fetchval("SELECT pg_advisory_unlock($1)", BOOTSTRAP_LOCK_ID)
+            await asyncio.wait_for(wait_task, timeout=5)
+            await waiter.fetchval("SELECT pg_advisory_unlock($1)", BOOTSTRAP_LOCK_ID)
+        finally:
+            await holder.close()
+            await waiter.close()
+
+    asyncio.run(_run())

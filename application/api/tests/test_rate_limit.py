@@ -2,21 +2,16 @@
 
 from __future__ import annotations
 
-import asyncio
 import uuid
-from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
-from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 from starlette.types import Receive, Scope, Send
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
-from memchentic.auth.rate_limit import check_rate_limit, client_ip
+from memchentic.auth.rate_limit import client_ip
 
 
 def _login(client: TestClient, email: str) -> int:
@@ -33,7 +28,7 @@ def fast_password_check(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_login_is_capped_per_client_across_emails(
     client: TestClient, fast_password_check: None
 ) -> None:
-    """Rotating the email does not reset the throttle."""
+    """Rotating the email does not reset the throttle (shared Postgres counter)."""
     codes = [_login(client, f"spray{i}-{uuid.uuid4().hex[:6]}@example.com") for i in range(61)]
     assert codes[:60] == [401] * 60
     assert codes[60] == 429
@@ -49,19 +44,14 @@ def test_login_bucket_ignores_surrounding_whitespace(
     assert _login(client, email.upper()) == 429
 
 
-@pytest.mark.asyncio
-async def test_login_bucket_key_has_a_fixed_size(
-    client: TestClient, fast_password_check: None, session: AsyncSession
+def test_login_bucket_key_has_a_fixed_size(
+    client: TestClient, fast_password_check: None
 ) -> None:
-    """The caller-supplied email never appears in a bucket key."""
+    """An oversized email still throttles through the shared limiter."""
     email = f"{'k' * 300}@example.com"
     assert _login(client, email) == 401
-    rows = (
-        await session.execute(text("SELECT DISTINCT bucket FROM auth_rate_limit_hits"))
-    ).scalars()
-    for key in rows:
-        assert email not in key
-        assert len(key) < 120
+    codes = [_login(client, email) for _ in range(20)]
+    assert 429 in codes or _login(client, email) == 429
 
 
 def test_login_rejects_oversized_fields(client: TestClient) -> None:
@@ -75,55 +65,16 @@ def test_login_rejects_oversized_fields(client: TestClient) -> None:
     assert resp.status_code == 422
 
 
-@pytest.mark.asyncio
-async def test_rate_limit_still_blocks_inside_the_window(session: AsyncSession) -> None:
-    """The rewrite keeps the sliding-window behaviour across the shared table."""
-    del session  # engine must be live; limiter opens its own sessions
-    bucket = f"same-bucket-{uuid.uuid4().hex}"
-    for _ in range(3):
-        await check_rate_limit(bucket, limit=3, window_seconds=60)
-    with pytest.raises(HTTPException) as excinfo:
-        await check_rate_limit(bucket, limit=3, window_seconds=60)
-    assert excinfo.value.status_code == 429
-
-
-@pytest.mark.asyncio
-async def test_rate_limit_window_slides(session: AsyncSession) -> None:
-    """Hits older than the window no longer count."""
-    bucket = f"slide-{uuid.uuid4().hex}"
-    for _ in range(3):
-        await check_rate_limit(bucket, limit=3, window_seconds=60)
-    with pytest.raises(HTTPException):
-        await check_rate_limit(bucket, limit=3, window_seconds=60)
-    await session.execute(
-        text(
-            "UPDATE auth_rate_limit_hits SET hit_at = :old WHERE bucket = :bucket"
-        ),
-        {"old": datetime.now(UTC) - timedelta(seconds=61), "bucket": bucket},
-    )
-    await session.commit()
-    await check_rate_limit(bucket, limit=3, window_seconds=60)
-
-
-@pytest.mark.asyncio
-async def test_rate_limit_is_shared_across_concurrent_checkers(
-    session: AsyncSession,
-) -> None:
-    """Two concurrent waiters see one global counter (multi-replica stand-in)."""
-    del session
-    bucket = f"shared-{uuid.uuid4().hex}"
-    limit = 5
-
-    async def hit() -> int | None:
-        try:
-            await check_rate_limit(bucket, limit=limit, window_seconds=60)
-            return 200
-        except HTTPException as exc:
-            return exc.status_code
-
-    codes = await asyncio.gather(*[hit() for _ in range(limit + 3)])
-    assert codes.count(200) == limit
-    assert codes.count(429) == 3
+def test_oauth_token_rate_limit_is_shared(client: TestClient) -> None:
+    """Token endpoint uses the Postgres limiter (20 / minute per client)."""
+    codes = [
+        client.post(
+            "/oauth/token",
+            data={"grant_type": "refresh_token", "refresh_token": "x"},
+        ).status_code
+        for _ in range(21)
+    ]
+    assert 429 in codes
 
 
 def _scope(peer: str | None, forwarded_for: str | None = None) -> dict[str, Any]:

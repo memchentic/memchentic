@@ -1,3 +1,5 @@
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { faCheck } from "@fortawesome/free-solid-svg-icons";
 import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { api } from "../api";
@@ -212,11 +214,13 @@ export default function HygienePage() {
                         <td>
                           <button
                             type="button"
-                            className="btn text-sm"
+                            className="btn"
                             disabled={busyKey !== null}
+                            title={busyKey === key ? "Resolving…" : "Resolve"}
+                            aria-label={busyKey === key ? "Resolving…" : "Resolve"}
                             onClick={() => void resolveConflict(row)}
                           >
-                            {busyKey === key ? "Resolving…" : "Resolve"}
+                            <FontAwesomeIcon icon={faCheck} />
                           </button>
                         </td>
                       </tr>
@@ -263,19 +267,25 @@ export default function HygienePage() {
                         <td className="whitespace-nowrap">
                           <button
                             type="button"
-                            className="btn text-sm mr-2"
+                            className="btn mr-2"
                             disabled={busyKey !== null}
+                            title={busyKey === keepA ? "Keeping…" : "Keep A"}
+                            aria-label={busyKey === keepA ? "Keeping…" : "Keep A"}
                             onClick={() => void resolveNearDup(row.a, row.b)}
                           >
-                            {busyKey === keepA ? "Keeping…" : "Keep A"}
+                            <FontAwesomeIcon icon={faCheck} />
+                            <span className="ml-1.5 text-xs">A</span>
                           </button>
                           <button
                             type="button"
-                            className="btn text-sm"
+                            className="btn"
                             disabled={busyKey !== null}
+                            title={busyKey === keepB ? "Keeping…" : "Keep B"}
+                            aria-label={busyKey === keepB ? "Keeping…" : "Keep B"}
                             onClick={() => void resolveNearDup(row.b, row.a)}
                           >
-                            {busyKey === keepB ? "Keeping…" : "Keep B"}
+                            <FontAwesomeIcon icon={faCheck} />
+                            <span className="ml-1.5 text-xs">B</span>
                           </button>
                         </td>
                       </tr>

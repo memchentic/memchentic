@@ -1,5 +1,12 @@
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faDownload, faFileImport } from "@fortawesome/free-solid-svg-icons";
+import {
+  faCheck,
+  faDownload,
+  faFileImport,
+  faFloppyDisk,
+  faWandMagicSparkles,
+  faXmark,
+} from "@fortawesome/free-solid-svg-icons";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, apiResponse } from "../api";
@@ -456,18 +463,22 @@ export default function MemoriesPage() {
                 <button
                   className="btn btn-secondary"
                   type="button"
+                  title="Dismiss all"
+                  aria-label="Dismiss all"
                   onClick={() => setIngestCandidates([])}
                 >
-                  Dismiss all
+                  <FontAwesomeIcon icon={faXmark} />
                 </button>
               ) : null}
               <button
                 className="btn"
                 type="button"
                 disabled={ingestBusy || !ingestText.trim()}
+                title="Suggest"
+                aria-label="Suggest"
                 onClick={() => void runIngestSuggest()}
               >
-                Suggest
+                <FontAwesomeIcon icon={faWandMagicSparkles} />
               </button>
             </div>
             {ingestCandidates.length > 0 ? (
@@ -517,18 +528,22 @@ export default function MemoriesPage() {
                       <button
                         className="btn"
                         type="button"
+                        title="Remember"
+                        aria-label="Remember"
                         onClick={() => void confirmIngestCandidate(c)}
                       >
-                        Remember
+                        <FontAwesomeIcon icon={faFloppyDisk} />
                       </button>
                       <button
                         className="btn btn-secondary"
                         type="button"
+                        title="Dismiss"
+                        aria-label="Dismiss"
                         onClick={() =>
                           setIngestCandidates((prev) => prev.filter((_, j) => j !== i))
                         }
                       >
-                        Dismiss
+                        <FontAwesomeIcon icon={faXmark} />
                       </button>
                     </div>
                   </li>
@@ -546,8 +561,13 @@ export default function MemoriesPage() {
               placeholder="Filter: kind:entry type:fact tag:ops space:personal …"
               aria-label="Search memories"
             />
-            <button type="submit" className="btn btn-secondary">
-              Apply
+            <button
+              type="submit"
+              className="btn btn-secondary"
+              title="Apply"
+              aria-label="Apply"
+            >
+              <FontAwesomeIcon icon={faCheck} />
             </button>
           </div>
         </form>
@@ -585,8 +605,14 @@ export default function MemoriesPage() {
               setOffset(0);
             }}
           />
-          <button type="button" className="btn btn-ghost text-sm" onClick={clearAll}>
-            Clear
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={clearAll}
+            title="Clear"
+            aria-label="Clear"
+          >
+            <FontAwesomeIcon icon={faXmark} />
           </button>
         </div>
 

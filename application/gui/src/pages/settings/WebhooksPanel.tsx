@@ -131,10 +131,11 @@ export function WebhooksPanel() {
             className="btn"
             type="button"
             disabled={busy || data === null}
+            title="Save"
+            aria-label="Save"
             onClick={() => void save()}
           >
             <FontAwesomeIcon icon={faFloppyDisk} />
-            <span className="ml-2">Save</span>
           </button>
         </div>
         {savedNote ? <p className="text-xs text-muted">{savedNote}</p> : null}

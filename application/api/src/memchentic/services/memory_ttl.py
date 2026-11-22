@@ -5,18 +5,20 @@ from __future__ import annotations
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy import DateTime, Select, and_, case, func, literal, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from memchentic.auth.principal import Principal
 from memchentic.db.session import commit_with_rls
-from memchentic.models.entities import Memory
+from memchentic.models.entities import Memory, MemoryRecall
 from memchentic.search.hybrid import Digest, active_memory_clause
 from memchentic.services.errors import ValidationError
 from memchentic.services.validation import check_ttl_days
 from memchentic.settings import get_settings
+
+RecallSource = Literal["search", "open", "guide_find", "guide_write"]
 
 
 def check_lifetime_args(
@@ -101,19 +103,47 @@ def slide_expiry(
     return max(current, target)
 
 
-async def touch_memories(
-    session: AsyncSession, principal: Principal, ids: Sequence[str | uuid.UUID]
+def _add_recall_events(
+    session: AsyncSession,
+    *,
+    principal: Principal,
+    rows: Sequence[tuple[uuid.UUID, uuid.UUID]],
+    source: RecallSource,
+    now: datetime,
 ) -> None:
-    """Record a recall of ``ids``: bump usage and slide live expiries.
+    """Append ``memory_recalls`` rows for ``(memory_id, space_id)`` pairs."""
+    for memory_id, space_id in rows:
+        session.add(
+            MemoryRecall(
+                id=uuid.uuid4(),
+                memory_id=memory_id,
+                space_id=space_id,
+                recalled_by_user_id=principal.user_id,
+                recalled_at=now,
+                source=source,
+            )
+        )
+
+
+async def touch_memories(
+    session: AsyncSession,
+    principal: Principal,
+    ids: Sequence[str | uuid.UUID],
+    *,
+    source: RecallSource = "search",
+) -> None:
+    """Record a recall of ``ids``: bump usage, slide live expiries, log events.
 
     At most one touch per memory per ``MEMORY_TTL_TOUCH_DEBOUNCE_HOURS``.
     Past-due memories are counted but not revived. ``updated_at`` is preserved
-    so recall does not reset edit recency.
+    so recall does not reset edit recency. Only memories that actually bump
+    get a ``memory_recalls`` row.
 
     Args:
         session: Database session.
         principal: Caller (for RLS rebinding on commit).
         ids: Memory ids that were returned or opened.
+        source: Coarse origin of the recall (``search``, ``open``, …).
     """
     uids = [i if isinstance(i, uuid.UUID) else uuid.UUID(str(i)) for i in ids]
     if not uids:
@@ -135,7 +165,7 @@ async def touch_memories(
         ),
         else_=Memory.expires_at,
     )
-    await session.execute(
+    result = await session.execute(
         update(Memory)
         .where(
             Memory.id.in_(uids),
@@ -147,15 +177,46 @@ async def touch_memories(
             expires_at=slid,
             updated_at=Memory.updated_at,
         )
+        .returning(Memory.id, Memory.space_id)
         .execution_options(synchronize_session=False)
     )
+    touched = list(result.all())
+    if touched:
+        _add_recall_events(session, principal=principal, rows=touched, source=source, now=now)
     await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
 
 
+async def record_guide_write_recall(
+    session: AsyncSession,
+    principal: Principal,
+    memory: Memory,
+    *,
+    now: datetime | None = None,
+) -> None:
+    """Log a ``guide_write`` recall for a near-duplicate reinforce (no debounce).
+
+    The guide upsert path bumps ``recall_count`` itself and updates
+    ``updated_at``; this only appends the metrics event so reinforce is not
+    invisible to retrieval charts.
+    """
+    ref = now or datetime.now(UTC)
+    _add_recall_events(
+        session,
+        principal=principal,
+        rows=[(memory.id, memory.space_id)],
+        source="guide_write",
+        now=ref,
+    )
+
+
 async def touch_digests(
-    session: AsyncSession, principal: Principal, digests: list[Digest]
+    session: AsyncSession,
+    principal: Principal,
+    digests: list[Digest],
+    *,
+    source: RecallSource = "search",
 ) -> list[Digest]:
-    await touch_memories(session, principal, [d.id for d in digests])
+    await touch_memories(session, principal, [d.id for d in digests], source=source)
     return digests
 
 

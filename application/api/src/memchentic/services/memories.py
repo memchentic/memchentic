@@ -335,7 +335,7 @@ async def open_memory(
             )
         memory = candidates[0] if candidates else None
     if memory and recall:
-        await touch_memories(session, principal, [memory.id])
+        await touch_memories(session, principal, [memory.id], source="open")
         await session.refresh(memory)
     return memory
 
@@ -707,7 +707,7 @@ async def find(
         offset=offset,
         include_expired=include_expired,
     )
-    return await touch_digests(session, principal, digests)
+    return await touch_digests(session, principal, digests, source="search")
 
 
 async def search(
@@ -760,7 +760,7 @@ async def search(
     if touch:
         # A search the user asked for is a recall. Callers that re-run a
         # search in the background pass ``touch=False``.
-        return await touch_digests(session, principal, digests)
+        return await touch_digests(session, principal, digests, source="search")
     return digests
 
 

@@ -177,9 +177,16 @@ checks the token again: before an event when the last check is 10 seconds
 old or more, and at each idle keep-alive. It ends the stream when the token
 is no longer valid. Clients reconnect.
 
-**Metrics.** `GET /api/metrics/memories` returns aggregate numbers for the
-Metrics page, limited to the spaces that the caller can read. Query
-parameters: `range`, `space_id`, `space_scope`.
+**Metrics.** `GET /api/metrics/memories` returns storage and retrieval
+aggregates for the Metrics page, limited to the spaces that the caller can
+read. Time window: `range` (`7d` / `30d` / `90d` / `all`) or absolute
+`from` / `to` (ISO). Facets: `space_id`, `space_scope`, `kind`, `types`,
+`tags`, `project_id`, `q` (title contains). Payload includes corpus KPIs,
+`created_per_day`, categorical breakdowns (windowed when the range is
+bounded), `accessed_per_day`, retrieval KPIs, `top_accessed`, and
+`accesses_by_source`. Recall events are rows in `memory_recalls`, written
+when `touch_memories` bumps usage (debounced) or a guide near-dup reinforce
+runs.
 
 **Auth groups.** Two fixed auth groups, `administrators` and `users`, decide
 who is an admin. An auth group is not a space. Admins manage them under

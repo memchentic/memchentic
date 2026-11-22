@@ -340,6 +340,36 @@ class Memory(Base):
     project: Mapped[Project | None] = relationship(back_populates="memories")
 
 
+class MemoryRecall(Base):
+    """One recorded recall (search hit or open) of a memory.
+
+    Written when ``touch_memories`` actually bumps ``recall_count`` (debounce
+    window). Used for retrieval metrics; lifetime usage stays on ``Memory``.
+    """
+
+    __tablename__ = "memory_recalls"
+    __table_args__ = (
+        Index("ix_memory_recalls_space_recalled_at", "space_id", "recalled_at"),
+        Index("ix_memory_recalls_memory_recalled_at", "memory_id", "recalled_at"),
+        Index("ix_memory_recalls_recalled_at", "recalled_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    memory_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("memories.id", ondelete="CASCADE"), nullable=False
+    )
+    space_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("spaces.id", ondelete="CASCADE"), nullable=False
+    )
+    recalled_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    recalled_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+
+
 class OAuthClient(Base):
     """A dynamically registered OAuth client."""
 

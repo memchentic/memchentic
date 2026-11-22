@@ -29,18 +29,32 @@ def _parse_types(raw: str | None) -> list[str] | None:
 @router.get("/metrics/memories")
 async def memory_metrics(
     range: str | None = Query(None, max_length=limits.TYPE_TEXT_MAX),
+    from_: str | None = Query(None, alias="from", max_length=limits.TYPE_TEXT_MAX),
+    to: str | None = Query(None, max_length=limits.TYPE_TEXT_MAX),
     space_id: str | None = Query(None, max_length=limits.ID_TEXT_MAX),
     space_scope: str | None = Query(None, max_length=limits.TYPE_TEXT_MAX),
+    kind: str | None = Query(None, max_length=limits.TYPE_TEXT_MAX),
+    types: str | None = Query(None, max_length=limits.TYPES_QUERY_MAX),
+    tags: str | None = Query(None, max_length=limits.QUERY_MAX),
+    project_id: str | None = Query(None, max_length=limits.ID_TEXT_MAX),
+    q: str | None = Query(None, max_length=limits.QUERY_MAX),
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict:
-    """ACL-scoped corpus aggregates for the Metrics page."""
+    """ACL-scoped storage and retrieval aggregates for the Metrics page."""
     return await metrics_service.memory_metrics(
         session,
         principal,
         range_key=range,
+        from_raw=from_,
+        to_raw=to,
         space_id=parse_uuid(space_id, "space_id"),
         space_scope=space_scope,
+        kind=kind,
+        types=_parse_types(types),
+        tags=_parse_types(tags),
+        project_id=parse_uuid(project_id, "project_id"),
+        q=q,
     )
 
 

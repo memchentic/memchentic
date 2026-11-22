@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import urlencode
 
 from fastapi.testclient import TestClient
 from sqlalchemy import event, text
@@ -90,11 +91,18 @@ def test_metrics_counts_and_acl(client: TestClient) -> None:
 
     metrics = client.get("/api/metrics/memories?range=30d", headers=auth_a).json()
     assert metrics["range"] == "30d"
+    assert metrics["window"]["range"] == "30d"
+    assert metrics["window"]["from"]
+    assert metrics["window"]["to"]
     assert metrics["totals"]["memories"] == 3
     assert metrics["totals"]["entries"] == 2
     assert metrics["totals"]["guides"] == 1
     assert metrics["totals"]["expiring_soon"] == 1
     assert metrics["totals"]["spaces"] == 2
+    assert metrics["totals"]["created_in_window"] == 3
+    assert metrics["totals"]["accesses_in_window"] == 0
+    assert metrics["totals"]["never_accessed"] == 3
+    assert len(metrics["accessed_per_day"]) == 30
 
     kinds = {row["kind"]: row["count"] for row in metrics["by_kind"]}
     assert kinds.get("entry") == 2
@@ -141,8 +149,65 @@ def test_metrics_counts_and_acl(client: TestClient) -> None:
     assert group_only["totals"]["entries"] == 1
     assert group_only["totals"]["guides"] == 0
 
+    fact_only = client.get(
+        "/api/metrics/memories?range=30d&types=fact&tags=alpha",
+        headers=auth_a,
+    ).json()
+    assert fact_only["totals"]["memories"] == 1
+    assert fact_only["totals"]["entries"] == 1
+    assert fact_only["by_type"] == [{"type": "fact", "count": 1}]
+
+    titled = client.get(
+        f"/api/metrics/memories?range=30d&q=guide%20{marker}",
+        headers=auth_a,
+    ).json()
+    assert titled["totals"]["memories"] == 1
+    assert titled["totals"]["guides"] == 1
+
     bad = client.get("/api/metrics/memories?range=1y", headers=auth_a)
     assert bad.status_code == 422
+
+
+def test_metrics_custom_window_and_retrieval(client: TestClient) -> None:
+    """Custom from/to windows and search-driven recall events show up."""
+    token, _me = _user(client)
+    auth = {"Authorization": f"Bearer {token}"}
+    marker = uuid.uuid4().hex[:8]
+    created = client.post(
+        "/api/memories",
+        headers=auth,
+        json={
+            "title": f"recall {marker}",
+            "body": f"body {marker}",
+            "type": "insight",
+            "force": True,
+        },
+    ).json()
+    search = client.get(
+        "/api/memories/search",
+        headers=auth,
+        params={"q": marker, "touch": "true"},
+    )
+    assert search.status_code == 200
+    assert any(row["id"] == created["id"] for row in search.json())
+
+    now = datetime.now(UTC)
+    start = (now - timedelta(days=2)).replace(hour=0, minute=0, second=0, microsecond=0)
+    end = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    qs = urlencode({"from": start.isoformat(), "to": end.isoformat()})
+    metrics = client.get(f"/api/metrics/memories?{qs}", headers=auth).json()
+    assert metrics["range"] == "custom"
+    assert metrics["totals"]["accesses_in_window"] >= 1
+    assert metrics["totals"]["unique_memories_accessed"] >= 1
+    assert any(row["memory_id"] == created["id"] for row in metrics["top_accessed"])
+    assert any(row["source"] == "search" for row in metrics["accesses_by_source"])
+    assert sum(row["count"] for row in metrics["accessed_per_day"]) >= 1
+
+    inverted = client.get(
+        f"/api/metrics/memories?from={end.isoformat()}&to={start.isoformat()}",
+        headers=auth,
+    )
+    assert inverted.status_code == 422
 
 
 def test_metrics_empty_corpus(client: TestClient) -> None:
@@ -151,12 +216,16 @@ def test_metrics_empty_corpus(client: TestClient) -> None:
     auth = {"Authorization": f"Bearer {token}"}
     metrics = client.get("/api/metrics/memories", headers=auth).json()
     assert metrics["totals"]["memories"] == 0
+    assert metrics["totals"]["accesses_in_window"] == 0
     assert metrics["by_kind"] == []
     assert metrics["by_type"] == []
     assert metrics["top_tags"] == []
     assert metrics["top_creators"] == []
+    assert metrics["top_accessed"] == []
     assert len(metrics["created_per_day"]) == 30
+    assert len(metrics["accessed_per_day"]) == 30
     assert all(row["entries"] == 0 and row["guides"] == 0 for row in metrics["created_per_day"])
+    assert all(row["count"] == 0 for row in metrics["accessed_per_day"])
 
 
 async def _user_with_entry(
@@ -223,8 +292,8 @@ async def test_metrics_statement_count_and_tag_order(session: AsyncSession) -> N
         {"tag": "alpha", "count": 1},
         {"tag": "zeta", "count": 1},
     ]
-    # Up to 3 statements for the space check plus 6 aggregates.
-    assert len(statements) <= 9
+    # Space resolution plus storage + retrieval aggregates.
+    assert len(statements) <= 24
 
 
 async def test_created_per_day_buckets_by_utc_day(session: AsyncSession) -> None:

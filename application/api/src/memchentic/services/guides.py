@@ -20,6 +20,7 @@ from memchentic.services.memory_hygiene import (
 )
 from memchentic.services.memory_ttl import (
     check_lifetime_args,
+    record_guide_write_recall,
     resolve_expiry,
     slide_expiry,
     touch_digests,
@@ -111,6 +112,7 @@ async def guide_write(
             dup.expires_at = slide_expiry(dup.expires_at, created_at=dup.created_at, now=now)
         dup.recall_count = (dup.recall_count or 0) + 1
         dup.last_recalled_at = now
+        await record_guide_write_recall(session, principal, dup, now=now)
         dup.embedding = await get_embedder().aembed_memory_text(dup.title, dup.body)
         if project_id is not None:
             dup.project_id = project_id
@@ -174,4 +176,4 @@ async def guide_find(
         offset=offset,
         include_expired=include_expired,
     )
-    return await touch_digests(session, principal, digests)
+    return await touch_digests(session, principal, digests, source="guide_find")

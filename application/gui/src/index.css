@@ -1197,6 +1197,76 @@ select.input optgroup {
 }
 
 /* —— metrics —— */
+.metrics-section-title {
+  margin: 0 0 0.75rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+.metrics-filter-bar {
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.metrics-query-wrap {
+  flex: 1 1 16rem;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.metrics-range-presets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.35rem;
+}
+
+.metrics-range-chip {
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-muted);
+  padding: 0.35rem 0.65rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.metrics-range-chip:hover {
+  color: var(--color-ink);
+  border-color: var(--color-muted);
+}
+
+.metrics-range-chip-active {
+  color: var(--color-ink);
+  border-color: var(--color-ink);
+  background: color-mix(in oklab, var(--color-ink) 8%, transparent);
+}
+
+.metrics-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.metrics-filter-chip {
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-muted);
+  padding: 0.2rem 0.55rem;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.metrics-filter-chip:hover {
+  color: var(--color-ink);
+}
+
 .metrics-kpi-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));

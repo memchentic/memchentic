@@ -798,9 +798,20 @@ async def suggest_candidates(
     messages: list[dict[str, str]] | None = None,
     use_llm: bool = False,
 ) -> list[dict[str, Any]]:
-    """Return ingest candidates via LLM when configured, else heuristics."""
+    """Return ingest candidates via LLM when configured, else heuristics.
+
+    When ``MEMORY_DECISION_BASE_URL`` is set, shaped candidates are re-scored
+    by the System One decision gate (Jev / Kev) before return.
+    """
+    rows: list[dict[str, Any]]
     if use_llm:
         llm_rows = await llm_suggest_candidates(text, messages)
-        if llm_rows is not None:
-            return llm_rows
-    return suggest_from_text(text, messages)
+        rows = llm_rows if llm_rows is not None else suggest_from_text(text, messages)
+    else:
+        rows = suggest_from_text(text, messages)
+
+    if get_settings().memory_decision_configured():
+        from memchentic.services.memory_decision import rescore_candidates
+
+        rows = await rescore_candidates(rows)
+    return rows

@@ -199,6 +199,7 @@ jobs:
             --set secrets.externalSecret.data.OAUTH_CLIENT_SECRET.key=memchentic/render
             --set secrets.externalSecret.data.SMTP_PASSWORD.key=memchentic/render
             --set secrets.externalSecret.data.MEMORY_LLM_API_KEY.key=memchentic/render
+            --set secrets.externalSecret.data.MEMORY_DECISION_API_KEY.key=memchentic/render
           )
           helm template ci helm "${base[@]}" "${existing[@]}" > /dev/null
           helm template ci helm "${base[@]}" "${inline[@]}" > /dev/null

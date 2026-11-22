@@ -34,6 +34,8 @@ data:
   MEMORY_LLM_PROVIDER: {{ .Values.config.memoryLlmProvider | default "openai" | quote }}
   MEMORY_LLM_BASE_URL: {{ .Values.config.memoryLlmBaseUrl | default "" | quote }}
   MEMORY_LLM_MODEL: {{ .Values.config.memoryLlmModel | default "gpt-4o-mini" | quote }}
+  MEMORY_DECISION_BASE_URL: {{ .Values.config.memoryDecisionBaseUrl | default "" | quote }}
+  MEMORY_DECISION_MODEL: {{ .Values.config.memoryDecisionModel | default "kev-latest" | quote }}
   CORS_ORIGINS: {{ .Values.config.corsOrigins | quote }}
   LOG_LEVEL: {{ .Values.config.logLevel | quote }}
   SESSION_REMEMBER_DAYS: {{ .Values.config.sessionRememberDays | quote }}

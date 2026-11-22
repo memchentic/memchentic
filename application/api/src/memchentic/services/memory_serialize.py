@@ -10,8 +10,10 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from memchentic.models.entities import Memory, Project, Space, User
+from memchentic.models.entities import Memory, MemoryRecall, Project, Space, User
 from memchentic.search.hybrid import Digest, make_snippet
+
+_RECENT_RECALLS_LIMIT = 20
 
 
 def memory_to_dict(m: Memory, *, full: bool = False) -> dict[str, Any]:
@@ -166,6 +168,47 @@ async def annotate_rows(session: AsyncSession, rows: list[dict[str, Any]]) -> li
     return rows
 
 
+async def recent_recalls_out(
+    session: AsyncSession, memory_id: uuid.UUID, *, limit: int = _RECENT_RECALLS_LIMIT
+) -> list[dict[str, Any]]:
+    """Return the newest recall events for one memory (newest first).
+
+    Args:
+        session: DB session with the caller's RLS context.
+        memory_id: Memory whose events to list.
+        limit: Maximum rows (capped at ``_RECENT_RECALLS_LIMIT``).
+
+    Returns:
+        Dicts with ``recalled_at``, ``source``, and optional recaller labels.
+    """
+    cap = max(1, min(limit, _RECENT_RECALLS_LIMIT))
+    rows = (
+        await session.execute(
+            select(
+                MemoryRecall.recalled_at,
+                MemoryRecall.source,
+                MemoryRecall.recalled_by_user_id,
+                User.email,
+                User.display_name,
+            )
+            .outerjoin(User, User.id == MemoryRecall.recalled_by_user_id)
+            .where(MemoryRecall.memory_id == memory_id)
+            .order_by(MemoryRecall.recalled_at.desc(), MemoryRecall.id.desc())
+            .limit(cap)
+        )
+    ).all()
+    return [
+        {
+            "recalled_at": recalled_at.isoformat() if recalled_at else None,
+            "source": source,
+            "recalled_by": str(uid) if uid else None,
+            "recalled_by_email": email,
+            "recalled_by_display_name": display_name,
+        }
+        for recalled_at, source, uid, email, display_name in rows
+    ]
+
+
 async def memory_out(
     session: AsyncSession, memory: Memory, *, full: bool = False
 ) -> dict[str, Any]:
@@ -177,10 +220,13 @@ async def memory_out(
         full: Include ``body`` instead of ``snippet``.
 
     Returns:
-        The labelled memory dict.
+        The labelled memory dict. Full rows also include ``recent_recalls``.
     """
     rows = await annotate_rows(session, [memory_to_dict(memory, full=full)])
-    return rows[0]
+    out = rows[0]
+    if full:
+        out["recent_recalls"] = await recent_recalls_out(session, memory.id)
+    return out
 
 
 async def memories_out(session: AsyncSession, memories: Sequence[Memory]) -> list[dict[str, Any]]:

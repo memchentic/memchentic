@@ -1,10 +1,16 @@
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faEnvelope, faToggleOn, faUserGroup } from "@fortawesome/free-solid-svg-icons";
+import {
+  faEnvelope,
+  faRobot,
+  faToggleOn,
+  faUserGroup,
+} from "@fortawesome/free-solid-svg-icons";
 import { Navigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth";
 import { PageHeader } from "../components/page";
 import { RegistrationPanel } from "./settings/RegistrationPanel";
 import { AuthGroupsPanel } from "./settings/AuthGroupsPanel";
+import { AutomationPanel } from "./settings/AutomationPanel";
 import { MailPanel } from "./settings/MailPanel";
 
 const CATEGORIES = [
@@ -17,6 +23,11 @@ const CATEGORIES = [
     id: "registration",
     label: "Registration",
     icon: faToggleOn,
+  },
+  {
+    id: "automation",
+    label: "Automation",
+    icon: faRobot,
   },
   {
     id: "mail",
@@ -67,6 +78,11 @@ export default function SettingsPage() {
           {category === "registration" ? (
             <div key="registration" className="settings-main-pane">
               <RegistrationPanel />
+            </div>
+          ) : null}
+          {category === "automation" ? (
+            <div key="automation" className="settings-main-pane">
+              <AutomationPanel />
             </div>
           ) : null}
           {category === "mail" ? (

@@ -146,9 +146,195 @@ async def find_near_duplicate(
 
 
 _OVERLAP_NOTE = (
-    "Read-only hygiene report; merge via revise/forget. "
-    "conflicts lists declared supersedes links where both memories are still visible."
+    "Hygiene report: resolve conflicts with resolve_conflict (forgets the superseded "
+    "memory) and near-duplicates with resolve_near_duplicate (forgets the drop id), "
+    "or revise/forget by hand. conflicts lists declared supersedes links where both "
+    "memories are still visible."
 )
+
+_AUTOMATION_PASS_CAP = 50
+
+
+async def resolve_conflict(
+    session: AsyncSession,
+    principal: Principal,
+    *,
+    replacement_id: uuid.UUID,
+    superseded_id: uuid.UUID,
+) -> dict[str, Any]:
+    """Accept a declared supersession by forgetting the superseded memory.
+
+    Verifies that ``replacement_id`` still points at ``superseded_id`` via
+    ``supersedes_id``, then deletes the superseded row under the same ACL as
+    ``forget``.
+
+    Args:
+        session: Database session.
+        principal: Authenticated caller.
+        replacement_id: Memory that declares the replacement (``a``).
+        superseded_id: Memory being replaced (``b``).
+
+    Returns:
+        ``{"ok": True, "forgotten": "<superseded_id>"}``.
+
+    Raises:
+        NotFoundError: When either memory is missing or unreadable.
+        ValidationError: When the live supersedes link does not match.
+        ForbiddenError: When the caller may not forget the superseded memory.
+    """
+    from memchentic.services.memories import forget, open_memory
+
+    writer = await open_memory(session, principal, memory_id=replacement_id)
+    if writer is None:
+        raise NotFoundError("Replacement memory not found")
+    if writer.supersedes_id != superseded_id:
+        raise ValidationError("a does not currently supersede b")
+    target = await open_memory(session, principal, memory_id=superseded_id)
+    if target is None:
+        raise NotFoundError("Superseded memory not found")
+    await forget(session, principal, superseded_id)
+    return {"ok": True, "forgotten": str(superseded_id)}
+
+
+def _are_near_duplicates(left: Memory, right: Memory) -> bool:
+    """True when two live memories share a title or meet the cosine threshold."""
+    if left.space_id != right.space_id or left.kind != right.kind:
+        return False
+    if left.title.strip().lower() == right.title.strip().lower():
+        return True
+    if left.embedding is None or right.embedding is None:
+        return False
+    a = np.asarray(left.embedding, dtype=np.float32)
+    b = np.asarray(right.embedding, dtype=np.float32)
+    denom = float(np.linalg.norm(a) * np.linalg.norm(b))
+    if denom == 0.0:
+        return False
+    similarity = float(np.dot(a, b) / denom)
+    return similarity >= get_settings().near_dup_threshold
+
+
+async def resolve_near_duplicate(
+    session: AsyncSession,
+    principal: Principal,
+    *,
+    keep_id: uuid.UUID,
+    drop_id: uuid.UUID,
+) -> dict[str, Any]:
+    """Keep one near-duplicate and forget the other.
+
+    Both memories must be readable, the same space and kind, and either share
+    a title or meet the near-duplicate similarity threshold.
+
+    Args:
+        session: Database session.
+        principal: Authenticated caller.
+        keep_id: Memory to keep.
+        drop_id: Memory to delete.
+
+    Returns:
+        ``{"ok": True, "forgotten": "<drop_id>"}``.
+
+    Raises:
+        NotFoundError: When either memory is missing or unreadable.
+        ValidationError: When the ids are equal or not a near-duplicate pair.
+        ForbiddenError: When the caller may not forget ``drop_id``.
+    """
+    from memchentic.services.memories import forget, open_memory
+
+    if keep_id == drop_id:
+        raise ValidationError("keep and drop must be different memories")
+    keep = await open_memory(session, principal, memory_id=keep_id)
+    if keep is None:
+        raise NotFoundError("Keep memory not found")
+    drop = await open_memory(session, principal, memory_id=drop_id)
+    if drop is None:
+        raise NotFoundError("Drop memory not found")
+    if not _are_near_duplicates(keep, drop):
+        raise ValidationError("keep and drop are not a near-duplicate pair")
+    await forget(session, principal, drop_id)
+    return {"ok": True, "forgotten": str(drop_id)}
+
+
+def _older_memory_id(left: Memory, right: Memory) -> uuid.UUID:
+    """Return the id of the older memory by ``updated_at``, then by id."""
+    if left.updated_at != right.updated_at:
+        return left.id if left.updated_at < right.updated_at else right.id
+    return left.id if left.id < right.id else right.id
+
+
+async def run_hygiene_automation(session: AsyncSession) -> dict[str, int]:
+    """Apply enabled Automation settings: forget superseded / older near-dups.
+
+    Loads the admin user as the acting principal. Caps deletes per pass.
+    Safe to call when both toggles are off (returns zeros). Re-binds RLS
+    after each forget because ``commit_with_rls`` clears the context.
+
+    Args:
+        session: Database session.
+
+    Returns:
+        Counts: ``conflicts_forgotten``, ``near_dups_forgotten``.
+    """
+    from memchentic.db.session import set_rls_context
+    from memchentic.services import instance_settings as instance_settings_service
+    from memchentic.services.memories import open_memory
+    from memchentic.services.users import ensure_admin_user
+
+    flags = await instance_settings_service.get_automation_settings(session)
+    result = {"conflicts_forgotten": 0, "near_dups_forgotten": 0}
+    if not flags["resolve_supersedes"] and not flags["resolve_near_dups"]:
+        return result
+
+    settings = get_settings()
+    admin = await ensure_admin_user(session, settings)
+    principal = Principal(
+        user_id=admin.id,
+        is_admin=True,
+        email=admin.email,
+        display_name=admin.display_name,
+    )
+    await set_rls_context(session, user_id=principal.user_id, is_admin=True)
+    report = await overlap_report(session, principal, limit=_AUTOMATION_PASS_CAP)
+    remaining = _AUTOMATION_PASS_CAP
+
+    if flags["resolve_supersedes"]:
+        for pair in report["conflicts"]:
+            if remaining <= 0:
+                break
+            await set_rls_context(session, user_id=principal.user_id, is_admin=True)
+            try:
+                await resolve_conflict(
+                    session,
+                    principal,
+                    replacement_id=uuid.UUID(pair["a"]),
+                    superseded_id=uuid.UUID(pair["b"]),
+                )
+            except (NotFoundError, ValidationError):
+                continue
+            result["conflicts_forgotten"] += 1
+            remaining -= 1
+
+    if flags["resolve_near_dups"] and remaining > 0:
+        for pair in report["near_duplicates"]:
+            if remaining <= 0:
+                break
+            await set_rls_context(session, user_id=principal.user_id, is_admin=True)
+            a_id = uuid.UUID(pair["a"])
+            b_id = uuid.UUID(pair["b"])
+            left = await open_memory(session, principal, memory_id=a_id)
+            right = await open_memory(session, principal, memory_id=b_id)
+            if left is None or right is None:
+                continue
+            drop_id = _older_memory_id(left, right)
+            keep_id = a_id if drop_id == b_id else b_id
+            try:
+                await resolve_near_duplicate(session, principal, keep_id=keep_id, drop_id=drop_id)
+            except (NotFoundError, ValidationError):
+                continue
+            result["near_dups_forgotten"] += 1
+            remaining -= 1
+
+    return result
 
 
 async def _scan_rows(

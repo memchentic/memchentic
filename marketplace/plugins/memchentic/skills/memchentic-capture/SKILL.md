@@ -150,12 +150,14 @@ outlive that.
 
 ## Hygiene
 
-`overlap_report` is read-only. Use its `near_duplicates` list (pairs with
-`reason` `same_title` or `near_dup`), its `expiring` list (soonest
-`expires_at` first), and its `conflicts` list (declared `supersedes` pairs
-where both ends are still visible). Hybrid `find` / `guide_find` hide
-targets of a live supersedes link; browse and `open` still see them. Merge
-via `revise` / `forget` — never auto-delete. Prefer `revise` when you own the
+Use `overlap_report` for `near_duplicates` (`same_title` / `near_dup`),
+`expiring`, and `conflicts` (declared `supersedes` pairs where both ends are
+still visible). Hybrid `find` / `guide_find` hide targets of a live supersedes
+link; browse and `open` still see them. Resolve with `resolve_conflict`
+(forgets `b`) or `resolve_near_duplicate` (`keep` / `drop`), or `revise` /
+`forget` by hand — do not invent deletes. Instance Automation (admin System
+Settings) may auto-forget superseded targets or older near-dups when enabled;
+leave that off unless the operator asked. Prefer `revise` when you own the
 old memory; when you must write a new replacement (for example another
 author's row), pass `supersedes` with the old id on `remember` /
 `guide_write`.

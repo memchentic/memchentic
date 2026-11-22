@@ -68,7 +68,9 @@ function matchesFilters(
   event: MemoryLiveEvent,
   opts: {
     spaceScope: SpaceScope;
+    kind: "" | "entry" | "guide";
     types: MemoryTypeToken[];
+    tags: string[];
     memberships: MembershipLite[];
   },
 ): boolean {
@@ -84,11 +86,20 @@ function matchesFilters(
     if (!groupIds.has(event.space_id)) return false;
   }
 
+  if (opts.kind && event.kind !== opts.kind) return false;
+
   if (
     !isUnrestrictedTypes(opts.types) &&
     !opts.types.includes(eventTypeToken(event) as MemoryTypeToken)
   ) {
     return false;
+  }
+
+  if (opts.tags.length > 0) {
+    const have = new Set((event.tags ?? []).map((t) => t.toLowerCase()));
+    for (const tag of opts.tags) {
+      if (!have.has(tag.toLowerCase())) return false;
+    }
   }
   return true;
 }
@@ -99,7 +110,9 @@ export function applyMemoryEvent(
   event: MemoryLiveEvent,
   opts: {
     spaceScope: SpaceScope;
+    kind?: "" | "entry" | "guide";
     types: MemoryTypeToken[];
+    tags?: string[];
     memberships: MembershipLite[];
     offset: number;
     pageSize: number;
@@ -108,7 +121,15 @@ export function applyMemoryEvent(
   if (event.action === "deleted") {
     return rows.filter((r) => r.id !== event.id);
   }
-  if (!matchesFilters(event, opts)) {
+  if (
+    !matchesFilters(event, {
+      spaceScope: opts.spaceScope,
+      kind: opts.kind ?? "",
+      types: opts.types,
+      tags: opts.tags ?? [],
+      memberships: opts.memberships,
+    })
+  ) {
     // Relocate / filter mismatch: drop the row if it no longer belongs in this view.
     return rows.filter((r) => r.id !== event.id);
   }

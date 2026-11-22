@@ -1,5 +1,3 @@
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faMagnifyingGlass, faXmark } from "@fortawesome/free-solid-svg-icons";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
@@ -15,6 +13,7 @@ import {
 import { ErrorNote, NewToggleButton, PageHeader } from "../components/page";
 import { MemoryList } from "../memory/MemoryList";
 import { SpaceScopeSelect, TypeFilterMenu } from "../memory/MemoryFilters";
+import { formatMemoryQuery, parseMemoryQuery } from "../memory/filterQuery";
 import { applyMemoryEvent, startMemoryLive } from "../liveMemories";
 import { errorMessage } from "../errors";
 import { NewMemory } from "../memory/NewMemory";
@@ -22,23 +21,65 @@ import { Pager } from "../components/Pager";
 
 const PAGE = 25;
 
+type FilterState = {
+  q: string;
+  spaceScope: SpaceScope;
+  kind: "" | "entry" | "guide";
+  types: MemoryTypeToken[];
+  tags: string[];
+};
+
+const DEFAULT_FILTERS: FilterState = {
+  q: "",
+  spaceScope: "",
+  kind: "",
+  types: [...MEMORY_TYPE_TOKENS],
+  tags: [],
+};
+
+function filtersFromRaw(raw: string): FilterState {
+  const parsed = parseMemoryQuery(raw);
+  return {
+    q: parsed.q,
+    spaceScope: parsed.spaceScope,
+    kind: parsed.kind,
+    types: parsed.types.length ? parsed.types : [...MEMORY_TYPE_TOKENS],
+    tags: parsed.tags,
+  };
+}
+
+function encodeFilters(f: FilterState): string {
+  return formatMemoryQuery({
+    q: f.q,
+    kind: f.kind,
+    types: isUnrestrictedTypes(f.types) ? [] : f.types,
+    tags: f.tags,
+    spaceScope: f.spaceScope,
+  });
+}
+
 function typesQuery(selected: MemoryTypeToken[]): string | null {
   if (isUnrestrictedTypes(selected)) return null;
   return selected.join(",");
 }
 
+function listKey(f: FilterState): string {
+  return [f.q, f.spaceScope, f.kind, f.types.join(","), f.tags.join(",")].join("|");
+}
+
 export default function MemoriesPage() {
   const { me } = useAuth();
   const [params, setParams] = useSearchParams();
-  const q = (params.get("q") ?? "").trim();
-  const [draft, setDraft] = useState(params.get("q") ?? "");
-  const [spaceScope, setSpaceScope] = useState<SpaceScope>("");
-  const [types, setTypes] = useState<MemoryTypeToken[]>([...MEMORY_TYPE_TOKENS]);
-  // The offset belongs to one search query. When `q` changes by any route
-  // (search form, Back, Forward, an edited URL) paging restarts at 0.
-  const [page, setPage] = useState({ q, offset: 0 });
-  const offset = page.q === q ? page.offset : 0;
-  const setOffset = (next: number) => setPage({ q, offset: next });
+  const [filters, setFilters] = useState<FilterState>(() =>
+    filtersFromRaw(params.get("q") ?? ""),
+  );
+  const [draft, setDraft] = useState(() => params.get("q") ?? "");
+  // The offset belongs to one filter set. When filters change by any route
+  // (Apply, chip clear, Back/Forward) paging restarts at 0.
+  const [page, setPage] = useState({ key: listKey(filters), offset: 0 });
+  const key = listKey(filters);
+  const offset = page.key === key ? page.offset : 0;
+  const setOffset = (next: number) => setPage({ key, offset: next });
   const [rows, setRows] = useState<MemoryRow[]>([]);
   // True when the last server response filled the page, so a next page may exist.
   const [hasMore, setHasMore] = useState(false);
@@ -46,42 +87,51 @@ export default function MemoriesPage() {
   // False until the first load attempt has finished.
   const [loaded, setLoaded] = useState(false);
   const [showNew, setShowNew] = useState(false);
-  const searching = q.length > 0;
+  const searching = filters.q.length > 0;
   const loadRef = useRef<() => Promise<void>>(async () => {});
   const loadSeq = useRef(0);
   const rowsRef = useRef<MemoryRow[]>([]);
   rowsRef.current = rows;
   const viewRef = useRef({
     searching,
-    spaceScope,
-    types,
+    spaceScope: filters.spaceScope,
+    kind: filters.kind,
+    types: filters.types,
+    tags: filters.tags,
     offset,
     memberships: me?.memberships ?? [],
     meId: me?.id ?? null,
   });
 
+  function writeFilters(next: FilterState, draftText?: string) {
+    const encoded = encodeFilters(next);
+    setFilters(next);
+    setDraft(draftText ?? encoded);
+    setPage({ key: listKey(next), offset: 0 });
+    if (encoded) setParams({ q: encoded });
+    else setParams({});
+  }
+
   const load = useCallback(async () => {
     // Only the newest request may write state; an older, slower response is dropped.
     const seq = ++loadSeq.current;
-    const typeFilter = typesQuery(types);
+    const typeFilter = typesQuery(filters.types);
+    const qs = new URLSearchParams({
+      limit: String(PAGE),
+      offset: String(offset),
+    });
+    if (filters.spaceScope) qs.set("space_scope", filters.spaceScope);
+    if (filters.kind) qs.set("kind", filters.kind);
+    if (filters.tags.length) qs.set("tags", filters.tags.join(","));
     let path: string;
     if (searching) {
-      const qs = new URLSearchParams({
-        q,
-        limit: String(PAGE),
-        offset: String(offset),
-      });
-      if (spaceScope) qs.set("space_scope", spaceScope);
+      qs.set("q", filters.q);
+      // Search without types returns entries only; always send the selection.
       qs.set("types", typeFilter ?? MEMORY_TYPE_TOKENS.join(","));
       path = `/api/memories/search?${qs}`;
     } else {
-      const listParams = new URLSearchParams({
-        limit: String(PAGE),
-        offset: String(offset),
-      });
-      if (spaceScope) listParams.set("space_scope", spaceScope);
-      if (typeFilter) listParams.set("types", typeFilter);
-      path = `/api/memories?${listParams}`;
+      if (typeFilter) qs.set("types", typeFilter);
+      path = `/api/memories?${qs}`;
     }
     try {
       const next = await api<MemoryRow[]>(path);
@@ -95,13 +145,15 @@ export default function MemoriesPage() {
     } finally {
       if (seq === loadSeq.current) setLoaded(true);
     }
-  }, [searching, q, spaceScope, types, offset]);
+  }, [searching, filters, offset]);
 
   loadRef.current = load;
   viewRef.current = {
     searching,
-    spaceScope,
-    types,
+    spaceScope: filters.spaceScope,
+    kind: filters.kind,
+    types: filters.types,
+    tags: filters.tags,
     offset,
     memberships: me?.memberships ?? [],
     meId: me?.id ?? null,
@@ -154,7 +206,9 @@ export default function MemoriesPage() {
         setRows((prev) =>
           applyMemoryEvent(prev, event, {
             spaceScope: view.spaceScope,
+            kind: view.kind,
             types: view.types,
+            tags: view.tags,
             memberships: view.memberships,
             offset: view.offset,
             pageSize: PAGE,
@@ -168,21 +222,74 @@ export default function MemoriesPage() {
   }, []);
 
   useEffect(() => {
-    setDraft(params.get("q") ?? "");
+    const raw = params.get("q") ?? "";
+    setDraft(raw);
+    setFilters(filtersFromRaw(raw));
   }, [params]);
 
-  function submitSearch(e: FormEvent) {
-    e.preventDefault();
-    const next = draft.trim();
-    setOffset(0);
-    if (next) setParams({ q: next });
+  function applyQueryDraft(raw: string) {
+    const parsed = parseMemoryQuery(raw);
+    const hasSpaceToken = /\bspace:/.test(raw);
+    const next: FilterState = {
+      q: parsed.q,
+      kind: parsed.kind || (!/\bkind:/.test(raw) ? filters.kind : ""),
+      types: parsed.types.length ? parsed.types : filters.types,
+      tags: parsed.tags,
+      spaceScope: hasSpaceToken ? parsed.spaceScope : filters.spaceScope,
+    };
+    const encoded = encodeFilters(next);
+    setFilters(next);
+    setDraft(raw.trim() || encoded);
+    setPage({ key: listKey(next), offset: 0 });
+    if (encoded) setParams({ q: encoded });
     else setParams({});
   }
 
-  function clearSearch() {
-    setDraft("");
-    setOffset(0);
-    setParams({});
+  function submitSearch(e: FormEvent) {
+    e.preventDefault();
+    applyQueryDraft(draft);
+  }
+
+  function clearAll() {
+    writeFilters(DEFAULT_FILTERS, "");
+  }
+
+  const chips: { key: string; label: string; clear: () => void }[] = [];
+  if (filters.spaceScope) {
+    chips.push({
+      key: "space",
+      label: `space:${filters.spaceScope}`,
+      clear: () => writeFilters({ ...filters, spaceScope: "" }),
+    });
+  }
+  if (filters.kind) {
+    chips.push({
+      key: "kind",
+      label: `kind:${filters.kind}`,
+      clear: () => writeFilters({ ...filters, kind: "" }),
+    });
+  }
+  if (!isUnrestrictedTypes(filters.types)) {
+    chips.push({
+      key: "types",
+      label: `types:${filters.types.join(",")}`,
+      clear: () => writeFilters({ ...filters, types: [...MEMORY_TYPE_TOKENS] }),
+    });
+  }
+  for (const tag of filters.tags) {
+    chips.push({
+      key: `tag-${tag}`,
+      label: `tag:${tag}`,
+      clear: () =>
+        writeFilters({ ...filters, tags: filters.tags.filter((t) => t !== tag) }),
+    });
+  }
+  if (filters.q.trim()) {
+    chips.push({
+      key: "q",
+      label: `q:${filters.q.trim()}`,
+      clear: () => writeFilters({ ...filters, q: "" }),
+    });
   }
 
   const rangeStart = offset + 1;
@@ -193,7 +300,7 @@ export default function MemoriesPage() {
   // Only the caller's own personal space is a default write target.
   const ownPersonal = me?.personal_space_id ?? "";
   const defaultWriteSpace =
-    spaceScope === "group"
+    filters.spaceScope === "group"
       ? (me?.memberships.find((s) => s.kind === "group")?.id ?? ownPersonal)
       : ownPersonal;
 
@@ -205,50 +312,75 @@ export default function MemoriesPage() {
         )}
       </PageHeader>
       <div className="page-body">
-        <form className="toolbar" onSubmit={submitSearch}>
-          <div className="toolbar-search">
+        <form className="toolbar metrics-filter-bar mb-3" onSubmit={submitSearch}>
+          <div className="toolbar-search metrics-query-wrap">
             <input
               className="input"
-              placeholder="Search memories"
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
+              placeholder="Filter: kind:entry type:fact tag:ops space:personal …"
               aria-label="Search memories"
             />
-          </div>
-          <button className="btn" type="submit" aria-label="Find" title="Find">
-            <FontAwesomeIcon icon={faMagnifyingGlass} />
-          </button>
-          {searching && (
-            <button
-              className="btn"
-              type="button"
-              title="Clear"
-              aria-label="Clear"
-              onClick={clearSearch}
-            >
-              <FontAwesomeIcon icon={faXmark} />
+            <button type="submit" className="btn btn-secondary">
+              Apply
             </button>
-          )}
-          <div className="toolbar-divider" aria-hidden="true" />
-          <SpaceScopeSelect
-            value={spaceScope}
-            onChange={(v) => {
-              setSpaceScope(v);
-              setOffset(0);
-            }}
-          />
-          <TypeFilterMenu
-            selected={types}
-            onChange={(next) => {
-              setTypes(next);
-              setOffset(0);
-            }}
-          />
+          </div>
         </form>
+
+        <div className="toolbar metrics-filter-bar mb-3">
+          <SpaceScopeSelect
+            value={filters.spaceScope}
+            onChange={(spaceScope) => {
+              setFilters((p) => ({ ...p, spaceScope }));
+              setOffset(0);
+            }}
+          />
+          <label className="field toolbar-field">
+            <span>Kind</span>
+            <select
+              className="input w-auto"
+              value={filters.kind}
+              onChange={(e) => {
+                setFilters((p) => ({
+                  ...p,
+                  kind: e.target.value as "" | "entry" | "guide",
+                }));
+                setOffset(0);
+              }}
+            >
+              <option value="">All</option>
+              <option value="entry">Entry</option>
+              <option value="guide">Guide</option>
+            </select>
+          </label>
+          <TypeFilterMenu
+            selected={filters.types}
+            onChange={(types) => {
+              setFilters((p) => ({ ...p, types }));
+              setOffset(0);
+            }}
+          />
+          <button type="button" className="btn btn-ghost text-sm" onClick={clearAll}>
+            Clear
+          </button>
+        </div>
+
+        {chips.length > 0 ? (
+          <ul className="metrics-filter-chips mb-4">
+            {chips.map((chip) => (
+              <li key={chip.key}>
+                <button type="button" className="metrics-filter-chip" onClick={chip.clear}>
+                  {chip.label}
+                  <span aria-hidden="true"> ×</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
 
         {searching && (
           <p className="mb-4 text-xs text-faint">
-            Showing hybrid matches for “{q}” — full-text and vector similarity fused.
+            Showing hybrid matches for “{filters.q}” — full-text and vector similarity fused.
           </p>
         )}
 

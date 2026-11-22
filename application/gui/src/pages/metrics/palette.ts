@@ -55,6 +55,7 @@ export function categoryFill(index: number): string {
   return CATEGORY_FILLS[index % CATEGORY_FILLS.length];
 }
 
+/** Fallback styles when a chart still uses Recharts' default tooltip body. */
 export function tooltipStyle(): CSSProperties {
   return {
     background: "oklch(0.205 0 0)",
@@ -62,5 +63,13 @@ export function tooltipStyle(): CSSProperties {
     borderRadius: 0,
     color: CHROME.ink,
     fontSize: 12,
+    padding: "4px 8px",
+    lineHeight: 1.2,
   };
 }
+
+/** Soft hover band for Recharts Tooltip cursor (dark theme). */
+export const tooltipCursor = {
+  fill: CHROME.ink,
+  fillOpacity: 0.06,
+};

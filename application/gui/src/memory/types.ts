@@ -1,4 +1,12 @@
 
+export type MemoryRecallEvent = {
+  recalled_at: string | null;
+  source: string;
+  recalled_by?: string | null;
+  recalled_by_email?: string | null;
+  recalled_by_display_name?: string | null;
+};
+
 export type MemoryRow = {
   id: string;
   space_id?: string;
@@ -12,12 +20,16 @@ export type MemoryRow = {
   body?: string;
   score?: number;
   confidence?: number;
+  recall_count?: number;
+  last_recalled_at?: string | null;
+  expires_at?: string | null;
   created_by?: string | null;
   created_by_email?: string | null;
   created_by_display_name?: string | null;
   updated_at?: string | null;
   created_at?: string | null;
   path_hint?: string | null;
+  recent_recalls?: MemoryRecallEvent[];
 };
 
 export const ENTRY_TYPES = [

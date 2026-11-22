@@ -196,6 +196,30 @@ class RegistrationSettingIn(BaseModel):
     enabled: bool
 
 
+class AutomationSettingIn(BaseModel):
+    """Request body for hygiene Automation System Settings.
+
+    Omitted fields are left unchanged.
+    """
+
+    resolve_supersedes: bool | None = None
+    resolve_near_dups: bool | None = None
+
+
+class ResolveConflictIn(BaseModel):
+    """Request body for accepting a supersedes conflict (forget ``b``)."""
+
+    a: IdStr
+    b: IdStr
+
+
+class ResolveNearDuplicateIn(BaseModel):
+    """Request body for keeping one near-duplicate and forgetting the other."""
+
+    keep: IdStr
+    drop: IdStr
+
+
 class MailSettingIn(BaseModel):
     """Request body for updating outbound mail (SMTP) System Settings.
 

@@ -4,16 +4,18 @@ export function ChartCard({
   title,
   summary,
   empty,
+  className,
   children,
 }: {
   title: string;
   /** Text alternative read instead of the chart. */
   summary: string;
   empty?: boolean;
+  className?: string;
   children: ReactNode;
 }) {
   return (
-    <section className="metrics-chart panel">
+    <section className={`metrics-chart panel${className ? ` ${className}` : ""}`}>
       <h3 className="metrics-chart-title">{title}</h3>
       {empty ? (
         <p className="text-sm text-muted">No data yet.</p>

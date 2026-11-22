@@ -24,6 +24,8 @@ KEY_SMTP_USERNAME = "smtp_username"
 KEY_SMTP_PASSWORD = "smtp_password"  # noqa: S105
 KEY_SMTP_FROM = "smtp_from"
 KEY_SMTP_USE_TLS = "smtp_use_tls"
+KEY_AUTOMATION_RESOLVE_SUPERSEDES = "automation_resolve_supersedes"
+KEY_AUTOMATION_RESOLVE_NEAR_DUPS = "automation_resolve_near_dups"
 
 _SMTP_KEYS = (
     KEY_SMTP_HOST,
@@ -100,6 +102,8 @@ async def ensure_instance_settings(session: AsyncSession, settings: Settings | N
         (KEY_SMTP_USERNAME, settings.smtp_username.strip()),
         (KEY_SMTP_FROM, settings.smtp_from.strip()),
         (KEY_SMTP_USE_TLS, "true" if settings.smtp_use_tls else "false"),
+        (KEY_AUTOMATION_RESOLVE_SUPERSEDES, "false"),
+        (KEY_AUTOMATION_RESOLVE_NEAR_DUPS, "false"),
     ]
     password = settings.smtp_password
     seeds.append(
@@ -146,6 +150,64 @@ async def set_register_enabled(session: AsyncSession, principal: Principal, enab
     await _upsert(session, KEY_REGISTER_ENABLED, "true" if enabled else "false")
     await session.commit()
     return enabled
+
+
+async def get_automation_settings(session: AsyncSession) -> dict[str, bool]:
+    """Return hygiene Automation toggles (default off when unseeded)."""
+    supersedes_raw = await _get_raw(session, KEY_AUTOMATION_RESOLVE_SUPERSEDES)
+    near_dups_raw = await _get_raw(session, KEY_AUTOMATION_RESOLVE_NEAR_DUPS)
+    return {
+        "resolve_supersedes": (False if supersedes_raw is None else _parse_bool(supersedes_raw)),
+        "resolve_near_dups": False if near_dups_raw is None else _parse_bool(near_dups_raw),
+    }
+
+
+async def set_automation_settings(
+    session: AsyncSession,
+    principal: Principal,
+    *,
+    resolve_supersedes: bool | None = None,
+    resolve_near_dups: bool | None = None,
+) -> dict[str, bool]:
+    """Admin-only update for hygiene Automation toggles.
+
+    Omitted fields are left unchanged.
+
+    Args:
+        session: Database session.
+        principal: Caller (must be administrator).
+        resolve_supersedes: When true, auto-forget superseded conflict targets.
+        resolve_near_dups: When true, auto-forget the older near-duplicate.
+
+    Returns:
+        The stored values.
+
+    Raises:
+        ForbiddenError: When the caller is not an administrator.
+    """
+    _require_admin(principal)
+    current = await get_automation_settings(session)
+    next_supersedes = (
+        current["resolve_supersedes"] if resolve_supersedes is None else resolve_supersedes
+    )
+    next_near_dups = (
+        current["resolve_near_dups"] if resolve_near_dups is None else resolve_near_dups
+    )
+    await _upsert(
+        session,
+        KEY_AUTOMATION_RESOLVE_SUPERSEDES,
+        "true" if next_supersedes else "false",
+    )
+    await _upsert(
+        session,
+        KEY_AUTOMATION_RESOLVE_NEAR_DUPS,
+        "true" if next_near_dups else "false",
+    )
+    await session.commit()
+    return {
+        "resolve_supersedes": next_supersedes,
+        "resolve_near_dups": next_near_dups,
+    }
 
 
 def _env_mail_fallback(settings: Settings) -> MailSettings:

@@ -18,12 +18,13 @@ import { useApiResource } from "../hooks/useAsyncResource";
 import { useReloadOnMemoryEvents } from "../hooks/useReloadOnMemoryEvents";
 import { ChartCard } from "./metrics/ChartCard";
 import { HorizontalBarChart } from "./metrics/HorizontalBarChart";
+import { MetricsTooltip } from "./metrics/MetricsTooltip";
 import { parseMetricsQuery } from "./metrics/filterQuery";
 import {
   SERIES,
   categoryFill,
   kindFill,
-  tooltipStyle,
+  tooltipCursor,
   typeFill,
 } from "./metrics/palette";
 import type { MemoryMetrics } from "./metrics/types";
@@ -226,13 +227,6 @@ export default function MetricsPage() {
     <div>
       <PageHeader title="Metrics" />
       <div className="page-body">
-        <p className="mb-4 text-sm text-muted">
-          Storage and retrieval for memories you can access. The time window
-          drives created/accessed charts and windowed KPIs; drag on a time chart
-          to zoom. Facets apply to every panel. Access history starts when this
-          instance began recording recalls.
-        </p>
-
         <form
           className="toolbar metrics-filter-bar mb-3"
           onSubmit={(e) => {
@@ -415,8 +409,9 @@ export default function MetricsPage() {
               </div>
             </div>
 
-            <div className="metrics-chart-grid mb-8">
+            <div className="metrics-chart-stack mb-8">
               <ChartCard
+                className="metrics-chart-full"
                 title="Created over time"
                 summary={`${created.reduce((n, r) => n + r.entries, 0)} entries and ${created.reduce((n, r) => n + r.guides, 0)} guides created in the selected range. Drag to zoom.`}
                 empty={created.every((r) => r.entries === 0 && r.guides === 0)}
@@ -445,113 +440,118 @@ export default function MetricsPage() {
                 />
               </ChartCard>
 
-              <ChartCard
-                title="Entries vs guides"
-                summary={summarize(byKind, (r) => r.kind)}
-                empty={byKind.length === 0}
-              >
-                <div className="metrics-chart-body">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={byKind}
-                        dataKey="count"
-                        nameKey="kind"
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={48}
-                        outerRadius={72}
-                        paddingAngle={2}
-                        isAnimationActive={false}
-                      >
-                        {byKind.map((row) => (
-                          <Cell key={row.kind} fill={kindFill(row.kind)} />
-                        ))}
-                      </Pie>
-                      <Tooltip contentStyle={tooltipStyle()} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-                <ul className="metrics-legend">
-                  {byKind.map((row) => (
-                    <li key={row.kind}>
-                      <span
-                        className="metrics-legend-swatch"
-                        style={{ background: kindFill(row.kind) }}
-                      />
-                      {row.kind} ({row.count})
-                    </li>
-                  ))}
-                </ul>
-              </ChartCard>
-
-              <ChartCard
-                title="By entry type"
-                summary={summarize(byType, (r) => r.type)}
-                empty={byType.length === 0}
-              >
-                <HorizontalBarChart
-                  data={byType}
-                  categoryKey="type"
-                  categoryWidth={88}
-                  rowKey={(row) => row.type}
-                  fill={(row) => typeFill(row.type)}
-                />
-              </ChartCard>
-
-              <ChartCard
-                title="By space"
-                summary={summarize(bySpace, (r) => r.name)}
-                empty={bySpace.length === 0}
-              >
-                <HorizontalBarChart
-                  data={bySpace}
-                  categoryKey="name"
-                  rowKey={(row) => row.space_id ?? row.name}
-                  fill={(_row, index) => categoryFill(index)}
-                />
-              </ChartCard>
-
-              <ChartCard
-                title="Top tags"
-                summary={summarize(topTags, (r) => r.tag)}
-                empty={topTags.length === 0}
-              >
-                <HorizontalBarChart
-                  data={topTags}
-                  categoryKey="tag"
-                  rowKey={(row) => row.tag}
-                  fill={(_row, index) => categoryFill(index)}
-                />
-              </ChartCard>
-
-              <ChartCard
-                title="Top creators"
-                summary={summarize(topCreators, (r) => r.label)}
-                empty={topCreators.length === 0}
-              >
-                <HorizontalBarChart
-                  data={topCreators}
-                  categoryKey="label"
-                  rowKey={(row) => row.user_id}
-                  fill={(_row, index) => categoryFill(index)}
-                />
-              </ChartCard>
-
-              {byProject.length > 0 ? (
+              <div className="metrics-chart-row metrics-chart-row-tri">
                 <ChartCard
-                  title="By project"
-                  summary={summarize(byProject, (r) => r.name)}
-                  empty={false}
+                  className="metrics-chart-narrow"
+                  title="Entries vs guides"
+                  summary={summarize(byKind, (r) => r.kind)}
+                  empty={byKind.length === 0}
+                >
+                  <div className="metrics-chart-body metrics-chart-body-donut">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={byKind}
+                          dataKey="count"
+                          nameKey="kind"
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={36}
+                          outerRadius={56}
+                          paddingAngle={2}
+                          isAnimationActive={false}
+                        >
+                          {byKind.map((row) => (
+                            <Cell key={row.kind} fill={kindFill(row.kind)} />
+                          ))}
+                        </Pie>
+                        <Tooltip content={<MetricsTooltip />} cursor={tooltipCursor} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <ul className="metrics-legend metrics-legend-stack">
+                    {byKind.map((row) => (
+                      <li key={row.kind}>
+                        <span
+                          className="metrics-legend-swatch"
+                          style={{ background: kindFill(row.kind) }}
+                        />
+                        {row.kind} ({row.count})
+                      </li>
+                    ))}
+                  </ul>
+                </ChartCard>
+
+                <ChartCard
+                  title="Top tags"
+                  summary={summarize(topTags, (r) => r.tag)}
+                  empty={topTags.length === 0}
                 >
                   <HorizontalBarChart
-                    data={byProject}
-                    categoryKey="name"
-                    rowKey={(row) => row.project_id}
+                    data={topTags}
+                    categoryKey="tag"
+                    rowKey={(row) => row.tag}
                     fill={(_row, index) => categoryFill(index)}
                   />
                 </ChartCard>
-              ) : null}
+
+                <ChartCard
+                  title="Top creators"
+                  summary={summarize(topCreators, (r) => r.label)}
+                  empty={topCreators.length === 0}
+                >
+                  <HorizontalBarChart
+                    data={topCreators}
+                    categoryKey="label"
+                    rowKey={(row) => row.user_id}
+                    fill={(_row, index) => categoryFill(index)}
+                  />
+                </ChartCard>
+              </div>
+
+              <div className="metrics-chart-row metrics-chart-row-by">
+                <ChartCard
+                  title="By entry type"
+                  summary={summarize(byType, (r) => r.type)}
+                  empty={byType.length === 0}
+                >
+                  <HorizontalBarChart
+                    data={byType}
+                    categoryKey="type"
+                    categoryWidth={88}
+                    rowKey={(row) => row.type}
+                    fill={(row) => typeFill(row.type)}
+                  />
+                </ChartCard>
+
+                <ChartCard
+                  title="By space"
+                  summary={summarize(bySpace, (r) => r.name)}
+                  empty={bySpace.length === 0}
+                >
+                  <HorizontalBarChart
+                    data={bySpace}
+                    categoryKey="name"
+                    rowKey={(row) => row.space_id ?? row.name}
+                    fill={(_row, index) => categoryFill(index)}
+                  />
+                </ChartCard>
+
+                {byProject.length > 0 ? (
+                  <ChartCard
+                    title="By project"
+                    summary={summarize(byProject, (r) => r.name)}
+                    empty={false}
+                  >
+                    <HorizontalBarChart
+                      data={byProject}
+                      categoryKey="name"
+                      rowKey={(row) => row.project_id}
+                      fill={(_row, index) => categoryFill(index)}
+                    />
+                  </ChartCard>
+                ) : null}
+              </div>
             </div>
 
             <h2 className="metrics-section-title">Retrieval</h2>

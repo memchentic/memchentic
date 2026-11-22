@@ -186,7 +186,9 @@ read. Time window: `range` (`7d` / `30d` / `90d` / `all`) or absolute
 bounded), `accessed_per_day`, retrieval KPIs, `top_accessed`, and
 `accesses_by_source`. Recall events are rows in `memory_recalls`, written
 when `touch_memories` bumps usage (debounced) or a guide near-dup reinforce
-runs.
+runs. Full memory open (`GET /api/memories/{id}` and MCP `open`) also
+returns `recent_recalls` (newest first) alongside `recall_count` and
+`last_recalled_at`.
 
 **Auth groups.** Two fixed auth groups, `administrators` and `users`, decide
 who is an admin. An auth group is not a space. Admins manage them under

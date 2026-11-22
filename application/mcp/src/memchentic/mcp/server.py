@@ -839,7 +839,7 @@ async def overlap_report(
     include_expired: bool = False,
     expiring_within_days: int | None = None,
 ) -> dict[str, Any]:
-    """Read-only hygiene report for the spaces you can read, or for one ``space_id``.
+    """Hygiene report for the spaces you can read, or for one ``space_id``.
 
     The result has three lists:
 
@@ -848,6 +848,7 @@ async def overlap_report(
     similarity value. Only the most recently edited memories are compared:
     ``scanned`` is how many, and ``truncated`` is true when older ones were
     skipped. Pass ``include_expired=true`` to compare past-due memories too.
+    Resolve a pair with resolve_near_duplicate (keep one id, drop the other).
 
     expiring: {id, title, expires_at} for live memories in order of expiry,
     soonest first. Without ``expiring_within_days`` this is the next ``limit``
@@ -856,15 +857,15 @@ async def overlap_report(
 
     conflicts: pairs {a, b, title, reason} where memory a declares that it
     supersedes memory b (``reason`` is "supersedes"). Both ends must still be
-    visible. Set ``supersedes`` on remember, guide_write or revise when a new
-    memory replaces an older one instead of revising it in place.
+    visible. Resolve with resolve_conflict (forgets b). Set ``supersedes`` on
+    remember, guide_write or revise when a new memory replaces an older one
+    instead of revising it in place.
 
     Searches every space you can read unless ``space_id`` (one space) or
     ``space_scope`` ("personal" or "group") narrows it; ``space_scope`` is
     ignored when ``space_id`` is given. ``limit`` caps each list (server
-    search default, normally 20). Nothing is changed by this tool: merge
-    duplicates yourself with revise and forget. Hybrid find and guide_find
-    hide targets of a live supersedes link; this report still lists them.
+    search default, normally 20). Hybrid find and guide_find hide targets of
+    a live supersedes link; this report still lists them until resolved.
     """
     principal = require_principal()
     session = require_session()
@@ -876,4 +877,42 @@ async def overlap_report(
         limit=limit,
         include_expired=include_expired,
         expiring_within_days=expiring_within_days,
+    )
+
+
+@mcp.tool(annotations=_DESTRUCTIVE)
+@_reported
+async def resolve_conflict(a: str, b: str) -> dict[str, Any]:
+    """Accept a supersedes conflict from overlap_report by forgetting ``b``.
+
+    ``a`` must currently declare that it supersedes ``b``. Deletes ``b`` under
+    the same ACL as forget (creator, group manager, or admin). Returns
+    {"ok": true, "forgotten": <b>}.
+    """
+    principal = require_principal()
+    session = require_session()
+    return await memory_hygiene.resolve_conflict(
+        session,
+        principal,
+        replacement_id=require_uuid(a, "a"),
+        superseded_id=require_uuid(b, "b"),
+    )
+
+
+@mcp.tool(annotations=_DESTRUCTIVE)
+@_reported
+async def resolve_near_duplicate(keep: str, drop: str) -> dict[str, Any]:
+    """Keep one near-duplicate from overlap_report and forget the other.
+
+    ``keep`` and ``drop`` must be the same space and kind and either share a
+    title or meet the near-duplicate similarity threshold. Deletes ``drop``
+    under the same ACL as forget. Returns {"ok": true, "forgotten": <drop>}.
+    """
+    principal = require_principal()
+    session = require_session()
+    return await memory_hygiene.resolve_near_duplicate(
+        session,
+        principal,
+        keep_id=require_uuid(keep, "keep"),
+        drop_id=require_uuid(drop, "drop"),
     )

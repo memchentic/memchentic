@@ -148,6 +148,62 @@ export default function EntryPage() {
           {formatDateTime(m.updated_at)}
           {m.path_hint && ` · ${m.path_hint}`}
         </p>
+        {!editing ? (
+          <section className="mb-6" aria-label="Memory metrics">
+            <h2 className="metrics-section-title">Usage</h2>
+            <div className="metrics-kpi-grid">
+              <div className="metrics-kpi panel">
+                <div className="metrics-kpi-label">Recalls</div>
+                <div className="metrics-kpi-value">{m.recall_count ?? 0}</div>
+              </div>
+              <div className="metrics-kpi panel">
+                <div className="metrics-kpi-label">Last recalled</div>
+                <div className="metrics-kpi-value metrics-kpi-value-sm">
+                  {m.last_recalled_at ? formatDateTime(m.last_recalled_at) : "Never"}
+                </div>
+              </div>
+              <div className="metrics-kpi panel">
+                <div className="metrics-kpi-label">Created</div>
+                <div className="metrics-kpi-value metrics-kpi-value-sm">
+                  {formatDateTime(m.created_at)}
+                </div>
+              </div>
+              <div className="metrics-kpi panel">
+                <div className="metrics-kpi-label">Expires</div>
+                <div className="metrics-kpi-value metrics-kpi-value-sm">
+                  {m.expires_at ? formatDateTime(m.expires_at) : "Permanent"}
+                </div>
+              </div>
+            </div>
+            {(m.recent_recalls?.length ?? 0) > 0 ? (
+              <div className="panel p-4">
+                <h3 className="metrics-chart-title">Recent accesses</h3>
+                <ul className="entry-recall-list">
+                  {(m.recent_recalls ?? []).map((event, index) => {
+                    const who =
+                      event.recalled_by_display_name?.trim() ||
+                      event.recalled_by_email ||
+                      (event.recalled_by ? event.recalled_by.slice(0, 8) : "—");
+                    return (
+                      <li key={`${event.recalled_at ?? "x"}-${index}`}>
+                        <span className="entry-recall-when">
+                          {event.recalled_at ? formatDateTime(event.recalled_at) : "—"}
+                        </span>
+                        <span className="entry-recall-source">{event.source}</span>
+                        <span className="entry-recall-who">{who}</span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ) : (
+              <p className="text-sm text-muted">
+                No recorded access events yet. Lifetime recalls still count
+                touches from before event logging began.
+              </p>
+            )}
+          </section>
+        ) : null}
         {editing ? (
           <div key="revise" className="panel reveal-fade grid gap-3 p-4">
             <input className="input" aria-label="Title" value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} />

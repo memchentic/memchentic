@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from memchentic.api.schemas import (
     AuthGroupIdpBindIn,
     AuthGroupMemberIn,
+    AutomationSettingIn,
     MailSettingIn,
     RegistrationSettingIn,
 )
@@ -46,6 +47,49 @@ async def put_registration_setting(
     """Admin: enable or disable public self-registration."""
     enabled = await instance_settings_service.set_register_enabled(session, principal, body.enabled)
     return {"enabled": enabled}
+
+
+@router.get("/system/automation")
+async def get_automation_setting(
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(db_session),
+) -> dict[str, bool]:
+    """Admin: hygiene Automation toggles (default off)."""
+    if not principal.is_admin:
+        raise HTTPException(403, "Administrators only")
+    return await instance_settings_service.get_automation_settings(session)
+
+
+@router.put("/system/automation")
+async def put_automation_setting(
+    body: AutomationSettingIn,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(db_session),
+) -> dict[str, bool]:
+    """Admin: enable or disable hygiene Automation passes."""
+    return await instance_settings_service.set_automation_settings(
+        session,
+        principal,
+        resolve_supersedes=body.resolve_supersedes,
+        resolve_near_dups=body.resolve_near_dups,
+    )
+
+
+@router.post("/system/automation/run")
+async def run_automation_now(
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(db_session),
+) -> dict[str, int]:
+    """Admin: run one hygiene Automation pass immediately.
+
+    Applies whatever toggles are currently enabled. Safe when both are off
+    (returns zero counts).
+    """
+    if not principal.is_admin:
+        raise HTTPException(403, "Administrators only")
+    from memchentic.services.memory_hygiene import run_hygiene_automation
+
+    return await run_hygiene_automation(session)
 
 
 @router.get("/system/mail")

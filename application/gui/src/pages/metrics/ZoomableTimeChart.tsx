@@ -9,7 +9,8 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { CHROME, tooltipStyle } from "./palette";
+import { MetricsTooltip } from "./MetricsTooltip";
+import { CHROME, tooltipCursor } from "./palette";
 
 type SeriesSpec = {
   dataKey: string;
@@ -111,7 +112,7 @@ export function ZoomableTimeChart({
             tick={{ fill: CHROME.muted, fontSize: 11 }}
             width={36}
           />
-          <Tooltip contentStyle={tooltipStyle()} />
+          <Tooltip content={<MetricsTooltip />} cursor={tooltipCursor} />
           {series.map((s) => (
             <Area
               key={s.dataKey}

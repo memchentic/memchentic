@@ -40,6 +40,34 @@ logger = logging.getLogger("memchentic")
 
 API_ROOT = Path(__file__).resolve().parents[2]
 
+# Bounded hygiene Automation pass: first run shortly after boot, then every 15m.
+_AUTOMATION_BOOT_DELAY_SEC = 30
+_AUTOMATION_INTERVAL_SEC = 15 * 60
+
+
+async def _hygiene_automation_loop() -> None:
+    """Periodically apply admin Automation settings when either toggle is on."""
+    await asyncio.sleep(_AUTOMATION_BOOT_DELAY_SEC)
+    while True:
+        try:
+            from memchentic.services.memory_hygiene import run_hygiene_automation
+
+            async with get_session_factory()() as session:
+                await set_rls_context(session, user_id=None, is_admin=True)
+                counts = await run_hygiene_automation(session)
+            forgotten = counts["conflicts_forgotten"] + counts["near_dups_forgotten"]
+            if forgotten:
+                logger.info(
+                    "Hygiene automation: conflicts=%s near_dups=%s",
+                    counts["conflicts_forgotten"],
+                    counts["near_dups_forgotten"],
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Hygiene automation pass failed")
+        await asyncio.sleep(_AUTOMATION_INTERVAL_SEC)
+
 
 def _bearer_from_scope(scope: Scope) -> str | None:
     """Extract a Bearer token from raw ASGI headers.
@@ -227,11 +255,15 @@ def create_app() -> FastAPI:
         # Fail closed before serving if MiniLM is missing (unless hash allowed).
         get_embedder()
         await start_memory_listener()
+        automation_task = asyncio.create_task(_hygiene_automation_loop(), name="hygiene-automation")
         restore_signals = _close_streams_on_signal(asyncio.get_running_loop())
         try:
             async with mcp_app.lifespan(app):
                 yield
         finally:
+            automation_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await automation_task
             restore_signals()
             await stop_memory_listener()
 

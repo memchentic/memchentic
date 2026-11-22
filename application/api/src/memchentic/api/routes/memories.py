@@ -7,14 +7,20 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from memchentic.api.schemas import GuideIn, RememberIn, ReviseIn
+from memchentic.api.schemas import (
+    GuideIn,
+    RememberIn,
+    ResolveConflictIn,
+    ResolveNearDuplicateIn,
+    ReviseIn,
+)
 from memchentic.auth.principal import Principal
 from memchentic.deps import db_session, get_principal
 from memchentic.services import guides as guide_service
 from memchentic.services import limits, memory_hygiene, memory_serialize
 from memchentic.services import memories as memory_service
 from memchentic.services import metrics as metrics_service
-from memchentic.services.validation import parse_datetime, parse_uuid
+from memchentic.services.validation import parse_datetime, parse_uuid, require_uuid
 
 router = APIRouter()
 
@@ -104,10 +110,12 @@ async def memory_overlap(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(db_session),
 ) -> dict:
-    """Read-only hygiene report: near-duplicates, conflicts, and expiring rows.
+    """Hygiene report: near-duplicates, conflicts, and expiring rows.
 
     Same payload as the MCP ``overlap_report`` tool. Authenticated callers;
-    limited to spaces the caller can read.
+    limited to spaces the caller can read. Resolve via
+    ``/memories/overlap/resolve-conflict`` or
+    ``/memories/overlap/resolve-near-duplicate``.
     """
     return await memory_hygiene.overlap_report(
         session,
@@ -117,6 +125,42 @@ async def memory_overlap(
         limit=limit,
         include_expired=include_expired,
         expiring_within_days=expiring_within_days,
+    )
+
+
+@router.post("/memories/overlap/resolve-conflict")
+async def resolve_overlap_conflict(
+    body: ResolveConflictIn,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    """Accept a supersedes conflict by forgetting the superseded memory (``b``).
+
+    Authenticated callers who may manage ``b``. Errors: 404, 422, 403.
+    """
+    return await memory_hygiene.resolve_conflict(
+        session,
+        principal,
+        replacement_id=require_uuid(body.a, "a"),
+        superseded_id=require_uuid(body.b, "b"),
+    )
+
+
+@router.post("/memories/overlap/resolve-near-duplicate")
+async def resolve_overlap_near_duplicate(
+    body: ResolveNearDuplicateIn,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    """Keep one near-duplicate and forget the other.
+
+    Authenticated callers who may manage ``drop``. Errors: 404, 422, 403.
+    """
+    return await memory_hygiene.resolve_near_duplicate(
+        session,
+        principal,
+        keep_id=require_uuid(body.keep, "keep"),
+        drop_id=require_uuid(body.drop, "drop"),
     )
 
 

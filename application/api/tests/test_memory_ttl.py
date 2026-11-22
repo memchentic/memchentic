@@ -101,6 +101,12 @@ def test_open_slides_expiry_debounces_and_keeps_updated_at(client: TestClient) -
     assert any(row["memory_id"] == created["id"] for row in metrics["top_accessed"])
     assert any(row["source"] == "open" for row in metrics["accesses_by_source"])
 
+    detail = client.get(f"/api/memories/{created['id']}", headers=auth).json()
+    assert detail["recall_count"] == 1
+    assert detail["last_recalled_at"] is not None
+    assert len(detail["recent_recalls"]) == 1
+    assert detail["recent_recalls"][0]["source"] == "open"
+
     again = client.get(
         f"/api/memories/{created['id']}", headers=auth, params={"touch": "true"}
     ).json()
@@ -108,6 +114,7 @@ def test_open_slides_expiry_debounces_and_keeps_updated_at(client: TestClient) -
     # Debounced: second touch inside the window does not insert another event.
     metrics_again = client.get("/api/metrics/memories?range=7d", headers=auth).json()
     assert metrics_again["totals"]["accesses_in_window"] == 1
+    assert len(again["recent_recalls"]) == 1
 
 
 def test_find_hits_renew_but_expired_rows_stay_expired(client: TestClient) -> None:

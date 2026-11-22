@@ -8,7 +8,8 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { CHROME, tooltipStyle } from "./palette";
+import { MetricsTooltip } from "./MetricsTooltip";
+import { CHROME, tooltipCursor } from "./palette";
 
 /** Horizontal bars of `count`, one bar per row, labelled by `categoryKey`. */
 export function HorizontalBarChart<T extends { count: number }>({
@@ -44,7 +45,7 @@ export function HorizontalBarChart<T extends { count: number }>({
             width={categoryWidth}
             tick={{ fill: CHROME.muted, fontSize: 11 }}
           />
-          <Tooltip contentStyle={tooltipStyle()} />
+          <Tooltip content={<MetricsTooltip />} cursor={tooltipCursor} />
           <Bar dataKey="count" isAnimationActive={false}>
             {data.map((row, index) => (
               <Cell key={rowKey(row)} fill={fill(row, index)} />

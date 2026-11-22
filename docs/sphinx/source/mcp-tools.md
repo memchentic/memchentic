@@ -62,7 +62,9 @@ Entry types are covered in {doc}`memory`.
 | --- | --- |
 | `about_path` | Lists memories whose path hint or body contains a path; narrow with `repo_hint` or `space_id`, page with `offset` |
 | `trace` | Shows who created a memory, when, in which space, and who last edited it (no edit history) |
-| `overlap_report` | Flags near-duplicates, upcoming expiries (`expiring_within_days` bounds the window), and declared `conflicts` (`reason` `supersedes` when both ends are still visible); same data as the GUI Hygiene page — nothing is changed |
+| `overlap_report` | Flags near-duplicates, upcoming expiries (`expiring_within_days` bounds the window), and declared `conflicts` (`reason` `supersedes` when both ends are still visible); same data as the GUI Hygiene page |
+| `resolve_conflict` | Accepts a supersedes conflict from `overlap_report` by forgetting `b` (creator, group manager, or admin) |
+| `resolve_near_duplicate` | Keeps one near-duplicate id and forgets the other (`keep` / `drop`; same ACL as `forget`) |
 
 ## Results and errors
 

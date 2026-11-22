@@ -308,17 +308,13 @@ async def test_mail_helpers_send_when_configured(session: AsyncSession) -> None:
             inviter_name="Ada",
             inviter_email="ada@example.com",
         )
-        assert await mail_service.send_api_key_notice(
-            session, to="c@example.com", action="created"
-        )
+        assert await mail_service.send_api_key_notice(session, to="c@example.com", action="created")
         assert send.await_count == 3
 
     await set_mail_settings(session, _ADMIN, host="", from_address="")
     with patch("memchentic.services.mail.aiosmtplib.send", new_callable=AsyncMock) as send:
         assert (
-            await mail_service.send_email(
-                session, to="x@example.com", subject="s", text_body="b"
-            )
+            await mail_service.send_email(session, to="x@example.com", subject="s", text_body="b")
             is False
         )
         send.assert_not_called()
@@ -335,8 +331,6 @@ async def test_mail_helpers_send_when_configured(session: AsyncSession) -> None:
         side_effect=RuntimeError("smtp down"),
     ):
         assert (
-            await mail_service.send_email(
-                session, to="x@example.com", subject="s", text_body="b"
-            )
+            await mail_service.send_email(session, to="x@example.com", subject="s", text_body="b")
             is False
         )

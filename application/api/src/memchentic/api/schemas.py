@@ -88,6 +88,7 @@ class RememberIn(BaseModel):
     path_hint: str | None = Field(default=None, max_length=limits.PATH_HINT_MAX)
     repo_hint: str | None = Field(default=None, max_length=limits.REPO_HINT_MAX)
     project_id: IdStr | None = None
+    supersedes_id: IdStr | None = None
     force: bool = False
 
 
@@ -111,6 +112,7 @@ class ReviseIn(BaseModel):
     path_hint: str | None = Field(default=None, max_length=limits.PATH_HINT_MAX)
     repo_hint: str | None = Field(default=None, max_length=limits.REPO_HINT_MAX)
     project_id: IdStr | None = None
+    supersedes_id: IdStr | None = None
 
 
 class GroupIn(BaseModel):
@@ -159,6 +161,7 @@ class GuideIn(BaseModel):
     ttl_days: TtlDays | None = None
     permanent: bool = False
     project_id: IdStr | None = None
+    supersedes_id: IdStr | None = None
 
 
 class ProjectIn(BaseModel):

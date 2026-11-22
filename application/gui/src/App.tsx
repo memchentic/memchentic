@@ -17,6 +17,7 @@ import UsersPage from "./pages/UsersPage";
 // MetricsPage is the only page that uses recharts. Loading it on demand
 // keeps the chart library out of the entry chunk.
 const MetricsPage = lazy(() => import("./pages/MetricsPage"));
+const HygienePage = lazy(() => import("./pages/HygienePage"));
 
 function Private({ children }: { children: React.ReactNode }) {
   const { me, loading } = useAuth();
@@ -62,6 +63,20 @@ export default function App() {
               }
             >
               <MetricsPage />
+            </Suspense>
+          }
+        />
+        <Route
+          path="hygiene"
+          element={
+            <Suspense
+              fallback={
+                <div className="page-body">
+                  <p className="text-sm text-muted">Loading…</p>
+                </div>
+              }
+            >
+              <HygienePage />
             </Suspense>
           }
         />

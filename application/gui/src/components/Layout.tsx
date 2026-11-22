@@ -2,6 +2,7 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faBook,
   faChartLine,
+  faBroom,
   faChevronDown,
   faGear,
   faKey,
@@ -19,6 +20,7 @@ import { ErrorBoundary } from "./ErrorBoundary";
 const links = [
   { to: "/", label: "Memories", icon: faBook, end: true },
   { to: "/metrics", label: "Metrics", icon: faChartLine },
+  { to: "/hygiene", label: "Hygiene", icon: faBroom },
   { to: "/groups", label: "Groups", icon: faUserGroup },
   { to: "/projects", label: "Projects", icon: faDiagramProject },
   { to: "/users", label: "Users", icon: faUsers },

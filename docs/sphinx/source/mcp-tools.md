@@ -37,10 +37,10 @@ If nothing else is specified, new memories go to **personal**.
 
 | Tool | What it does |
 | --- | --- |
-| `remember` | Saves a typed entry, with an optional lifetime (at most one of `ttl_days`, `permanent` or `expires_at`) |
-| `find` | Searches entries and returns short summaries; narrow with `space_id` or `space_scope` (`personal` / `group`) |
+| `remember` | Saves a typed entry, with an optional lifetime (at most one of `ttl_days`, `permanent` or `expires_at`); optional `supersedes` marks another entry in the same space as replaced |
+| `find` | Searches entries and returns short summaries; narrow with `space_id` or `space_scope` (`personal` / `group`); hides targets of a live `supersedes` link |
 | `open` | Loads the full text of a memory by `id`, or by exact `title` (narrow with `space_id` or `kind`) |
-| `revise` | Updates an existing memory; lifetime takes at most one of `expires_at`, `ttl_days` or `permanent` |
+| `revise` | Updates an existing memory; lifetime takes at most one of `expires_at`, `ttl_days` or `permanent`; optional `supersedes` sets or clears (`""`) the replacement link |
 | `forget` | Permanently deletes an entry or guide; allowed for its creator, the group creator, or an admin |
 | `browse` | Lists memories without a search query; filters by `tags` and `space_scope` |
 | `since` | Lists memories edited in a time window; filters by `tags`, pages with `offset` |
@@ -53,8 +53,8 @@ Entry types are covered in {doc}`memory`.
 
 | Tool | What it does |
 | --- | --- |
-| `guide_write` | Saves or reinforces your own standing advice; reinforcing renews its lifetime; accepts `expires_at` |
-| `guide_find` | Searches guides (stronger advice ranks higher); filters by `tags` and `space_scope`, pages with `offset` |
+| `guide_write` | Saves or reinforces your own standing advice; reinforcing renews its lifetime; accepts `expires_at`; optional `supersedes` marks another guide in the same space as replaced |
+| `guide_find` | Searches guides (stronger advice ranks higher); filters by `tags` and `space_scope`, pages with `offset`; hides targets of a live `supersedes` link |
 
 ## Extra helpers
 
@@ -62,7 +62,7 @@ Entry types are covered in {doc}`memory`.
 | --- | --- |
 | `about_path` | Lists memories whose path hint or body contains a path; narrow with `repo_hint` or `space_id`, page with `offset` |
 | `trace` | Shows who created a memory, when, in which space, and who last edited it (no edit history) |
-| `overlap_report` | Flags near-duplicates and upcoming expiries (`expiring_within_days` bounds the window); `conflicts` is reserved and always empty — nothing is changed |
+| `overlap_report` | Flags near-duplicates, upcoming expiries (`expiring_within_days` bounds the window), and declared `conflicts` (`reason` `supersedes` when both ends are still visible); same data as the GUI Hygiene page — nothing is changed |
 
 ## Results and errors
 

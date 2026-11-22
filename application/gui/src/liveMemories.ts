@@ -135,11 +135,42 @@ export function applyMemoryEvent(
 
 type LiveHandlers = {
   onEvent: (event: MemoryLiveEvent) => void;
-  onSafetyPoll: () => void;
+  /**
+   * Optional 30 s fallback poll. Omit for SSE-only surfaces (for example
+   * Metrics) that can tolerate a missed event until the next mutation.
+   */
+  onSafetyPoll?: () => void;
 };
 
 /**
- * Open an authenticated SSE stream to `/api/events/memories` and a 30s safety poll.
+ * Coalesce rapid calls into one trailing invocation after `ms`.
+ * Returns `trigger` and `cancel` (clears a pending timer).
+ */
+export function createDebounced(fn: () => void, ms: number): {
+  trigger: () => void;
+  cancel: () => void;
+} {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  return {
+    trigger: () => {
+      if (timer != null) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        fn();
+      }, ms);
+    },
+    cancel: () => {
+      if (timer != null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    },
+  };
+}
+
+/**
+ * Open an authenticated SSE stream to `/api/events/memories`.
+ * Starts a 30 s safety poll only when `onSafetyPoll` is provided.
  * Returns a dispose function.
  */
 export function startMemoryLive(handlers: LiveHandlers): () => void {
@@ -236,9 +267,12 @@ export function startMemoryLive(handlers: LiveHandlers): () => void {
   }
 
   void runStream();
-  pollTimer = setInterval(() => {
-    if (!disposed) handlers.onSafetyPoll();
-  }, SAFETY_POLL_MS);
+  if (handlers.onSafetyPoll) {
+    const poll = handlers.onSafetyPoll;
+    pollTimer = setInterval(() => {
+      if (!disposed) poll();
+    }, SAFETY_POLL_MS);
+  }
 
   return () => {
     disposed = true;

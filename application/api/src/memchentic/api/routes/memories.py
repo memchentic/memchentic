@@ -11,7 +11,7 @@ from memchentic.api.schemas import GuideIn, RememberIn, ReviseIn
 from memchentic.auth.principal import Principal
 from memchentic.deps import db_session, get_principal
 from memchentic.services import guides as guide_service
-from memchentic.services import limits, memory_serialize
+from memchentic.services import limits, memory_hygiene, memory_serialize
 from memchentic.services import memories as memory_service
 from memchentic.services import metrics as metrics_service
 from memchentic.services.validation import parse_datetime, parse_uuid
@@ -78,6 +78,32 @@ async def browse_memories(
         project_id=parse_uuid(project_id, "project_id"),
     )
     return await memory_serialize.memories_out(session, rows)
+
+
+@router.get("/memories/overlap")
+async def memory_overlap(
+    space_id: str | None = Query(None, max_length=limits.ID_TEXT_MAX),
+    space_scope: str | None = Query(None, max_length=limits.TYPE_TEXT_MAX),
+    limit: int | None = None,
+    include_expired: bool = False,
+    expiring_within_days: int | None = None,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    """Read-only hygiene report: near-duplicates, conflicts, and expiring rows.
+
+    Same payload as the MCP ``overlap_report`` tool. Authenticated callers;
+    limited to spaces the caller can read.
+    """
+    return await memory_hygiene.overlap_report(
+        session,
+        principal,
+        space_id=parse_uuid(space_id, "space_id"),
+        space_scope=space_scope,
+        limit=limit,
+        include_expired=include_expired,
+        expiring_within_days=expiring_within_days,
+    )
 
 
 @router.get("/memories/search")
@@ -152,6 +178,7 @@ async def create_memory(
         path_hint=body.path_hint,
         repo_hint=body.repo_hint,
         project_id=parse_uuid(body.project_id, "project_id"),
+        supersedes_id=parse_uuid(body.supersedes_id, "supersedes_id"),
         force=body.force,
     )
     return await memory_serialize.memory_out(session, memory, full=True)
@@ -206,6 +233,10 @@ async def patch_memory(
         if "project_id" in body.model_fields_set
         else None,
         set_project="project_id" in body.model_fields_set,
+        supersedes_id=parse_uuid(body.supersedes_id, "supersedes_id")
+        if "supersedes_id" in body.model_fields_set
+        else None,
+        set_supersedes="supersedes_id" in body.model_fields_set,
     )
     return await memory_serialize.memory_out(session, memory, full=True)
 
@@ -248,5 +279,6 @@ async def create_guide(
         ttl_days=body.ttl_days,
         permanent=body.permanent,
         project_id=parse_uuid(body.project_id, "project_id"),
+        supersedes_id=parse_uuid(body.supersedes_id, "supersedes_id"),
     )
     return await memory_serialize.memory_out(session, memory, full=True)

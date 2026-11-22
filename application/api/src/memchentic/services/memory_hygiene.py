@@ -7,18 +7,61 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import numpy as np
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from memchentic.auth.principal import Principal
 from memchentic.embeddings import get_embedder
 from memchentic.models.entities import Memory, MemoryKind
 from memchentic.search.hybrid import active_memory_clause, prepare_filtered_vector_scan
-from memchentic.services.errors import ValidationError
+from memchentic.services.errors import NotFoundError, ValidationError
 from memchentic.services.memory_serialize import CONTENT_TRUST
 from memchentic.services.memory_ttl import active_select
-from memchentic.services.spaces import accessible_space_ids
+from memchentic.services.spaces import accessible_space_ids, get_readable_space
 from memchentic.settings import get_settings
+
+
+async def resolve_supersedes_target(
+    session: AsyncSession,
+    principal: Principal,
+    *,
+    supersedes_id: uuid.UUID,
+    space_id: uuid.UUID,
+    kind: MemoryKind,
+    self_id: uuid.UUID | None = None,
+) -> uuid.UUID:
+    """Validate a declared supersession target and return its id.
+
+    The target must be readable, in the same space, the same kind, and not
+    the writer memory itself.
+
+    Args:
+        session: Database session.
+        principal: Authenticated caller.
+        supersedes_id: Id of the memory being replaced.
+        space_id: Space of the writer memory.
+        kind: Kind of the writer memory.
+        self_id: Id of the writer when revising an existing row.
+
+    Returns:
+        ``supersedes_id`` when valid.
+
+    Raises:
+        ValidationError: Self-reference, wrong space, or wrong kind.
+        NotFoundError: Missing or unreadable target.
+    """
+    if self_id is not None and supersedes_id == self_id:
+        raise ValidationError("supersedes_id cannot refer to the same memory")
+    result = await session.execute(select(Memory).where(Memory.id == supersedes_id))
+    target = result.scalar_one_or_none()
+    if target is None or not await get_readable_space(session, principal, target.space_id):
+        raise NotFoundError("Superseded memory not found")
+    if target.space_id != space_id:
+        raise ValidationError("supersedes_id must be in the same space")
+    if target.kind != kind:
+        raise ValidationError("supersedes_id must be the same kind")
+    return target.id
 
 
 def dedup_lock_key(space_id: uuid.UUID, kind: MemoryKind) -> str:
@@ -104,7 +147,7 @@ async def find_near_duplicate(
 
 _OVERLAP_NOTE = (
     "Read-only hygiene report; merge via revise/forget. "
-    "Conflict detection is not implemented; conflicts is always empty."
+    "conflicts lists declared supersedes links where both memories are still visible."
 )
 
 
@@ -134,6 +177,7 @@ async def _scan_rows(
 def _overlap_payload(
     near_duplicates: list[dict[str, Any]],
     expiring: list[dict[str, Any]],
+    conflicts: list[dict[str, Any]],
     scanned: int,
     truncated: bool,
     threshold: float,
@@ -142,7 +186,7 @@ def _overlap_payload(
     return {
         "near_duplicates": near_duplicates,
         "expiring": expiring,
-        "conflicts": [],
+        "conflicts": conflicts,
         "scanned": scanned,
         "truncated": truncated,
         "note": _OVERLAP_NOTE,
@@ -236,39 +280,79 @@ async def _expiring_soon(
     return expiring
 
 
+async def _supersedes_conflicts(
+    session: AsyncSession,
+    space_ids: list[uuid.UUID],
+    limit: int,
+    include_expired: bool,
+) -> list[dict[str, Any]]:
+    """List declared supersession pairs where both ends are still visible."""
+    target = aliased(Memory)
+    stmt = (
+        select(Memory)
+        .join(target, Memory.supersedes_id == target.id)
+        .where(
+            Memory.space_id.in_(space_ids),
+            Memory.supersedes_id.is_not(None),
+            target.space_id == Memory.space_id,
+            target.kind == Memory.kind,
+        )
+        .order_by(Memory.updated_at.desc(), Memory.id)
+        .limit(limit)
+    )
+    if not include_expired:
+        now = datetime.now(UTC)
+        live = or_(Memory.expires_at.is_(None), Memory.expires_at > now)
+        target_live = or_(target.expires_at.is_(None), target.expires_at > now)
+        stmt = stmt.where(live, target_live)
+    writers = list((await session.execute(stmt)).scalars())
+    return [
+        {
+            "a": str(writer.id),
+            "b": str(writer.supersedes_id),
+            "title": writer.title,
+            "reason": "supersedes",
+        }
+        for writer in writers
+    ]
+
+
 async def overlap_report(
     session: AsyncSession,
     principal: Principal,
     *,
     space_id: uuid.UUID | None = None,
+    space_scope: str | None = None,
     limit: int | None = None,
     include_expired: bool = False,
     expiring_within_days: int | None = None,
 ) -> dict[str, Any]:
-    """Report duplicate candidates and soon-to-expire memories (read-only).
+    """Report duplicate candidates, conflicts and soon-to-expire memories.
 
     Args:
         session: Database session.
         principal: Authenticated caller.
         space_id: Limit the report to one space.
+        space_scope: Optional ``personal`` or ``group`` filter when ``space_id``
+            is omitted.
         limit: Most pairs and most expiring memories to return.
         include_expired: Also compare past-due memories.
         expiring_within_days: List only memories that expire within this many
             days; ``None`` lists the next ``limit`` expiries.
 
     Returns:
-        ``near_duplicates`` (pairs), ``expiring``, ``conflicts`` (always
-        empty; conflict detection is not implemented), ``scanned`` (number
-        of memories compared) and ``truncated`` (True when more memories
-        exist than ``OVERLAP_SCAN_LIMIT``; the oldest were not compared).
+        ``near_duplicates`` (pairs), ``expiring``, ``conflicts`` (declared
+        supersedes links), ``scanned`` (number of memories compared for
+        near-dups) and ``truncated`` (True when more memories exist than
+        ``OVERLAP_SCAN_LIMIT``; the oldest were not compared for near-dups).
     """
     settings = get_settings()
     if expiring_within_days is not None and expiring_within_days < 0:
         raise ValidationError("expiring_within_days must be >= 0")
     limit = settings.resolve_search_limit(limit)
-    space_ids = await accessible_space_ids(session, principal, space_id)
+    space_ids = await accessible_space_ids(session, principal, space_id, space_scope=space_scope)
     if not space_ids:
-        return _overlap_payload([], [], 0, False, settings.near_dup_threshold)
+        return _overlap_payload([], [], [], 0, False, settings.near_dup_threshold)
 
     rows, truncated = await _scan_rows(
         session, space_ids, include_expired, settings.overlap_scan_limit
@@ -276,7 +360,13 @@ async def overlap_report(
 
     near_duplicates = _near_duplicate_pairs(rows, limit, settings.near_dup_threshold)
     expiring = await _expiring_soon(session, space_ids, limit, expiring_within_days)
+    conflicts = await _supersedes_conflicts(session, space_ids, limit, include_expired)
 
     return _overlap_payload(
-        near_duplicates, expiring, len(rows), truncated, settings.near_dup_threshold
+        near_duplicates,
+        expiring,
+        conflicts,
+        len(rows),
+        truncated,
+        settings.near_dup_threshold,
     )

@@ -276,6 +276,7 @@ async def remember(
     path_hint: str | None = None,
     repo_hint: str | None = None,
     project_id: str | None = None,
+    supersedes: str | None = None,
     force: bool = False,
     group: str | None = None,
     visibility: Visibility | None = None,
@@ -306,6 +307,8 @@ async def remember(
     ``path_hint`` and ``repo_hint`` tie the entry to a file path and a
     repository so that find and about_path can filter on them. Optional
     ``project_id`` attaches the entry to a project in the same space.
+    Optional ``supersedes`` is the id of another entry in the same space that
+    this one replaces; overlap_report lists unresolved pairs under conflicts.
 
     Returns the full entry. Never store secrets or credentials.
     """
@@ -327,6 +330,7 @@ async def remember(
         path_hint=path_hint,
         repo_hint=repo_hint,
         project_id=parse_uuid(project_id, "project_id"),
+        supersedes_id=parse_uuid(supersedes, "supersedes"),
         force=force,
     )
     return await memory_serialize.memory_out(session, memory, full=True)
@@ -445,6 +449,7 @@ async def revise(
     repo_hint: str | None = None,
     ttl_days: int | None = None,
     permanent: bool = False,
+    supersedes: str | None = None,
 ) -> dict[str, Any]:
     """Change fields of one entry or guide. Only the fields you pass change.
 
@@ -454,6 +459,8 @@ async def revise(
     ``type`` applies to entries only (fact, preference, decision, instruction,
     feedback, insight, note) and is rejected for a guide. ``tags`` replaces
     the whole tag list. ``path_hint=""`` or ``repo_hint=""`` removes that hint.
+    ``supersedes`` sets the id of another memory in the same space that this
+    one replaces; ``supersedes=""`` clears the link.
 
     Lifetime: pass at most one of ``expires_at`` (absolute ISO 8601 time, for
     example 2027-01-31T00:00:00+00:00; a value without an offset is read as
@@ -479,6 +486,8 @@ async def revise(
         repo_hint=repo_hint,
         ttl_days=ttl_days,
         permanent=permanent,
+        supersedes_id=parse_uuid(supersedes, "supersedes"),
+        set_supersedes=supersedes is not None,
     )
     return await memory_serialize.memory_out(session, memory, full=True)
 
@@ -669,6 +678,7 @@ async def guide_write(
     ttl_days: int | None = None,
     permanent: bool = False,
     expires_at: str | None = None,
+    supersedes: str | None = None,
 ) -> dict[str, Any]:
     """Create a guide (reusable "when X, do Y" advice), or reinforce one of yours.
 
@@ -693,6 +703,9 @@ async def guide_write(
     every few hours), but never past a ceiling, normally 730 days after
     creation.
 
+    Optional ``supersedes`` is the id of another guide in the same space that
+    this one replaces; overlap_report lists unresolved pairs under conflicts.
+
     Returns the full guide. Never store secrets or credentials.
     """
     principal = require_principal()
@@ -709,6 +722,7 @@ async def guide_write(
         ttl_days=ttl_days,
         permanent=permanent,
         expires_at=parse_datetime(expires_at, "expires_at"),
+        supersedes_id=parse_uuid(supersedes, "supersedes"),
     )
     return await memory_serialize.memory_out(session, memory, full=True)
 
@@ -820,6 +834,7 @@ async def trace(id: str) -> dict[str, Any]:
 @_reported
 async def overlap_report(
     space_id: str | None = None,
+    space_scope: SpaceScope | None = None,
     limit: int | None = None,
     include_expired: bool = False,
     expiring_within_days: int | None = None,
@@ -839,11 +854,17 @@ async def overlap_report(
     expiries however far away they are; pass ``expiring_within_days=N`` to
     list only memories that expire within N days.
 
-    conflicts: reserved; always an empty list. Contradictions between
-    memories are not detected.
+    conflicts: pairs {a, b, title, reason} where memory a declares that it
+    supersedes memory b (``reason`` is "supersedes"). Both ends must still be
+    visible. Set ``supersedes`` on remember, guide_write or revise when a new
+    memory replaces an older one instead of revising it in place.
 
-    ``limit`` caps each list (server search default, normally 20). Nothing is
-    changed by this tool: merge duplicates yourself with revise and forget.
+    Searches every space you can read unless ``space_id`` (one space) or
+    ``space_scope`` ("personal" or "group") narrows it; ``space_scope`` is
+    ignored when ``space_id`` is given. ``limit`` caps each list (server
+    search default, normally 20). Nothing is changed by this tool: merge
+    duplicates yourself with revise and forget. Hybrid find and guide_find
+    hide targets of a live supersedes link; this report still lists them.
     """
     principal = require_principal()
     session = require_session()
@@ -851,6 +872,7 @@ async def overlap_report(
         session,
         principal,
         space_id=parse_uuid(space_id, "space_id"),
+        space_scope=space_scope,
         limit=limit,
         include_expired=include_expired,
         expiring_within_days=expiring_within_days,

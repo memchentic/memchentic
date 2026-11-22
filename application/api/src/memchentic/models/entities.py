@@ -288,6 +288,7 @@ class Memory(Base):
         Index("ix_memories_space_lower_title", "space_id", text("lower(btrim(title))")),
         Index("ix_memories_created_by_user_id", "created_by_user_id"),
         Index("ix_memories_project_id", "project_id"),
+        Index("ix_memories_supersedes_id", "supersedes_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -296,6 +297,9 @@ class Memory(Base):
     )
     project_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True
+    )
+    supersedes_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("memories.id", ondelete="SET NULL"), nullable=True
     )
     kind: Mapped[MemoryKind] = mapped_column(Enum(MemoryKind, name="memory_kind"), nullable=False)
     entry_type: Mapped[EntryType | None] = mapped_column(

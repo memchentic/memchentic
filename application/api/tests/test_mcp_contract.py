@@ -81,6 +81,7 @@ _CONTRACT: dict[str, tuple[set[str], set[str]]] = {
             "path_hint",
             "repo_hint",
             "project_id",
+            "supersedes",
             "force",
             "group",
             "visibility",
@@ -116,6 +117,7 @@ _CONTRACT: dict[str, tuple[set[str], set[str]]] = {
             "repo_hint",
             "ttl_days",
             "permanent",
+            "supersedes",
         },
         {"id"},
     ),
@@ -150,6 +152,7 @@ _CONTRACT: dict[str, tuple[set[str], set[str]]] = {
             "ttl_days",
             "permanent",
             "expires_at",
+            "supersedes",
         },
         {"title", "body"},
     ),
@@ -163,7 +166,13 @@ _CONTRACT: dict[str, tuple[set[str], set[str]]] = {
     ),
     "trace": ({"id"}, {"id"}),
     "overlap_report": (
-        {"space_id", "limit", "include_expired", "expiring_within_days"},
+        {
+            "space_id",
+            "space_scope",
+            "limit",
+            "include_expired",
+            "expiring_within_days",
+        },
         set(),
     ),
 }
@@ -430,7 +439,9 @@ def test_docstrings_state_what_the_tools_do(client: TestClient) -> None:
     assert "case-insensitive substring" in desc["about_path"]
     assert "or repo hint" not in desc["about_path"]
     assert "There is no edit history" in desc["trace"]
-    assert "conflicts: reserved; always an empty list" in desc["overlap_report"]
+    assert "supersedes" in desc["overlap_report"]
+    assert "conflicts" in desc["overlap_report"]
+    assert "always an empty list" not in desc["overlap_report"]
     assert "soon-to-expire" not in desc["overlap_report"]
     recall = ("find", "guide_find", "open", "browse", "since", "by_tag", "about_path")
     for name in recall:

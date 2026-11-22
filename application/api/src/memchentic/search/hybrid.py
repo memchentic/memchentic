@@ -9,9 +9,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import ColumnElement, and_, func, or_, select, text
+from sqlalchemy import ColumnElement, and_, exists, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import defer
+from sqlalchemy.orm import aliased, defer
 
 from memchentic.embeddings import get_embedder
 from memchentic.models.entities import EntryType, Memory, MemoryKind
@@ -141,6 +141,31 @@ def active_memory_clause(
         return None
     ref = now or datetime.now(UTC)
     return or_(Memory.expires_at.is_(None), Memory.expires_at > ref)
+
+
+def not_superseded_clause(*, now: datetime | None = None) -> ColumnElement[bool]:
+    """Hide memories that a still-live memory declares as superseded.
+
+    A target stays hidden only while at least one row with
+    ``supersedes_id = target.id`` is live (no expiry or a future expiry).
+    Independent of ``include_expired``: expired rows can still be searched,
+    but live supersession always wins for hybrid search.
+
+    Args:
+        now: Reference time; defaults to the current UTC time.
+
+    Returns:
+        Clause excluding ids targeted by a live ``supersedes_id`` link.
+    """
+    ref = now or datetime.now(UTC)
+    superseder = aliased(Memory)
+    live_superseder = or_(superseder.expires_at.is_(None), superseder.expires_at > ref)
+    return ~exists(
+        select(1).where(
+            superseder.supersedes_id == Memory.id,
+            live_superseder,
+        )
+    )
 
 
 # Upper bound for guide confidence, in storage and in ranking. Repeating
@@ -292,6 +317,8 @@ async def hybrid_search(
     active = active_memory_clause(include_expired=include_expired, now=now)
     if active is not None:
         base_filters.append(active)
+    # Always hide targets of a live supersedes link (independent of expiry).
+    base_filters.append(not_superseded_clause(now=now))
     if space_ids is not None:
         if not space_ids:
             return []

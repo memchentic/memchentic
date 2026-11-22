@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { applyMemoryEvent, reconnectDelayMs, type MemoryLiveEvent } from "./liveMemories";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  applyMemoryEvent,
+  createDebounced,
+  reconnectDelayMs,
+  type MemoryLiveEvent,
+} from "./liveMemories";
 
 describe("reconnectDelayMs", () => {
   it("doubles to a 30 s cap with jitter", () => {
@@ -7,6 +12,37 @@ describe("reconnectDelayMs", () => {
     expect(reconnectDelayMs(0, () => 0)).toBe(500);
     expect(reconnectDelayMs(3, () => 1)).toBe(8000);
     expect(reconnectDelayMs(10, () => 1)).toBe(30000);
+  });
+});
+
+describe("createDebounced", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("fires once after the quiet window", () => {
+    vi.useFakeTimers();
+    const fn = vi.fn();
+    const { trigger, cancel } = createDebounced(fn, 400);
+    trigger();
+    trigger();
+    trigger();
+    expect(fn).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(399);
+    expect(fn).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(fn).toHaveBeenCalledTimes(1);
+    cancel();
+  });
+
+  it("cancel drops a pending call", () => {
+    vi.useFakeTimers();
+    const fn = vi.fn();
+    const { trigger, cancel } = createDebounced(fn, 400);
+    trigger();
+    cancel();
+    vi.advanceTimersByTime(500);
+    expect(fn).not.toHaveBeenCalled();
   });
 });
 

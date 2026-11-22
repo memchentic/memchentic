@@ -27,6 +27,7 @@ from sqlalchemy import (
     or_,
     select,
     text,
+    update,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -49,7 +50,11 @@ from memchentic.services.errors import (
     NotFoundError,
     ValidationError,
 )
-from memchentic.services.memory_hygiene import dedup_lock_key, find_near_duplicate
+from memchentic.services.memory_hygiene import (
+    dedup_lock_key,
+    find_near_duplicate,
+    resolve_supersedes_target,
+)
 from memchentic.services.memory_serialize import annotate_rows, digest_from_memory
 from memchentic.services.memory_ttl import (
     active_select,
@@ -174,6 +179,7 @@ async def remember(
     path_hint: str | None = None,
     repo_hint: str | None = None,
     project_id: uuid.UUID | None = None,
+    supersedes_id: uuid.UUID | None = None,
     force: bool = False,
     group: str | None = None,
     visibility: Visibility | None = None,
@@ -181,7 +187,8 @@ async def remember(
     """Create an entry in a space the caller can write to.
 
     Without a space, writes to the caller's personal space (or the named or
-    default shared group).
+    default shared group). Optional ``supersedes_id`` marks another live
+    memory in the same space as replaced (see ``overlap_report.conflicts``).
 
     Returns:
         The new memory.
@@ -218,12 +225,23 @@ async def remember(
                 duplicate_id=str(dup.id),
             )
 
+    resolved_supersedes: uuid.UUID | None = None
+    if supersedes_id is not None:
+        resolved_supersedes = await resolve_supersedes_target(
+            session,
+            principal,
+            supersedes_id=supersedes_id,
+            space_id=space.id,
+            kind=MemoryKind.entry,
+        )
+
     embedder = get_embedder()
     embedding = await embedder.aembed_memory_text(title, body)
     memory = Memory(
         id=uuid.uuid4(),
         space_id=space.id,
         project_id=project_id,
+        supersedes_id=resolved_supersedes,
         kind=MemoryKind.entry,
         entry_type=et,
         title=title.strip(),
@@ -369,12 +387,15 @@ async def revise(
     repo_hint: str | None = None,
     project_id: uuid.UUID | None = None,
     set_project: bool = False,
+    supersedes_id: uuid.UUID | None = None,
+    set_supersedes: bool = False,
     ttl_days: int | None = None,
     permanent: bool = False,
 ) -> Memory:
     """Patch an entry or guide.
 
     Allowed for its creator, the group creator, or an administrator.
+    Pass ``set_supersedes=True`` with ``supersedes_id=None`` to clear the link.
 
     Returns:
         The updated memory.
@@ -433,6 +454,18 @@ async def revise(
         memory.project_id = await require_project_in_space(
             session, principal, project_id, memory.space_id
         )
+    if set_supersedes:
+        if supersedes_id is None:
+            memory.supersedes_id = None
+        else:
+            memory.supersedes_id = await resolve_supersedes_target(
+                session,
+                principal,
+                supersedes_id=supersedes_id,
+                space_id=memory.space_id,
+                kind=memory.kind,
+                self_id=memory.id,
+            )
     if text_changed:
         memory.embedding = await get_embedder().aembed_memory_text(memory.title, memory.body)
     memory.updated_at = datetime.now(UTC)
@@ -608,8 +641,13 @@ async def relocate(
     await require_memory_manage(session, principal, memory)
     target = await resolve_write_space(session, principal, target_space_id)
     left = await async_memory_event_from_row(session, "deleted", memory)
+    # Cross-space links are invalid; drop this row's link and anything pointing here.
+    await session.execute(
+        update(Memory).where(Memory.supersedes_id == memory.id).values(supersedes_id=None)
+    )
     memory.space_id = target.id
     memory.project_id = None
+    memory.supersedes_id = None
     memory.updated_at = datetime.now(UTC)
     memory.updated_by_user_id = principal.user_id
     await publish_memory_event(session, left)

@@ -13,7 +13,11 @@ from memchentic.embeddings import get_embedder
 from memchentic.models.entities import Memory, MemoryKind
 from memchentic.search.hybrid import GUIDE_CONFIDENCE_MAX, Digest, hybrid_search
 from memchentic.services.memories import publish_and_commit
-from memchentic.services.memory_hygiene import dedup_lock_key, find_near_duplicate
+from memchentic.services.memory_hygiene import (
+    dedup_lock_key,
+    find_near_duplicate,
+    resolve_supersedes_target,
+)
 from memchentic.services.memory_ttl import (
     check_lifetime_args,
     resolve_expiry,
@@ -45,6 +49,7 @@ async def guide_write(
     ttl_days: int | None = None,
     permanent: bool = False,
     project_id: uuid.UUID | None = None,
+    supersedes_id: uuid.UUID | None = None,
 ) -> Memory:
     """Create a guide, or reinforce a near-duplicate guide of the caller.
 
@@ -53,6 +58,8 @@ async def guide_write(
     Only guides created by the caller are upsert targets. A title or text
     match on another member's guide creates a separate guide; use ``revise``
     by id (creator, group manager, or admin) to change someone else's guide.
+    Optional ``supersedes_id`` marks another guide in the same space as
+    replaced (see ``overlap_report.conflicts``).
     """
     title = check_title(title)
     body = check_body(body)
@@ -65,6 +72,15 @@ async def guide_write(
     from memchentic.services.projects import require_project_in_space
 
     project_id = await require_project_in_space(session, principal, project_id, space.id)
+    resolved_supersedes: uuid.UUID | None = None
+    if supersedes_id is not None:
+        resolved_supersedes = await resolve_supersedes_target(
+            session,
+            principal,
+            supersedes_id=supersedes_id,
+            space_id=space.id,
+            kind=MemoryKind.guide,
+        )
     explicit_ttl = expires_at is not None or ttl_days is not None or permanent
     # Serialise check-then-write for guides in this space. Postgres releases
     # the lock at the commit below (or at rollback), so overlapping identical
@@ -98,6 +114,9 @@ async def guide_write(
         dup.embedding = await get_embedder().aembed_memory_text(dup.title, dup.body)
         if project_id is not None:
             dup.project_id = project_id
+        # Upsert path: never self-supersede the reinforced guide.
+        if resolved_supersedes is not None and resolved_supersedes != dup.id:
+            dup.supersedes_id = resolved_supersedes
         dup.updated_at = now
         dup.updated_by_user_id = principal.user_id
         return await publish_and_commit(session, principal, dup, "updated")
@@ -106,6 +125,7 @@ async def guide_write(
         id=uuid.uuid4(),
         space_id=space.id,
         project_id=project_id,
+        supersedes_id=resolved_supersedes,
         kind=MemoryKind.guide,
         entry_type=None,
         title=title.strip(),

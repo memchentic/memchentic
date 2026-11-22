@@ -28,6 +28,7 @@ def memory_to_dict(m: Memory, *, full: bool = False) -> dict[str, Any]:
         "id": str(m.id),
         "space_id": str(m.space_id),
         "project_id": str(m.project_id) if m.project_id else None,
+        "supersedes_id": str(m.supersedes_id) if m.supersedes_id else None,
         "kind": m.kind.value,
         "type": m.entry_type.value if m.entry_type else None,
         "title": m.title,

@@ -15,6 +15,7 @@ import { ErrorNote, PageHeader } from "../components/page";
 import { SpaceScopeSelect } from "../memory/MemoryFilters";
 import type { SpaceScope } from "../memory/types";
 import { useApiResource } from "../hooks/useAsyncResource";
+import { useReloadOnMemoryEvents } from "../hooks/useReloadOnMemoryEvents";
 import { CHROME, SERIES, typeFill, kindFill, categoryFill, tooltipStyle } from "./metrics/palette";
 import { ChartCard } from "./metrics/ChartCard";
 import { HorizontalBarChart } from "./metrics/HorizontalBarChart";
@@ -67,10 +68,11 @@ export default function MetricsPage() {
   const [spaceScope, setSpaceScope] = useState<SpaceScope>("");
   const qs = new URLSearchParams({ range });
   if (spaceScope) qs.set("space_scope", spaceScope);
-  const { data, error, loading } = useApiResource<MemoryMetrics>(
+  const { data, error, loading, reload } = useApiResource<MemoryMetrics>(
     `/api/metrics/memories?${qs}`,
     { clearOnError: true },
   );
+  useReloadOnMemoryEvents(reload);
 
   const totals = data?.totals;
   const created = (data?.created_per_day ?? []).map((row) => ({
@@ -93,9 +95,9 @@ export default function MetricsPage() {
       <PageHeader title="Metrics" />
       <div className="page-body">
         <p className="mb-4 text-sm text-muted">
-          Corpus snapshot for memories you can access. The created-over-time chart
+          Live corpus view for memories you can access. The created-over-time chart
           follows the selected window; totals and breakdowns cover the full visible
-          corpus.
+          corpus and refresh when memories change.
         </p>
         <form className="toolbar mb-6" onSubmit={(e) => e.preventDefault()}>
           <label className="field toolbar-field">

@@ -233,3 +233,109 @@ async def test_issue_verification_token_consumes_prior(session: AsyncSession) ->
         second = await issue_verification_token(session, user, send=True)
         await session.commit()
     assert first != second
+
+
+def test_verify_email_rejects_bad_token(client: TestClient) -> None:
+    bad = client.post("/api/auth/verify-email", json={"token": "not-a-real-token"})
+    assert bad.status_code == 400, bad.text
+
+
+def test_resend_verification_is_silent(client: TestClient) -> None:
+    admin = _admin_auth()
+    email = f"resend-{uuid.uuid4().hex[:10]}@example.com"
+    password = "password-ok-12"
+    raw_token: dict[str, str] = {}
+
+    async def _capture_send(session, *, to, token):
+        raw_token["value"] = token
+        return True
+
+    with (
+        patch("memchentic.services.mail.aiosmtplib.send", new_callable=AsyncMock),
+        patch(
+            "memchentic.services.email_verification.send_registration_confirm",
+            new=_capture_send,
+        ),
+    ):
+        assert (
+            client.put(
+                "/api/system/mail",
+                headers=admin,
+                json={"host": "smtp.example.com", "from_address": "noreply@example.com"},
+            ).status_code
+            == 200
+        )
+        assert (
+            client.post(
+                "/api/auth/register",
+                json={"email": email, "password": password},
+            ).status_code
+            == 200
+        )
+        first = raw_token.get("value")
+        assert first
+        raw_token.clear()
+        resend = client.post("/api/auth/resend-verification", json={"email": email})
+        assert resend.status_code == 200, resend.text
+        assert raw_token.get("value") and raw_token["value"] != first
+
+    silent = client.post(
+        "/api/auth/resend-verification",
+        json={"email": f"missing-{uuid.uuid4().hex[:8]}@example.com"},
+    )
+    assert silent.status_code == 200, silent.text
+
+
+async def test_mail_helpers_send_when_configured(session: AsyncSession) -> None:
+    from memchentic.services import mail as mail_service
+
+    await set_mail_settings(
+        session,
+        _ADMIN,
+        host="smtp.example.com",
+        from_address="noreply@example.com",
+        password="secret",
+    )
+    with patch("memchentic.services.mail.aiosmtplib.send", new_callable=AsyncMock) as send:
+        assert await mail_service.send_registration_confirm(
+            session, to="a@example.com", token="tok"
+        )
+        assert await mail_service.send_group_invite(
+            session,
+            to="b@example.com",
+            group_name="Team",
+            inviter_name="Ada",
+            inviter_email="ada@example.com",
+        )
+        assert await mail_service.send_api_key_notice(
+            session, to="c@example.com", action="created"
+        )
+        assert send.await_count == 3
+
+    await set_mail_settings(session, _ADMIN, host="", from_address="")
+    with patch("memchentic.services.mail.aiosmtplib.send", new_callable=AsyncMock) as send:
+        assert (
+            await mail_service.send_email(
+                session, to="x@example.com", subject="s", text_body="b"
+            )
+            is False
+        )
+        send.assert_not_called()
+
+    await set_mail_settings(
+        session,
+        _ADMIN,
+        host="smtp.example.com",
+        from_address="noreply@example.com",
+    )
+    with patch(
+        "memchentic.services.mail.aiosmtplib.send",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("smtp down"),
+    ):
+        assert (
+            await mail_service.send_email(
+                session, to="x@example.com", subject="s", text_body="b"
+            )
+            is False
+        )

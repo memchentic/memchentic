@@ -35,6 +35,13 @@ class SpaceKind(str, enum.Enum):
     group = "group"
 
 
+class SpaceMemberRole(str, enum.Enum):
+    """Role of a member inside a group space (not the instance auth roster)."""
+
+    user = "user"
+    admin = "admin"
+
+
 class MemoryKind(str, enum.Enum):
     """Kind of memory: entry or guide."""
 
@@ -215,6 +222,11 @@ class SpaceMember(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     # NULL = invited, not accepted. Only accepted rows grant access.
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    role: Mapped[SpaceMemberRole] = mapped_column(
+        Enum(SpaceMemberRole, name="space_member_role"),
+        nullable=False,
+        server_default=text("'user'"),
+    )
 
     space: Mapped[Space] = relationship(back_populates="members")
     user: Mapped[User] = relationship(back_populates="memberships")

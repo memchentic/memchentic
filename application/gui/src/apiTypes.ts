@@ -9,6 +9,8 @@ export type SpaceMember = {
   display_name: string | null;
   /** True for an invitation that is not accepted yet; sent to administrators only. */
   pending?: boolean;
+  /** Group roster role: ``user`` (default) or ``admin``. */
+  role?: "user" | "admin";
 };
 
 /** `GET /api/spaces/{id}`. */

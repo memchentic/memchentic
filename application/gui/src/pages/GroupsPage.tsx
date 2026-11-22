@@ -160,6 +160,12 @@ export default function GroupsPage() {
                 {groups.map((t) => {
                   const isCreator = t.created_by === me?.id;
                   const canDelete = !!me?.is_admin || isCreator;
+                  const myRole = me?.memberships.find((m) => m.id === t.id)?.role;
+                  const roleLabel = isCreator
+                    ? "creator"
+                    : myRole === "admin"
+                      ? "admin"
+                      : "user";
                   return (
                     <tr key={t.id} className="cursor-pointer" onClick={() => navigate(`/groups/${t.id}`)}>
                       <td className="font-medium text-ink">
@@ -172,9 +178,7 @@ export default function GroupsPage() {
                         </Link>
                       </td>
                       <td className="text-muted">{t.members.length}</td>
-                      <td className="text-muted">
-                        {me?.is_admin ? "admin" : isCreator ? "creator" : "member"}
-                      </td>
+                      <td className="text-muted">{roleLabel}</td>
                       <td className="table-actions-col">
                         {canDelete && (
                           <button

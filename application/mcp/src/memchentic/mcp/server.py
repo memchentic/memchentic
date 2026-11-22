@@ -171,11 +171,12 @@ async def space_show(space_id: str) -> dict[str, Any]:
     """Show one space you can read: its name, kind, creator and members.
 
     Returns {id, name, kind, created_by, members}; each member is
-    {user_id, email, display_name, pending}. ``pending`` is true for a user
-    who was invited and has not accepted; only an admin sees those rows. Use
-    this tool to see who else can read and write a group before you store
-    something there. Fails with "not_found:" when the space does not exist or
-    you cannot read it.
+    {user_id, email, display_name, pending, role}. ``role`` is ``user`` or
+    ``admin`` (group roster role, not the instance Administrators auth group).
+    ``pending`` is true for a user who was invited and has not accepted; only
+    an instance admin sees those rows. Use this tool to see who else can read
+    and write a group before you store something there. Fails with
+    "not_found:" when the space does not exist or you cannot read it.
     """
     principal = require_principal()
     session = require_session()

@@ -26,7 +26,7 @@ If nothing else is specified, new memories go to **personal**.
 | --- | --- |
 | `space_list` | Lists your personal space and groups |
 | `space_create` | Creates a shared group (you become the creator) |
-| `space_show` | Shows detail and members for a space you can see; fails with `not_found:` for a space you cannot read |
+| `space_show` | Shows detail and members for a space you can see (each member includes `role` of `user` or `admin`); fails with `not_found:` for a space you cannot read |
 
 ## Entries
 

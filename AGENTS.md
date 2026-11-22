@@ -263,6 +263,28 @@ Four version lines exist. They are independent of each other.
 version of that file. `version` in `application/gui/package.json` is used by
 npm only. None of the three is a release number.
 
+### GitHub Release notes
+
+When creating or editing a GitHub Release for an application semver (after
+**Publish App Image**), match the depth of the **1.2.0** notes — not a
+one-line bullet list. Shape:
+
+1. **Summary** — two short paragraphs: what this release rolls up relative to
+   the previous tagged release, plus any standing product invariants that
+   still hold (for example heuristics default, LLM optional, suggest does
+   not write).
+2. **Added** — grouped under `###` headings by theme. Each bullet is
+   **Name** — one to three sentences that say what changed, where it shows
+   up (REST / MCP / GUI / env / Helm), and the behaviour boundary; end with
+   the PR link when one exists.
+3. **Changed** / **Fixed** — same bullet depth when anything non-trivial
+   moved or broke.
+4. **Ops** — a table of PR / docs / website / image tag refs for the
+   surfaces this release ships (app, docs, website image tags included).
+
+Draft from merged PRs and the compare range since the previous tag. Do not
+ship a release body that is only a title plus one sentence per feature.
+
 ## Rules
 
 - ACL never trusts client-supplied user ids; principals come from Bearer JWT,

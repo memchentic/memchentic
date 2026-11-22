@@ -19,7 +19,7 @@ from memchentic.services.spaces import (
     is_group_admin,
     show_space,
 )
-from memchentic.services.validation import check_name, require_uuid
+from memchentic.services.validation import check_name
 
 
 def project_to_dict(project: Project) -> dict[str, Any]:
@@ -197,21 +197,3 @@ async def require_project_in_space(
     if project is None or project.space_id != space_id:
         raise NotFoundError("Project not found")
     return project.id
-
-
-async def resolve_project_id(
-    session: AsyncSession,
-    principal: Principal,
-    *,
-    project_id: str | uuid.UUID | None,
-    space_id: uuid.UUID,
-) -> uuid.UUID | None:
-    """Parse and validate an optional project id for a write or filter."""
-    if project_id is None or project_id == "":
-        return None
-    pid = (
-        project_id
-        if isinstance(project_id, uuid.UUID)
-        else require_uuid(str(project_id), "project_id")
-    )
-    return await require_project_in_space(session, principal, pid, space_id)

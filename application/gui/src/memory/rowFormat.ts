@@ -1,5 +1,24 @@
-import type { Me } from "../auth";
+import { spaceLabel, type Me } from "../auth";
 import type { MemoryRow } from "./types";
+
+/**
+ * Human-readable space for a memory row.
+ *
+ * Prefers API ``space_kind`` / ``space_name`` (always attached on list/open).
+ * Every personal space shows as ``Personal``; groups keep their name.
+ */
+export function formatMemorySpace(
+  row: Pick<MemoryRow, "space_id" | "space_name" | "space_kind">,
+  me: Me | null,
+): string {
+  if (row.space_kind === "personal") return "Personal";
+  if (row.space_kind === "group" && row.space_name) return row.space_name;
+  if (row.space_name && row.space_kind == null) {
+    // Older live events without kind: still show the name when present.
+    return row.space_name;
+  }
+  return spaceLabel(me, row.space_id);
+}
 
 /** Prefer display name, then email, then a short id. */
 export function formatMemoryOwner(

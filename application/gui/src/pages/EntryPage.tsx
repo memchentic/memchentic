@@ -6,8 +6,7 @@ import { api } from "../api";
 import { useAuth } from "../auth";
 import { ENTRY_TYPES, type MemoryRow } from "../memory/types";
 import { ErrorNote, PageHeader } from "../components/page";
-import { canForgetMemory } from "../memory/rowFormat";
-import { useSpaceName } from "../memory/useSpaceName";
+import { canForgetMemory, formatMemorySpace } from "../memory/rowFormat";
 import { formatDateTime } from "../format";
 import { errorMessage } from "../errors";
 
@@ -24,7 +23,6 @@ function draftFromRow(row: MemoryRow) {
 export default function EntryPage() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const spaceName = useSpaceName();
   const { me } = useAuth();
   const [m, setM] = useState<MemoryRow | null>(null);
   const [editing, setEditing] = useState(false);
@@ -145,7 +143,8 @@ export default function EntryPage() {
       <div className="page-body">
         <ErrorNote error={error} />
         <p className="mb-4 text-xs text-faint">
-          {m.kind === "guide" ? `guide · confidence ${m.confidence}` : m.type} · {spaceName(m.space_id) || "—"} · updated{" "}
+          {m.kind === "guide" ? `guide · confidence ${m.confidence}` : m.type} ·{" "}
+          {formatMemorySpace(m, me) || "—"} · updated{" "}
           {formatDateTime(m.updated_at)}
           {m.path_hint && ` · ${m.path_hint}`}
         </p>

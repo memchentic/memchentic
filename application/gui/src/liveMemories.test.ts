@@ -27,6 +27,8 @@ describe("applyMemoryEvent", () => {
       action: "updated",
       id: "m1",
       space_id: "g1",
+      space_name: "Platform",
+      space_kind: "group",
       kind: "entry",
       type: "note",
       title: "New",
@@ -43,5 +45,7 @@ describe("applyMemoryEvent", () => {
     expect(next.title).toBe("New");
     expect(next.created_by_display_name).toBe("User Two");
     expect(next.created_by_email).toBe("u2@example.test");
+    expect(next.space_name).toBe("Platform");
+    expect(next.space_kind).toBe("group");
   });
 });

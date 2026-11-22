@@ -45,8 +45,8 @@ export function writableSpaces(me: Me | null): Me["memberships"] {
 export function spaceLabel(me: Me | null, id: string | null | undefined): string {
   const space = me?.memberships.find((m) => m.id === id);
   if (!space) return "";
-  if (space.kind !== "personal") return space.name;
-  return space.id === me?.personal_space_id ? "Personal" : "Personal (another user)";
+  if (space.kind === "personal") return "Personal";
+  return space.name;
 }
 
 type AuthState = {

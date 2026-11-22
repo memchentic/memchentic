@@ -11,6 +11,8 @@ export type MemoryLiveEvent = {
   action: "created" | "updated" | "deleted";
   id: string;
   space_id: string;
+  space_name?: string | null;
+  space_kind?: string | null;
   kind: string;
   type: string | null;
   title: string;
@@ -44,6 +46,8 @@ function eventToRow(event: MemoryLiveEvent): MemoryRow {
   return {
     id: event.id,
     space_id: event.space_id,
+    space_name: event.space_name ?? undefined,
+    space_kind: event.space_kind ?? undefined,
     kind: event.kind,
     type: event.type,
     title: event.title,

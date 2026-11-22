@@ -8,8 +8,7 @@ import { formatWhen } from "../format";
 import { errorMessage } from "../errors";
 import { ErrorNote } from "../components/page";
 import type { MemoryRow } from "./types";
-import { formatMemoryOwner, distinctSnippet, canForgetMemory } from "./rowFormat";
-import { useSpaceName } from "./useSpaceName";
+import { formatMemoryOwner, formatMemorySpace, distinctSnippet, canForgetMemory } from "./rowFormat";
 
 const TAG_PREVIEW = 6;
 
@@ -24,7 +23,6 @@ export function MemoryList({
 }) {
   const { me } = useAuth();
   const navigate = useNavigate();
-  const spaceName = useSpaceName();
   const showScore = rows.some((m) => m.score !== undefined);
   const [error, setError] = useState<string | null>(null);
   const [forgettingId, setForgettingId] = useState<string | null>(null);
@@ -115,7 +113,7 @@ export function MemoryList({
                     <span className="text-faint">—</span>
                   )}
                 </td>
-                <td className="text-muted">{spaceName(m.space_id) || "—"}</td>
+                <td className="text-muted">{formatMemorySpace(m, me) || "—"}</td>
                 <td className="text-muted whitespace-nowrap">{formatMemoryOwner(m, me)}</td>
                 <td className="text-faint whitespace-nowrap">
                   {formatWhen(m.updated_at ?? m.created_at)}

@@ -19,10 +19,10 @@ from typing import Any, Literal
 from urllib.parse import unquote, urlparse
 
 import asyncpg
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from memchentic.models.entities import Memory
+from memchentic.models.entities import Memory, Space
 from memchentic.search.hybrid import make_snippet
 from memchentic.settings import get_settings
 
@@ -75,6 +75,8 @@ class MemoryEvent:
         created_by: Creator user UUID string when known.
         created_at: ISO timestamp when known.
         updated_at: ISO timestamp when known.
+        space_name: Space display name when known.
+        space_kind: ``personal`` or ``group`` when known.
     """
 
     action: Action
@@ -89,18 +91,28 @@ class MemoryEvent:
     created_by: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
+    space_name: str | None = None
+    space_kind: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize for JSON / NOTIFY payload."""
         return asdict(self)
 
 
-def memory_event_from_row(action: Action, memory: Memory) -> MemoryEvent:
+def memory_event_from_row(
+    action: Action,
+    memory: Memory,
+    *,
+    space_name: str | None = None,
+    space_kind: str | None = None,
+) -> MemoryEvent:
     """Build an event from a persisted memory row.
 
     Args:
         action: Mutation kind.
         memory: SQLAlchemy memory entity (may be expired after delete snapshot).
+        space_name: Optional space name for GUI labels.
+        space_kind: Optional ``personal`` / ``group`` for GUI labels.
 
     Returns:
         A compact ``MemoryEvent``.
@@ -118,7 +130,32 @@ def memory_event_from_row(action: Action, memory: Memory) -> MemoryEvent:
         created_by=str(memory.created_by_user_id) if memory.created_by_user_id else None,
         created_at=memory.created_at.isoformat() if memory.created_at else None,
         updated_at=memory.updated_at.isoformat() if memory.updated_at else None,
+        space_name=space_name,
+        space_kind=space_kind,
     )
+
+
+async def async_memory_event_from_row(
+    session: AsyncSession, action: Action, memory: Memory
+) -> MemoryEvent:
+    """Build an event and attach the owning space name and kind.
+
+    Args:
+        session: Database session (caller's RLS context).
+        action: Mutation kind.
+        memory: Persisted memory row.
+
+    Returns:
+        A ``MemoryEvent`` with ``space_name`` / ``space_kind`` when the space
+        is readable under the current session.
+    """
+    result = await session.execute(
+        select(Space.name, Space.kind).where(Space.id == memory.space_id)
+    )
+    row = result.one_or_none()
+    space_name = row[0] if row else None
+    space_kind = row[1].value if row else None
+    return memory_event_from_row(action, memory, space_name=space_name, space_kind=space_kind)
 
 
 def _connect_kwargs_from_settings() -> dict[str, Any]:

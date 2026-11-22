@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { Me } from "../auth";
-import { canForgetMemory, distinctSnippet, formatMemoryOwner } from "./rowFormat";
+import {
+  canForgetMemory,
+  distinctSnippet,
+  formatMemoryOwner,
+  formatMemorySpace,
+} from "./rowFormat";
 import type { MemoryRow } from "./types";
 
 const member: Me = {
@@ -37,6 +42,32 @@ describe("canForgetMemory", () => {
     expect(canForgetMemory({ space_id: "g3", created_by: "u2" }, member)).toBe(true);
     expect(canForgetMemory({ space_id: "unknown", created_by: "u2" }, member)).toBe(true);
     expect(canForgetMemory({ space_id: "g1", created_by: "u2" }, null)).toBe(false);
+  });
+});
+
+describe("formatMemorySpace", () => {
+  it("shows Personal for every personal space from the API", () => {
+    expect(
+      formatMemorySpace({ space_id: "p2", space_kind: "personal", space_name: "Personal" }, member),
+    ).toBe("Personal");
+    expect(
+      formatMemorySpace({ space_id: "unknown", space_kind: "personal", space_name: "Personal" }, null),
+    ).toBe("Personal");
+  });
+
+  it("shows the group name from the API when memberships lack the space", () => {
+    expect(
+      formatMemorySpace(
+        { space_id: "g-other", space_kind: "group", space_name: "Ops" },
+        member,
+      ),
+    ).toBe("Ops");
+  });
+
+  it("falls back to memberships when the API omitted space labels", () => {
+    expect(formatMemorySpace({ space_id: "g1" }, member)).toBe("Mine");
+    expect(formatMemorySpace({ space_id: "p1" }, member)).toBe("Personal");
+    expect(formatMemorySpace({ space_id: "missing" }, member)).toBe("");
   });
 });
 

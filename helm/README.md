@@ -90,6 +90,9 @@ secrets:
       OAUTH_CLIENT_SECRET:
         key: k8s/memchentic
         property: OAUTH_CLIENT_SECRET
+      SMTP_PASSWORD:
+        key: k8s/memchentic
+        property: SMTP_PASSWORD
 ```
 
 Vault KV v2 path example: `secret/k8s/memchentic`.

@@ -96,12 +96,17 @@ secrets:
       MEMORY_LLM_API_KEY:
         key: k8s/memchentic
         property: MEMORY_LLM_API_KEY
+      MEMORY_DECISION_API_KEY:
+        key: k8s/memchentic
+        property: MEMORY_DECISION_API_KEY
 ```
 
 Vault KV v2 path example: `secret/k8s/memchentic`. Optional
 `MEMORY_LLM_API_KEY` is only needed when using the optional ingest LLM
 (`MEMORY_LLM_PROVIDER` / `MEMORY_LLM_BASE_URL` / `MEMORY_LLM_MODEL` on the
-ConfigMap).
+ConfigMap). Optional `MEMORY_DECISION_API_KEY` is for the System One
+decision gate (`MEMORY_DECISION_BASE_URL` / `MEMORY_DECISION_MODEL` on the
+ConfigMap; Jev hosted or Kev self-hosted).
 
 ### AWS Secrets Manager
 

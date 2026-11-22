@@ -148,6 +148,9 @@ config:
   # https://openrouter.ai/api/v1). Empty disables openai path.
   memoryLlmBaseUrl: ""
   memoryLlmModel: "gpt-4o-mini"
+  # Optional System One decision gate (Jev / Kev). Empty base disables.
+  memoryDecisionBaseUrl: ""
+  memoryDecisionModel: "kev-latest"
   corsOrigins: ""
   logLevel: INFO
   sessionRememberDays: "30"
@@ -193,6 +196,8 @@ secrets:
     SMTP_PASSWORD: ""
     # Optional; required for MEMORY_LLM_PROVIDER=anthropic|google (and most openai hosts).
     MEMORY_LLM_API_KEY: ""
+    # Optional; Bearer for System One (Jev / Kev) when the server requires auth.
+    MEMORY_DECISION_API_KEY: ""
   externalSecret:
     refreshInterval: 1h
     secretStoreRef:
@@ -224,6 +229,9 @@ secrets:
       MEMORY_LLM_API_KEY:
         key: ""
         property: MEMORY_LLM_API_KEY
+      MEMORY_DECISION_API_KEY:
+        key: ""
+        property: MEMORY_DECISION_API_KEY
 
 # Schema migrations. Default: the application applies them on boot and so holds
 # the owner-role password (POSTGRES_PASSWORD) for its whole lifetime.

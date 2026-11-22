@@ -125,6 +125,16 @@ class Settings(BaseSettings):
             return bool(key)
         return False
 
+    # Optional System One decision gate (Jev hosted / Kev self-hosted).
+    # Empty base URL disables the path. Same API for both products.
+    memory_decision_base_url: str = Field(default="", alias="MEMORY_DECISION_BASE_URL")
+    memory_decision_api_key: str = Field(default="", alias="MEMORY_DECISION_API_KEY")
+    memory_decision_model: str = Field(default="kev-latest", alias="MEMORY_DECISION_MODEL")
+
+    def memory_decision_configured(self) -> bool:
+        """Return whether the optional System One decision gate can be attempted."""
+        return bool(self.memory_decision_base_url.strip())
+
     # Default result counts when callers omit ``limit`` (MCP/REST/services).
     search_default_limit: int = Field(default=20, ge=1, alias="SEARCH_DEFAULT_LIMIT")
     browse_default_limit: int = Field(default=50, ge=1, alias="BROWSE_DEFAULT_LIMIT")

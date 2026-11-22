@@ -132,6 +132,9 @@ Used only when callers set `use_llm: true` on ingest suggest. Heuristics work wi
 | `MEMORY_LLM_BASE_URL` | *(empty)* | For `openai`: required chat-completions base (e.g. `https://api.openai.com/v1` or `https://openrouter.ai/api/v1`). Empty disables the openai path. For `anthropic` / `google`: optional override of the public API host |
 | `MEMORY_LLM_API_KEY` | *(empty)* | Provider API key (Bearer for openai; required for anthropic and google) |
 | `MEMORY_LLM_MODEL` | `gpt-4o-mini` | Model id passed to the provider |
+| `MEMORY_DECISION_BASE_URL` | *(empty)* | System One host root for Jev (hosted) or Kev (self-hosted), e.g. `http://kev:8009`. Empty disables the decision gate |
+| `MEMORY_DECISION_API_KEY` | *(empty)* | Bearer token when the System One server requires auth |
+| `MEMORY_DECISION_MODEL` | `kev-latest` | Model id sent in the System One request body |
 
 ## Memory lifetime
 

@@ -13,11 +13,11 @@
 
 ## Built so agents remember what you already learned
 
-Coding agents are brilliant in the moment and amnesiac the next. Every new
-chat relearns your stack, your preferences, the bug you already fixed, and the
-decision you already made. Context windows fill with rediscovery. Humans paste
-the same “remember this” notes into prompts. Groups lose what one person taught
-an agent last week.
+Agents are brilliant in the moment and amnesiac the next — coding assistants,
+support bots, ops copilots, research helpers, and multi-agent products alike.
+Every new session relearns preferences, decisions, and hard-won lessons.
+Context windows fill with rediscovery. Humans paste the same notes into
+prompts. Teams lose what one person taught an agent last week.
 
 **memchentic** is where those lessons live. Agents write durable memory when
 something is verified and worth keeping. They read it back at the start of the
@@ -25,9 +25,9 @@ next job. You keep ownership of the data — self-hosted, multi-user, yours.
 
 ## Continuity without rediscovery
 
-Personal space holds preferences, architecture calls, failed approaches, and
-file-scoped notes across Cursor, Claude, and other MCP clients. Recall before
-you re-investigate. Capture after you prove something, not before.
+Personal space holds preferences, decisions, failed approaches, and domain
+notes across Cursor, Claude, and other MCP clients. Recall before you
+re-investigate. Capture after you prove something, not before.
 
 Optional groups share what belongs to the product, not just one laptop. A small
 web console lets humans browse, search, and manage keys when they want to see

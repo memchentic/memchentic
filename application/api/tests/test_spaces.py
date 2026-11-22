@@ -460,3 +460,110 @@ def test_default_shared_space_must_be_own_group(
     )
     assert denied.status_code == 404
     assert client.get("/api/me", headers=user.headers).json()["default_shared_space_id"] is None
+
+
+def test_group_member_roles_roster_and_permissions(
+    client: TestClient, make_user: Callable[..., RegisteredUser]
+) -> None:
+    """Creator promotes admins; group admins manage users; rename stays creator-only."""
+    owner = make_user()
+    admin_member = make_user()
+    plain = make_user()
+    outsider = make_user()
+    gid = create_group(client, owner.headers)
+    add_group_member(client, owner.headers, gid, admin_member)
+    add_group_member(client, owner.headers, gid, plain)
+
+    detail = client.get(f"/api/spaces/{gid}", headers=owner.headers).json()
+    by_id = {m["user_id"]: m for m in detail["members"]}
+    assert by_id[owner.user_id]["role"] == "admin"
+    assert by_id[admin_member.user_id]["role"] == "user"
+    assert by_id[plain.user_id]["role"] == "user"
+
+    promoted = client.patch(
+        f"/api/spaces/{gid}/members/{admin_member.user_id}",
+        headers=owner.headers,
+        json={"role": "admin"},
+    )
+    assert promoted.status_code == 200, promoted.text
+    assert promoted.json()["role"] == "admin"
+
+    # Group admin cannot promote.
+    assert (
+        client.patch(
+            f"/api/spaces/{gid}/members/{plain.user_id}",
+            headers=admin_member.headers,
+            json={"role": "admin"},
+        ).status_code
+        == 403
+    )
+
+    # Group admin can invite; invite defaults to user after accept.
+    invited = make_user()
+    assert (
+        client.post(
+            f"/api/spaces/{gid}/members",
+            headers=admin_member.headers,
+            json={"user_id": invited.user_id},
+        ).status_code
+        == 200
+    )
+    assert client.post(f"/api/spaces/{gid}/accept", headers=invited.headers).status_code == 200
+    roster = {
+        m["user_id"]: m
+        for m in client.get(f"/api/spaces/{gid}", headers=owner.headers).json()["members"]
+    }
+    assert roster[invited.user_id]["role"] == "user"
+
+    # Group admin can remove a user, not another admin or the creator.
+    assert (
+        client.delete(
+            f"/api/spaces/{gid}/members/{plain.user_id}", headers=admin_member.headers
+        ).status_code
+        == 200
+    )
+    assert (
+        client.delete(
+            f"/api/spaces/{gid}/members/{owner.user_id}", headers=admin_member.headers
+        ).status_code
+        == 403
+    )
+    second_admin = make_user()
+    add_group_member(client, owner.headers, gid, second_admin)
+    assert (
+        client.patch(
+            f"/api/spaces/{gid}/members/{second_admin.user_id}",
+            headers=owner.headers,
+            json={"role": "admin"},
+        ).status_code
+        == 200
+    )
+    assert (
+        client.delete(
+            f"/api/spaces/{gid}/members/{second_admin.user_id}", headers=admin_member.headers
+        ).status_code
+        == 403
+    )
+
+    # Rename and delete stay creator-only.
+    assert (
+        client.patch(
+            f"/api/spaces/{gid}",
+            headers=admin_member.headers,
+            json={"name": f"renamed-{uuid.uuid4().hex[:6]}"},
+        ).status_code
+        == 403
+    )
+    assert client.delete(f"/api/spaces/{gid}", headers=admin_member.headers).status_code == 403
+    assert (
+        client.patch(
+            f"/api/spaces/{gid}/members/{outsider.user_id}",
+            headers=owner.headers,
+            json={"role": "admin"},
+        ).status_code
+        == 404
+    )
+
+    me_owner = client.get("/api/me", headers=owner.headers).json()
+    mine = next(m for m in me_owner["memberships"] if m["id"] == gid)
+    assert mine["role"] == "admin"

@@ -26,7 +26,14 @@ export type Me = {
   personal_space_id?: string | null;
   default_shared_space_id?: string | null;
   // `created_by` is the user id of the space's creator; absent on older servers.
-  memberships: { id: string; name: string; kind: string; created_by?: string | null }[];
+  memberships: {
+    id: string;
+    name: string;
+    kind: string;
+    created_by?: string | null;
+    /** Group roster role when kind is group; personal spaces use admin for the owner. */
+    role?: "user" | "admin" | string;
+  }[];
   pending_invites?: {
     id: string;
     name: string;

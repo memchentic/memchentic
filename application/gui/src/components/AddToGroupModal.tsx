@@ -33,10 +33,14 @@ export function AddToGroupModal({
 
   const candidates = useMemo(() => {
     return (groups ?? [])
-      .filter((t) => me?.is_admin || t.created_by === me?.id)
+      .filter((t) => {
+        if (me?.is_admin || t.created_by === me?.id) return true;
+        const mine = me?.memberships.find((m) => m.id === t.id);
+        return mine?.role === "admin";
+      })
       .filter((t) => !t.members.some((m) => m.user_id === userId))
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [groups, me?.id, me?.is_admin, userId]);
+  }, [groups, me?.id, me?.is_admin, me?.memberships, userId]);
 
   async function addTo(groupId: string) {
     setBusyId(groupId);

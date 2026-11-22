@@ -7,7 +7,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from memchentic.api.schemas import GroupIn, MemberIn
+from memchentic.api.schemas import GroupIn, MemberIn, MemberRoleIn
 from memchentic.auth.principal import Principal
 from memchentic.auth.users import get_user, get_user_by_email
 from memchentic.deps import db_session, get_principal
@@ -123,6 +123,26 @@ async def accept_space_invite(
     """
     space = await space_service.accept_invite(session, principal, space_id)
     return space_service.space_to_dict(space)
+
+
+@router.patch("/spaces/{space_id}/members/{user_id}")
+async def set_member_role(
+    space_id: uuid.UUID,
+    user_id: uuid.UUID,
+    body: MemberRoleIn,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(db_session),
+) -> dict:
+    """Promote or demote a group member (creator or instance administrator).
+
+    Errors: 403 when not allowed, 404 when the space or member does not exist.
+    """
+    member = await space_service.set_member_role(session, principal, space_id, user_id, body.role)
+    return {
+        "user_id": str(member.user_id),
+        "role": member.role.value,
+        "pending": member.accepted_at is None,
+    }
 
 
 @router.delete("/spaces/{space_id}/members/{user_id}")

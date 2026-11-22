@@ -13,9 +13,9 @@ from sqlalchemy.orm import aliased, selectinload
 
 from memchentic.auth.principal import Principal
 from memchentic.db.session import commit_with_rls, set_rls_context
-from memchentic.models.entities import Space, SpaceKind, SpaceMember, User
+from memchentic.models.entities import Space, SpaceKind, SpaceMember, SpaceMemberRole, User
 from memchentic.services import limits
-from memchentic.services.errors import ForbiddenError, NotFoundError
+from memchentic.services.errors import ForbiddenError, NotFoundError, ValidationError
 from memchentic.services.validation import check_name, parse_space_scope
 
 
@@ -227,6 +227,7 @@ def space_detail(space: Space, principal: Principal) -> dict[str, Any]:
                 "email": m.user.email if m.user else None,
                 "display_name": m.user.display_name if m.user else None,
                 "pending": m.accepted_at is None,
+                "role": m.role.value,
             }
             for m in visible_members(space, principal)
         ],
@@ -255,6 +256,13 @@ async def me_payload(
     user = await session.get(User, principal.user_id)
     default_shared = user.default_shared_space_id if user else None
     invites = await list_pending_invites(session, principal)
+    role_rows = await session.execute(
+        select(SpaceMember.space_id, SpaceMember.role).where(
+            SpaceMember.user_id == principal.user_id,
+            SpaceMember.accepted_at.is_not(None),
+        )
+    )
+    roles = {sid: role.value for sid, role in role_rows.all()}
     payload: dict[str, Any] = {
         "default_shared_space_id": str(default_shared) if default_shared else None,
         "id": str(principal.user_id),
@@ -268,6 +276,7 @@ async def me_payload(
             {
                 **space_to_dict(s),
                 "created_by": str(s.created_by_user_id) if s.created_by_user_id else None,
+                "role": roles.get(s.id, SpaceMemberRole.user.value),
             }
             for s in spaces
         ],
@@ -355,10 +364,41 @@ async def list_visible_groups_for_user(
 
 
 def can_manage_group(space: Space, principal: Principal) -> bool:
-    """Return True for an administrator or the group creator."""
+    """Return True for an instance administrator or the group creator.
+
+    Used for rename, delete, and managing other members' memories. Group
+    admins (``SpaceMemberRole.admin``) do not get these powers.
+    """
     if principal.is_admin:
         return True
     return space.created_by_user_id == principal.user_id
+
+
+def can_set_member_role(space: Space, principal: Principal) -> bool:
+    """Return True when the caller may promote or demote group members."""
+    return can_manage_group(space, principal)
+
+
+def _member_role(space: Space, user_id: uuid.UUID | None) -> SpaceMemberRole | None:
+    """Return the accepted membership role for ``user_id``, if any."""
+    if user_id is None:
+        return None
+    for member in space.members:
+        if member.user_id == user_id and member.accepted_at is not None:
+            return member.role
+    return None
+
+
+def is_group_admin(space: Space, principal: Principal) -> bool:
+    """Return True for instance admin, group creator, or accepted group admin."""
+    if can_manage_group(space, principal):
+        return True
+    return _member_role(space, principal.user_id) == SpaceMemberRole.admin
+
+
+def can_manage_roster(space: Space, principal: Principal) -> bool:
+    """Return True when the caller may invite members or remove group users."""
+    return is_group_admin(space, principal)
 
 
 async def require_roster_manager(
@@ -376,13 +416,13 @@ async def require_roster_manager(
 
     Raises:
         NotFoundError: When the group is not visible.
-        ForbiddenError: When the caller is not creator/admin.
+        ForbiddenError: When the caller is not a group admin or creator.
     """
     space = await show_space(session, principal, space_id)
     if not space or space.kind != SpaceKind.group:
         raise NotFoundError("Group not found")
-    if not can_manage_group(space, principal):
-        raise ForbiddenError("Only the group creator or admin can manage membership")
+    if not can_manage_roster(space, principal):
+        raise ForbiddenError("Only a group admin or the creator can manage membership")
     return space
 
 
@@ -421,6 +461,7 @@ async def add_member(
             space_id=space_id,
             user_id=user_id,
             accepted_at=datetime.now(UTC) if user_id == principal.user_id else None,
+            role=SpaceMemberRole.user,
         )
         .on_conflict_do_nothing(index_elements=["space_id", "user_id"])
     )
@@ -542,17 +583,77 @@ async def remove_member(
         return
     if not space or space.kind != SpaceKind.group:
         raise NotFoundError("Group not found")
-    if not leaving_self and not can_manage_group(space, principal):
-        raise ForbiddenError("Only the group creator or admin can manage membership")
     if space.created_by_user_id == user_id:
         raise ForbiddenError("Cannot remove the group creator")
     result = await session.execute(
         select(SpaceMember).where(SpaceMember.space_id == space_id, SpaceMember.user_id == user_id)
     )
     member = result.scalar_one_or_none()
-    if member:
-        await session.delete(member)
-        await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
+    if member is None:
+        return
+    if not leaving_self:
+        if can_manage_group(space, principal):
+            pass
+        elif can_manage_roster(space, principal):
+            if member.role != SpaceMemberRole.user:
+                raise ForbiddenError("Only the group creator can remove a group admin")
+        else:
+            raise ForbiddenError("Only a group admin or the creator can manage membership")
+    await session.delete(member)
+    await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
+
+
+async def set_member_role(
+    session: AsyncSession,
+    principal: Principal,
+    space_id: uuid.UUID,
+    user_id: uuid.UUID,
+    role: str,
+) -> SpaceMember:
+    """Promote or demote a group member. Creator or instance admin only.
+
+    Args:
+        session: Database session.
+        principal: Authenticated caller.
+        space_id: Group space id.
+        user_id: Member whose role changes.
+        role: ``user`` or ``admin``.
+
+    Returns:
+        The updated membership row.
+
+    Raises:
+        NotFoundError: Unknown group or membership.
+        ForbiddenError: Caller may not set roles, or target is the creator.
+        ValidationError: Invalid role value.
+    """
+    try:
+        next_role = SpaceMemberRole(role)
+    except ValueError as exc:
+        raise ValidationError("role must be user or admin") from exc
+    space = await show_space(session, principal, space_id)
+    if not space or space.kind != SpaceKind.group:
+        raise NotFoundError("Group not found")
+    if not can_set_member_role(space, principal):
+        raise ForbiddenError("Only the group creator or an administrator can set roles")
+    if space.created_by_user_id == user_id:
+        raise ForbiddenError("Cannot change the group creator's role")
+    result = await session.execute(
+        select(SpaceMember).where(SpaceMember.space_id == space_id, SpaceMember.user_id == user_id)
+    )
+    member = result.scalar_one_or_none()
+    if member is None or member.accepted_at is None:
+        raise NotFoundError("Member not found")
+    await session.execute(
+        text(
+            "SELECT app_set_space_member_role("
+            ":space_id, :user_id, CAST(:role AS space_member_role))"
+        ),
+        {"space_id": space_id, "user_id": user_id, "role": next_role.value},
+    )
+    await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
+    await session.refresh(member)
+    return member
 
 
 async def rename_space(

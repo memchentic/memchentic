@@ -124,6 +124,12 @@ class MemberIn(BaseModel):
     email: EmailText | None = None
 
 
+class MemberRoleIn(BaseModel):
+    """Request body for promoting or demoting a group member."""
+
+    role: str
+
+
 class ApiKeyIn(BaseModel):
     """Request body for creating an API key."""
 

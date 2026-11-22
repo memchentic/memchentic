@@ -9,6 +9,7 @@ from memchentic.api.routes import (
     events,
     health,
     memories,
+    projects,
     session,
     spaces,
     system,
@@ -21,6 +22,7 @@ api_router.include_router(events.router)
 api_router.include_router(session.router)
 api_router.include_router(users.router)
 api_router.include_router(spaces.router)
+api_router.include_router(projects.router)
 api_router.include_router(memories.router)
 api_router.include_router(api_keys.router)
 api_router.include_router(system.router)

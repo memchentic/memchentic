@@ -173,6 +173,7 @@ async def remember(
     permanent: bool = False,
     path_hint: str | None = None,
     repo_hint: str | None = None,
+    project_id: uuid.UUID | None = None,
     force: bool = False,
     group: str | None = None,
     visibility: Visibility | None = None,
@@ -197,6 +198,9 @@ async def remember(
     space = await resolve_write_space(
         session, principal, space_id, group=group, visibility=visibility
     )
+    from memchentic.services.projects import require_project_in_space
+
+    project_id = await require_project_in_space(session, principal, project_id, space.id)
     et = _parse_entry_type(entry_type)
     expiry = resolve_expiry(expires_at=expires_at, ttl_days=ttl_days, permanent=permanent)
     if not force:
@@ -219,6 +223,7 @@ async def remember(
     memory = Memory(
         id=uuid.uuid4(),
         space_id=space.id,
+        project_id=project_id,
         kind=MemoryKind.entry,
         entry_type=et,
         title=title.strip(),
@@ -362,6 +367,8 @@ async def revise(
     clear_expiry: bool = False,
     path_hint: str | None = None,
     repo_hint: str | None = None,
+    project_id: uuid.UUID | None = None,
+    set_project: bool = False,
     ttl_days: int | None = None,
     permanent: bool = False,
 ) -> Memory:
@@ -420,6 +427,12 @@ async def revise(
         memory.path_hint = path_hint or None
     if repo_hint is not None:
         memory.repo_hint = repo_hint or None
+    if set_project:
+        from memchentic.services.projects import require_project_in_space
+
+        memory.project_id = await require_project_in_space(
+            session, principal, project_id, memory.space_id
+        )
     if text_changed:
         memory.embedding = await get_embedder().aembed_memory_text(memory.title, memory.body)
     memory.updated_at = datetime.now(UTC)
@@ -459,6 +472,7 @@ async def browse(
     offset: int = 0,
     include_expired: bool = False,
     tags: list[str] | None = None,
+    project_id: uuid.UUID | None = None,
 ) -> list[Memory]:
     """List memories in readable spaces, newest first.
 
@@ -482,6 +496,8 @@ async def browse(
         stmt = stmt.where(clause)
     if tags:
         stmt = stmt.where(Memory.tags.contains(tags))
+    if project_id is not None:
+        stmt = stmt.where(Memory.project_id == project_id)
     stmt = stmt.order_by(Memory.updated_at.desc(), Memory.id).limit(limit).offset(offset)
     return list((await session.execute(stmt)).scalars())
 
@@ -593,6 +609,7 @@ async def relocate(
     target = await resolve_write_space(session, principal, target_space_id)
     left = await async_memory_event_from_row(session, "deleted", memory)
     memory.space_id = target.id
+    memory.project_id = None
     memory.updated_at = datetime.now(UTC)
     memory.updated_by_user_id = principal.user_id
     await publish_memory_event(session, left)
@@ -616,6 +633,7 @@ async def find(
     tags: list[str] | None = None,
     path_hint: str | None = None,
     repo_hint: str | None = None,
+    project_id: uuid.UUID | None = None,
     limit: int | None = None,
     offset: int = 0,
     include_expired: bool = False,
@@ -646,6 +664,7 @@ async def find(
         tags=tags,
         path_hint=path_hint,
         repo_hint=repo_hint,
+        project_id=project_id,
         limit=limit,
         offset=offset,
         include_expired=include_expired,
@@ -670,6 +689,7 @@ async def search(
     tags: list[str] | None = None,
     path_hint: str | None = None,
     repo_hint: str | None = None,
+    project_id: uuid.UUID | None = None,
 ) -> list[Digest]:
     """Hybrid search across entries and/or guides for the GUI/REST surface.
 
@@ -694,6 +714,7 @@ async def search(
         tags=tags,
         path_hint=path_hint,
         repo_hint=repo_hint,
+        project_id=project_id,
         limit=limit,
         offset=offset,
         include_expired=include_expired,

@@ -30,6 +30,7 @@ _DIGEST_KEYS = {
     "type",
     "tags",
     "space_id",
+    "project_id",
     "kind",
     "created_by",
     "updated_at",
@@ -38,6 +39,7 @@ _DIGEST_KEYS = {
 _MEMORY_KEYS = {
     "id",
     "space_id",
+    "project_id",
     "kind",
     "type",
     "title",
@@ -61,6 +63,11 @@ _CONTRACT: dict[str, tuple[set[str], set[str]]] = {
     "space_list": (set(), set()),
     "space_create": ({"name"}, {"name"}),
     "space_show": ({"space_id"}, {"space_id"}),
+    "project_list": ({"space_id"}, set()),
+    "project_create": ({"space_id", "name"}, {"space_id", "name"}),
+    "project_show": ({"id"}, {"id"}),
+    "project_rename": ({"id", "name"}, {"id", "name"}),
+    "project_delete": ({"id"}, {"id"}),
     "remember": (
         {
             "title",
@@ -73,6 +80,7 @@ _CONTRACT: dict[str, tuple[set[str], set[str]]] = {
             "permanent",
             "path_hint",
             "repo_hint",
+            "project_id",
             "force",
             "group",
             "visibility",
@@ -163,6 +171,8 @@ _READ_ONLY_TOOLS = {
     "me",
     "space_list",
     "space_show",
+    "project_list",
+    "project_show",
     "find",
     "guide_find",
     "open",
@@ -173,7 +183,7 @@ _READ_ONLY_TOOLS = {
     "trace",
     "overlap_report",
 }
-_DESTRUCTIVE_TOOLS = {"guide_write", "revise", "relocate", "forget"}
+_DESTRUCTIVE_TOOLS = {"guide_write", "revise", "relocate", "forget", "project_delete"}
 
 
 def _user(client: TestClient) -> tuple[str, str, str]:

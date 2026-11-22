@@ -212,6 +212,7 @@ class Digest:
     created_at: str | None = None
     path_hint: str | None = None
     repo_hint: str | None = None
+    project_id: str | None = None
 
 
 def make_snippet(body: str | None, limit: int = 180) -> str:
@@ -261,6 +262,7 @@ async def hybrid_search(
     tags: list[str] | None = None,
     path_hint: str | None = None,
     repo_hint: str | None = None,
+    project_id: uuid.UUID | None = None,
     limit: int | None = None,
     offset: int = 0,
     include_expired: bool = False,
@@ -312,6 +314,8 @@ async def hybrid_search(
         base_filters.append(Memory.repo_hint.ilike(f"%{escape_ilike(repo_hint)}%", escape="\\"))
     if tags:
         base_filters.append(Memory.tags.contains(tags))
+    if project_id is not None:
+        base_filters.append(Memory.project_id == project_id)
 
     # Vector branch. pgvector cosine_distance = 1 - cosine_similarity, and the
     # embeddings are unit vectors, so "similarity >= floor" is
@@ -415,6 +419,7 @@ async def hybrid_search(
                 created_at=m.created_at.isoformat() if m.created_at else None,
                 path_hint=m.path_hint,
                 repo_hint=m.repo_hint,
+                project_id=str(m.project_id) if m.project_id else None,
             )
         )
     return digests

@@ -93,9 +93,15 @@ secrets:
       SMTP_PASSWORD:
         key: k8s/memchentic
         property: SMTP_PASSWORD
+      MEMORY_LLM_API_KEY:
+        key: k8s/memchentic
+        property: MEMORY_LLM_API_KEY
 ```
 
-Vault KV v2 path example: `secret/k8s/memchentic`.
+Vault KV v2 path example: `secret/k8s/memchentic`. Optional
+`MEMORY_LLM_API_KEY` is only needed when using the optional ingest LLM
+(`MEMORY_LLM_PROVIDER` / `MEMORY_LLM_BASE_URL` / `MEMORY_LLM_MODEL` on the
+ConfigMap).
 
 ### AWS Secrets Manager
 

@@ -122,6 +122,17 @@ lists by rank, and then multiplies each hit by the factors below.
 | `NEAR_DUP_CANDIDATES` | `5` | Number of nearest memories checked for a near-duplicate on write |
 | `OVERLAP_SCAN_LIMIT` | `2000` | Maximum number of memories that `overlap_report` compares |
 
+## Optional LLM ingest
+
+Used only when callers set `use_llm: true` on ingest suggest. Heuristics work without these.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `MEMORY_LLM_PROVIDER` | `openai` | `openai` (OpenAI-compatible `/chat/completions`, including OpenRouter), `anthropic`, or `google` |
+| `MEMORY_LLM_BASE_URL` | *(empty)* | For `openai`: required chat-completions base (e.g. `https://api.openai.com/v1` or `https://openrouter.ai/api/v1`). Empty disables the openai path. For `anthropic` / `google`: optional override of the public API host |
+| `MEMORY_LLM_API_KEY` | *(empty)* | Provider API key (Bearer for openai; required for anthropic and google) |
+| `MEMORY_LLM_MODEL` | `gpt-4o-mini` | Model id passed to the provider |
+
 ## Memory lifetime
 
 | Variable | Default | Meaning |

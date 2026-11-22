@@ -12,8 +12,6 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-import httpx
-
 from memchentic.models.entities import EntryType, MemoryKind
 from memchentic.services import limits
 from memchentic.services.errors import ValidationError
@@ -759,71 +757,39 @@ async def llm_suggest_candidates(
     text: str,
     messages: list[dict[str, str]] | None = None,
 ) -> list[dict[str, Any]] | None:
-    """Optional OpenAI-compatible chat completion for ingest candidates.
+    """Optional multi-provider chat completion for ingest candidates.
 
     Returns:
-        Post-filtered candidate list, or ``None`` when ``MEMORY_LLM_BASE_URL``
-        is unset or the request fails.
+        Post-filtered candidate list, or ``None`` when the LLM path is not
+        configured or the request fails. Providers: openai-compatible,
+        anthropic, google (see ``MEMORY_LLM_PROVIDER``).
     """
-    settings = get_settings()
-    base = settings.memory_llm_base_url.strip()
-    if not base:
+    from memchentic.services.memory_llm import complete_json_array
+
+    if not get_settings().memory_llm_configured():
         return None
-    msgs = _validate_messages(messages)
-    prompt_messages = list(msgs)
-    payload_text = text if not msgs else _transcript_from_messages(msgs)
-    prompt_messages.append(
-        {
-            "role": "user",
-            "content": (
-                "Extract durable memory candidates as JSON array. Each object "
-                'has keys kind ("entry"|"guide"), title, body, and optional '
-                "entry_type, tags.\n\n"
-                f"{payload_text}"
-            ),
-        }
-    )
-    url = f"{base.rstrip('/')}/chat/completions"
-    headers: dict[str, str] = {"Content-Type": "application/json"}
-    if settings.memory_llm_api_key.strip():
-        headers["Authorization"] = f"Bearer {settings.memory_llm_api_key.strip()}"
-    payload = {
-        "model": settings.memory_llm_model,
-        "messages": prompt_messages,
-        "temperature": 0.2,
-    }
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(url, headers=headers, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-        content = data["choices"][0]["message"]["content"]
-        # Allow fenced JSON from models.
-        content_s = content.strip()
-        if content_s.startswith("```"):
-            content_s = re.sub(r"^```(?:json)?\s*", "", content_s)
-            content_s = re.sub(r"\s*```$", "", content_s)
-        parsed = json.loads(content_s)
-        if not isinstance(parsed, list):
-            return None
-        normalized: list[Candidate] = []
-        for item in parsed:
-            if isinstance(item, dict):
-                row = _normalize_llm_row(item)
-                if row is not None:
-                    normalized.append(row)
-        if not normalized:
-            return None
-        return post_process_candidates(normalized)
-    except (
-        httpx.HTTPError,
-        KeyError,
-        json.JSONDecodeError,
-        TypeError,
-        ValueError,
-        ValidationError,
-    ):
+        msgs = _validate_messages(messages)
+    except ValidationError:
         return None
+    payload_text = text if not msgs else _transcript_from_messages(msgs)
+    prompt = (
+        "Extract durable memory candidates as JSON array. Each object "
+        'has keys kind ("entry"|"guide"), title, body, and optional '
+        "entry_type, tags.\n\n"
+        f"{payload_text}"
+    )
+    parsed = await complete_json_array(prompt, messages=msgs or None)
+    if not parsed:
+        return None
+    normalized: list[Candidate] = []
+    for item in parsed:
+        row = _normalize_llm_row(item)
+        if row is not None:
+            normalized.append(row)
+    if not normalized:
+        return None
+    return post_process_candidates(normalized)
 
 
 async def suggest_candidates(

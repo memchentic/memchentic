@@ -295,9 +295,12 @@ async def ingest_suggest(
     _: Principal = Depends(get_principal),
 ) -> dict:
     """Suggest memory candidates from prose (heuristic or optional LLM)."""
+    messages = (
+        [{"role": m.role, "content": m.content} for m in body.messages] if body.messages else None
+    )
     candidates = await memory_ingest.suggest_candidates(
         body.text,
-        messages=body.messages,
+        messages=messages,
         use_llm=body.use_llm,
     )
     return {"candidates": candidates}

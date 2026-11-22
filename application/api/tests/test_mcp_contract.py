@@ -191,7 +191,7 @@ _CONTRACT: dict[str, tuple[set[str], set[str]]] = {
         },
         set(),
     ),
-    "ingest_suggest": ({"text", "use_llm"}, {"text"}),
+    "ingest_suggest": ({"text", "use_llm", "messages"}, {"text"}),
 }
 _READ_ONLY_TOOLS = {
     "me",

@@ -9,21 +9,23 @@
 
 ## The problem
 
-AI coding assistants are powerful in the moment and forgetful the next. They
-lose the preferences you already explained, the decisions your team already
-made, and the hard-won lessons from last week's bug hunt. You end up repeating
-yourself, pasting the same context into every chat, and watching the agent
-reinvent choices you thought were settled.
+Agentic assistants — in support, operations, research, or software work — are
+powerful in the moment and forgetful the next. They lose the preferences you
+already explained, the decisions your team already made, and the hard-won
+lessons from last week's incident or review. You end up repeating yourself,
+pasting the same context into every chat, and watching the agent reinvent
+choices you thought were settled.
 
-Shared work makes it worse. One person's "how we do auth here" never reaches
-the next person's session. There is no durable place for *your* memory and
-*your team's* memory that agents can actually use.
+Shared work makes it worse. One person's runbook or "how we handle this"
+never reaches the next person's session. There is no durable place for *your*
+memory and *your team's* memory that agents can actually use.
 
 ## How Memchentic solves it
 
-Memchentic is a self-hosted memory service built for agentic work. You run it.
-Your agents connect to it. They remember what matters, find it again later, and
-respect who is allowed to see what.
+Memchentic is a self-hosted memory service for any agentic workflow. You run
+it. Your agents connect to it. They remember what matters, find it again later,
+and respect who is allowed to see what — whether the job is coding, triage,
+research, or internal ops.
 
 Personal memory stays private to you. Optional groups let a team share a
 collection without turning every note into a free-for-all. A web UI is there
@@ -90,13 +92,21 @@ The tool set is deliberately small and obvious:
 - **Find, browse, and open** — search or list, then load the full text
   (opens include recent recall history)
 - **Guides** — capture and retrieve standing advice with confidence over time
-- **Path-aware recall** — “what do we know about this part of the codebase?”
-- **Hygiene** — spot conflicts, near-duplicates, and soon-to-expire items;
-  resolve them by hand or with admin automation
+- **Path-aware recall** — “what do we know about this topic, path, or
+  workspace?” (`about_path` when a location hint helps)
+- **History and feedback** — list field-level revisions (`history`); record
+  usefulness signals (`feedback`) that gently steer search ranking
+- **Export and ingest** — bounded full-row export (`export`); split prose into
+  candidates without writing (`ingest_suggest`), then confirm in the UI or
+  with `remember`
+- **Hygiene** — conflicts, near-duplicates, consolidation proposals, and
+  soon-to-expire items; resolve by hand or with admin automation
+- **Integrations** — mutation webhooks for downstream runtimes (System
+  Settings); optional LLM-backed ingest when `MEMORY_LLM_*` is configured
 
-A small set on purpose — enough to remember and find things, not a sprawling
-tool catalog. The web UI also has **Metrics** for corpus and retrieval
-charts over the spaces you can read.
+A small set on purpose — enough to remember, audit, and find things, not a
+sprawling tool catalog. The web UI also has **Metrics** for corpus and
+retrieval charts over the spaces you can read.
 
 ## Why people adopt it
 

@@ -100,9 +100,30 @@ class Settings(BaseSettings):
     search_usage_decay_half_life_days: float = Field(
         default=30.0, gt=0, alias="SEARCH_USAGE_DECAY_HALF_LIFE_DAYS"
     )
+    # Optional ingest LLM (use_llm). openai = OpenAI-compatible (/chat/completions),
+    # including OpenRouter and local gateways. anthropic / google use their APIs.
+    memory_llm_provider: Literal["openai", "anthropic", "google"] = Field(
+        default="openai", alias="MEMORY_LLM_PROVIDER"
+    )
     memory_llm_base_url: str = Field(default="", alias="MEMORY_LLM_BASE_URL")
     memory_llm_api_key: str = Field(default="", alias="MEMORY_LLM_API_KEY")
     memory_llm_model: str = Field(default="gpt-4o-mini", alias="MEMORY_LLM_MODEL")
+
+    def memory_llm_configured(self) -> bool:
+        """Return whether the optional memory LLM path can be attempted.
+
+        ``openai`` needs a non-empty base URL (API key optional for some local
+        servers). ``anthropic`` and ``google`` need a non-empty API key (public
+        API hosts are used when base URL is empty).
+        """
+        provider = self.memory_llm_provider
+        key = self.memory_llm_api_key.strip()
+        base = self.memory_llm_base_url.strip()
+        if provider == "openai":
+            return bool(base)
+        if provider in ("anthropic", "google"):
+            return bool(key)
+        return False
 
     # Default result counts when callers omit ``limit`` (MCP/REST/services).
     search_default_limit: int = Field(default=20, ge=1, alias="SEARCH_DEFAULT_LIMIT")

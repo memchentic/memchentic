@@ -142,6 +142,12 @@ config:
   memoryTtlExtendDays: "90"
   memoryTtlTouchDebounceHours: "6"
   memoryMaxTtlDays: "730"
+  # Optional ingest LLM (use_llm). openai | anthropic | google.
+  memoryLlmProvider: "openai"
+  # OpenAI-compatible base (required for provider openai; OpenRouter example:
+  # https://openrouter.ai/api/v1). Empty disables openai path.
+  memoryLlmBaseUrl: ""
+  memoryLlmModel: "gpt-4o-mini"
   corsOrigins: ""
   logLevel: INFO
   sessionRememberDays: "30"
@@ -185,6 +191,8 @@ secrets:
     OAUTH_CLIENT_SECRET: ""
     # Optional; first-boot SMTP password (afterwards System Settings → Mail).
     SMTP_PASSWORD: ""
+    # Optional; required for MEMORY_LLM_PROVIDER=anthropic|google (and most openai hosts).
+    MEMORY_LLM_API_KEY: ""
   externalSecret:
     refreshInterval: 1h
     secretStoreRef:
@@ -213,6 +221,9 @@ secrets:
       SMTP_PASSWORD:
         key: ""
         property: SMTP_PASSWORD
+      MEMORY_LLM_API_KEY:
+        key: ""
+        property: MEMORY_LLM_API_KEY
 
 # Schema migrations. Default: the application applies them on boot and so holds
 # the owner-role password (POSTGRES_PASSWORD) for its whole lifetime.

@@ -221,6 +221,7 @@ def test_schedule_webhook_creates_task(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.asyncio
 async def test_ingest_llm_success_and_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MEMORY_LLM_PROVIDER", "openai")
     monkeypatch.setenv("MEMORY_LLM_BASE_URL", "https://llm.example.test/v1")
     monkeypatch.setenv("MEMORY_LLM_API_KEY", "k")
     monkeypatch.setenv("MEMORY_LLM_MODEL", "test-model")
@@ -256,12 +257,12 @@ async def test_ingest_llm_success_and_fallback(monkeypatch: pytest.MonkeyPatch) 
     mock_client.post = AsyncMock(return_value=_Resp())
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
-    with patch("memchentic.services.memory_ingest.httpx.AsyncClient", return_value=mock_client):
+    with patch("memchentic.services.memory_llm.httpx.AsyncClient", return_value=mock_client):
         rows = await memory_ingest.suggest_candidates("x", use_llm=True)
     assert rows[0]["title"] == "LLM pref"
 
     mock_client.post = AsyncMock(side_effect=httpx.HTTPError("boom"))
-    with patch("memchentic.services.memory_ingest.httpx.AsyncClient", return_value=mock_client):
+    with patch("memchentic.services.memory_llm.httpx.AsyncClient", return_value=mock_client):
         fallback = await memory_ingest.suggest_candidates(
             "## Policy\n\nAlways confirm identity.\n",
             use_llm=True,
@@ -272,6 +273,7 @@ async def test_ingest_llm_success_and_fallback(monkeypatch: pytest.MonkeyPatch) 
 
 @pytest.mark.asyncio
 async def test_ingest_llm_skipped_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MEMORY_LLM_PROVIDER", "openai")
     monkeypatch.setenv("MEMORY_LLM_BASE_URL", "")
     from memchentic.settings import get_settings
 

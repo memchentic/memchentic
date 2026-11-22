@@ -227,6 +227,7 @@ def test_rest_ingest_suggest(client: TestClient) -> None:
 
 @pytest.mark.asyncio
 async def test_llm_post_filters_junk(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MEMORY_LLM_PROVIDER", "openai")
     monkeypatch.setenv("MEMORY_LLM_BASE_URL", "https://llm.example.test/v1")
     monkeypatch.setenv("MEMORY_LLM_API_KEY", "k")
     monkeypatch.setenv("MEMORY_LLM_MODEL", "test-model")
@@ -268,7 +269,7 @@ async def test_llm_post_filters_junk(monkeypatch: pytest.MonkeyPatch) -> None:
     mock_client.post = AsyncMock(return_value=_Resp())
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
-    with patch("memchentic.services.memory_ingest.httpx.AsyncClient", return_value=mock_client):
+    with patch("memchentic.services.memory_llm.httpx.AsyncClient", return_value=mock_client):
         rows = await memory_ingest.suggest_candidates("x", use_llm=True)
     get_settings.cache_clear()
     assert rows
@@ -282,6 +283,7 @@ async def test_llm_post_filters_junk(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_llm_http_error_falls_back_to_heuristic(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("MEMORY_LLM_PROVIDER", "openai")
     monkeypatch.setenv("MEMORY_LLM_BASE_URL", "https://llm.example.test/v1")
     from memchentic.settings import get_settings
 
@@ -290,7 +292,7 @@ async def test_llm_http_error_falls_back_to_heuristic(
     mock_client.post = AsyncMock(side_effect=httpx.HTTPError("boom"))
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
-    with patch("memchentic.services.memory_ingest.httpx.AsyncClient", return_value=mock_client):
+    with patch("memchentic.services.memory_llm.httpx.AsyncClient", return_value=mock_client):
         fallback = await memory_ingest.suggest_candidates(
             "## Policy\n\nWhen identity is unsure, always confirm before changing billing.\n",
             use_llm=True,

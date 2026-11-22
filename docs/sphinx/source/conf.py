@@ -21,6 +21,7 @@ exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 html_theme = "sphinx_rtd_theme"
 html_show_sphinx = False
 html_title = "Memchentic Docs"
+html_baseurl = "https://docs.memchentic.ai/"
 html_static_path = ["_static"]
 html_css_files = ["custom.css"]
 html_js_files = ["sidebar-scroll.js"]
@@ -31,6 +32,9 @@ html_theme_options = {
     # The theme scrolls the menu by the same amount as the page.
     "sticky_navigation": False,
 }
+# Open Graph / Twitter tags live in _templates/layout.html (extrahead).
+# Sphinx html_meta emits name= attributes and RTD does not surface them
+# reliably for social crawlers.
 
 pygments_style = "native"
 

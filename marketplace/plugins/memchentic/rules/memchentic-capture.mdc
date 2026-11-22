@@ -46,6 +46,7 @@ when established; do not save every intermediate step.
   (catch-all; do not default to it).
 - Reusable “when X, do Y / avoid Z” advice → `guide_write`. An insight that
   is both a fact and a standing rule → write both.
+- Never pass `confidence` on writes — digests return it; the server owns it.
 - On a near-duplicate refusal from `remember`: `open` the id named in the
   error. If it covers the same insight, `revise` it when it is yours and
   otherwise leave it. Pass `force: true` only when the two memories are

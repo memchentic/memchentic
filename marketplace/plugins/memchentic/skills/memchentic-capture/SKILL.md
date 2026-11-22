@@ -117,6 +117,11 @@ JWT** for normal agent sessions — admin list/search is instance-wide.
 - `tags`, `ttl_days` / `permanent` / `expires_at` — optional on `remember`
   and `guide_write` (pass at most one of the three); `revise` takes the same
   three or `clear_expiry`.
+- **Not a write arg:** `confidence` — digests and `open` return it; do not
+  echo it into `remember` / `guide_write` / `revise`. Entries always start at
+  1.0; guide confidence rises only when `guide_write` re-teaches your own
+  matching guide (capped at 5). Extra kwargs fail FastMCP/Pydantic validation
+  (`unexpected_keyword_argument`) before the tool body runs.
 
 ## Refuse
 

@@ -102,7 +102,8 @@ The tool set is deliberately small and obvious:
 - **Hygiene** — conflicts, near-duplicates, consolidation proposals, and
   soon-to-expire items; resolve by hand or with admin automation
 - **Integrations** — mutation webhooks for downstream runtimes (System
-  Settings); optional LLM-backed ingest when `MEMORY_LLM_*` is configured
+  Settings); optional LLM propose (`MEMORY_LLM_*`) and optional System One
+  decision scoring (`MEMORY_DECISION_*`, Jev/Kev-compatible) on ingest suggest
 
 A small set on purpose — enough to remember, audit, and find things, not a
 sprawling tool catalog. The web UI also has **Metrics** for corpus and

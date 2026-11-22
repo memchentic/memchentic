@@ -159,6 +159,13 @@ config:
   # bound, nobody else is admitted and this value is ignored.
   # First-boot value only; afterwards System Settings is the source of truth.
   registerEnabled: "true"
+  # Outbound mail (SMTP). Empty smtpHost or smtpFrom disables email.
+  # First-boot values only; afterwards System Settings → Mail.
+  smtpHost: ""
+  smtpPort: "587"
+  smtpUsername: ""
+  smtpFrom: ""
+  smtpUseTls: "true"
   enableApiDocs: "false"
 
 # Secret modes (exactly one):
@@ -176,6 +183,8 @@ secrets:
     # 32+ chars; encrypts signing keys stored in Postgres. Losing it invalidates them.
     ENCRYPTION_KEY: ""
     OAUTH_CLIENT_SECRET: ""
+    # Optional; first-boot SMTP password (afterwards System Settings → Mail).
+    SMTP_PASSWORD: ""
   externalSecret:
     refreshInterval: 1h
     secretStoreRef:
@@ -201,6 +210,9 @@ secrets:
       OAUTH_CLIENT_SECRET:
         key: ""
         property: OAUTH_CLIENT_SECRET
+      SMTP_PASSWORD:
+        key: ""
+        property: SMTP_PASSWORD
 
 # Schema migrations. Default: the application applies them on boot and so holds
 # the owner-role password (POSTGRES_PASSWORD) for its whole lifetime.

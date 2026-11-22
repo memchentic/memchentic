@@ -73,6 +73,11 @@ class User(Base):
     provider: Mapped[str] = mapped_column(String(64), nullable=False, default="internal")
     provider_subject: Mapped[str] = mapped_column(String(255), nullable=False)
     display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # True once the address is confirmed (or when mail was off at register /
+    # the user was created by an admin / an IdP asserted verification).
+    email_verified: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
     default_shared_space_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey(
@@ -433,3 +438,18 @@ class InstanceSetting(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class EmailVerificationToken(Base):
+    """A single-use registration confirmation token (stored hashed)."""
+
+    __tablename__ = "email_verification_tokens"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    token_hash: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

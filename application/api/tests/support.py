@@ -163,6 +163,24 @@ def restore_shared_rows() -> None:
                 "WHERE key = 'register_enabled' AND value <> :value",
                 {"value": register},
             ),
+            # Clear SMTP so tests that enable mail do not leak into others.
+            (
+                "UPDATE instance_settings SET value = '' "
+                "WHERE key IN ("
+                "'smtp_host', 'smtp_username', 'smtp_password', 'smtp_from'"
+                ") AND value <> ''",
+                {},
+            ),
+            (
+                "UPDATE instance_settings SET value = '587' "
+                "WHERE key = 'smtp_port' AND value <> '587'",
+                {},
+            ),
+            (
+                "UPDATE instance_settings SET value = 'true' "
+                "WHERE key = 'smtp_use_tls' AND value <> 'true'",
+                {},
+            ),
             (
                 "UPDATE auth_groups SET idp_group_id = NULL, idp_group_name = NULL "
                 "WHERE idp_group_id IS NOT NULL",

@@ -8,12 +8,18 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from memchentic.api.schemas import AuthGroupIdpBindIn, AuthGroupMemberIn, RegistrationSettingIn
+from memchentic.api.schemas import (
+    AuthGroupIdpBindIn,
+    AuthGroupMemberIn,
+    MailSettingIn,
+    RegistrationSettingIn,
+)
 from memchentic.auth.idp_groups import list_idp_groups
 from memchentic.auth.principal import Principal
 from memchentic.deps import db_session, get_principal
 from memchentic.services import auth_groups as auth_group_service
 from memchentic.services import instance_settings as instance_settings_service
+from memchentic.services.mail import send_test_email
 from memchentic.services.validation import require_uuid
 from memchentic.settings import get_settings
 
@@ -40,6 +46,57 @@ async def put_registration_setting(
     """Admin: enable or disable public self-registration."""
     enabled = await instance_settings_service.set_register_enabled(session, principal, body.enabled)
     return {"enabled": enabled}
+
+
+@router.get("/system/mail")
+async def get_mail_setting(
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(db_session),
+) -> dict[str, Any]:
+    """Admin: outbound SMTP settings (password never returned)."""
+    if not principal.is_admin:
+        raise HTTPException(403, "Administrators only")
+    return await instance_settings_service.mail_settings_public(session)
+
+
+@router.put("/system/mail")
+async def put_mail_setting(
+    body: MailSettingIn,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(db_session),
+) -> dict[str, Any]:
+    """Admin: update outbound SMTP settings."""
+    password = body.password
+    if password == "" and not body.clear_password:
+        password = None
+    return await instance_settings_service.set_mail_settings(
+        session,
+        principal,
+        host=body.host,
+        port=body.port,
+        username=body.username,
+        password=password,
+        clear_password=body.clear_password,
+        from_address=body.from_address,
+        use_tls=body.use_tls,
+    )
+
+
+@router.post("/system/mail/test")
+async def send_mail_test(
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(db_session),
+) -> dict[str, str]:
+    """Admin: send a test message to the caller's email address."""
+    if not principal.is_admin:
+        raise HTTPException(403, "Administrators only")
+    if not principal.email:
+        raise HTTPException(400, "Administrator has no email address")
+    try:
+        await send_test_email(session, to=principal.email)
+    except Exception as exc:
+        raise HTTPException(400, f"Mail test failed: {exc}") from exc
+    return {"status": "sent", "to": principal.email}
 
 
 @router.get("/auth-groups")

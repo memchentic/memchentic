@@ -112,6 +112,15 @@ class Settings(BaseSettings):
     enable_api_docs: bool = Field(default=False, alias="ENABLE_API_DOCS")
     allow_hash_embeddings: bool = Field(default=False, alias="ALLOW_HASH_EMBEDDINGS")
 
+    # Outbound mail. Empty SMTP_HOST (or SMTP_FROM) means mail is disabled.
+    # First-boot values only; afterwards System Settings owns the rows.
+    smtp_host: str = Field(default="", alias="SMTP_HOST")
+    smtp_port: int = Field(default=587, ge=1, le=65535, alias="SMTP_PORT")
+    smtp_username: str = Field(default="", alias="SMTP_USERNAME")
+    smtp_password: str = Field(default="", alias="SMTP_PASSWORD")
+    smtp_from: str = Field(default="", alias="SMTP_FROM")
+    smtp_use_tls: bool = Field(default=True, alias="SMTP_USE_TLS")
+
     @field_validator("log_level", mode="before")
     @classmethod
     def _normalize_log_level(cls, value: object) -> object:

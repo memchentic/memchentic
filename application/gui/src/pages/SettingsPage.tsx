@@ -1,10 +1,11 @@
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faToggleOn, faUserGroup } from "@fortawesome/free-solid-svg-icons";
+import { faEnvelope, faToggleOn, faUserGroup } from "@fortawesome/free-solid-svg-icons";
 import { Navigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth";
 import { PageHeader } from "../components/page";
 import { RegistrationPanel } from "./settings/RegistrationPanel";
 import { AuthGroupsPanel } from "./settings/AuthGroupsPanel";
+import { MailPanel } from "./settings/MailPanel";
 
 const CATEGORIES = [
   {
@@ -16,6 +17,11 @@ const CATEGORIES = [
     id: "registration",
     label: "Registration",
     icon: faToggleOn,
+  },
+  {
+    id: "mail",
+    label: "Mail",
+    icon: faEnvelope,
   },
 ] as const;
 
@@ -61,6 +67,11 @@ export default function SettingsPage() {
           {category === "registration" ? (
             <div key="registration" className="settings-main-pane">
               <RegistrationPanel />
+            </div>
+          ) : null}
+          {category === "mail" ? (
+            <div key="mail" className="settings-main-pane">
+              <MailPanel />
             </div>
           ) : null}
         </section>

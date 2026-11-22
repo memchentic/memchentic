@@ -15,6 +15,7 @@ from memchentic.auth.tokens import hash_token, verify_access_token
 from memchentic.auth.users import get_user_by_email, get_user_by_provider_subject
 from memchentic.models.entities import User
 from memchentic.services.auth_roster import ensure_auth_groups, user_is_administrator
+from memchentic.services.email_verification import must_confirm_email
 from memchentic.services.users import ensure_admin_user, upsert_oauth_user
 from memchentic.settings import Settings, get_settings
 
@@ -66,6 +67,9 @@ async def resolve_bearer(
         )
     ).first()
     if key_row:
+        key_user = await session.get(User, key_row.user_id)
+        if key_user is not None and await must_confirm_email(session, key_user):
+            return None
         return Principal(
             user_id=key_row.user_id,
             email=key_row.email,
@@ -109,6 +113,8 @@ async def resolve_bearer(
                 session, payload, provider=provider, subject=sub
             )
     if not user:
+        return None
+    if await must_confirm_email(session, user):
         return None
     return Principal(
         user_id=user.id,

@@ -191,3 +191,32 @@ class RegistrationSettingIn(BaseModel):
     """Request body for turning self-registration on or off."""
 
     enabled: bool
+
+
+class MailSettingIn(BaseModel):
+    """Request body for updating outbound mail (SMTP) System Settings.
+
+    Omitted fields are left unchanged. Pass ``password`` to replace the stored
+    secret; pass ``clear_password=true`` to wipe it. An empty ``password`` with
+    ``clear_password`` false is ignored (leave unchanged).
+    """
+
+    host: str | None = Field(default=None, max_length=255)
+    port: int | None = Field(default=None, ge=1, le=65535)
+    username: str | None = Field(default=None, max_length=320)
+    password: str | None = Field(default=None, max_length=1024)
+    clear_password: bool = False
+    from_address: str | None = Field(default=None, max_length=320)
+    use_tls: bool | None = None
+
+
+class VerifyEmailIn(BaseModel):
+    """Request body for confirming an email address with a one-time token."""
+
+    token: str = Field(min_length=1, max_length=512)
+
+
+class ResendVerificationIn(BaseModel):
+    """Request body for re-sending a registration confirmation email."""
+
+    email: EmailStr

@@ -53,7 +53,7 @@ async def register(
     """
     settings = get_settings()
     ip = client_ip(request)
-    check_rate_limit(f"register:{ip}", limit=10, window_seconds=60)
+    await check_rate_limit(f"register:{ip}", limit=10, window_seconds=60)
     if settings.oauth_provider != "internal":
         raise HTTPException(400, "Registration only in internal mode")
     is_admin = principal is not None and principal.is_admin
@@ -89,7 +89,7 @@ async def verify_email(
     session: AsyncSession = Depends(db_session),
 ) -> dict[str, str]:
     """Confirm an email address with a one-time token from the confirmation mail."""
-    check_rate_limit(f"verify-email:{client_ip(request)}", limit=20, window_seconds=60)
+    await check_rate_limit(f"verify-email:{client_ip(request)}", limit=20, window_seconds=60)
     user = await email_verification_service.consume_verification_token(session, body.token)
     if user is None:
         raise HTTPException(400, "Invalid or expired confirmation link")
@@ -103,7 +103,7 @@ async def resend_verification(
     session: AsyncSession = Depends(db_session),
 ) -> dict[str, str]:
     """Re-send a confirmation email. Always returns ok (no account enumeration)."""
-    check_rate_limit(f"resend-verify:{client_ip(request)}", limit=5, window_seconds=60)
+    await check_rate_limit(f"resend-verify:{client_ip(request)}", limit=5, window_seconds=60)
     try:
         email = normalize_email(str(body.email))
     except ValueError:
@@ -159,11 +159,11 @@ async def login(
     settings = get_settings()
     ip = client_ip(request)
     # Per-client cap first: a new email must not give a new allowance.
-    check_rate_limit(f"login-ip:{ip}", limit=60, window_seconds=60)
+    await check_rate_limit(f"login-ip:{ip}", limit=60, window_seconds=60)
     # Per-account cap. Same normalisation as the account lookup
     # (normalize_email: strip + casefold). Hashed so the key has a fixed size.
     email_key = hashlib.sha256(body.email.strip().casefold().encode("utf-8", "replace")).hexdigest()
-    check_rate_limit(f"login:{ip}:{email_key}", limit=20, window_seconds=60)
+    await check_rate_limit(f"login:{ip}:{email_key}", limit=20, window_seconds=60)
     # Prefer a real DB user when email+password match. ensure_admin_user() syncs
     # the ADMIN_EMAIL row with ADMIN_PASSWORD at startup, so the environment admin password
     # branch below is reached only if that row was changed after startup (for
@@ -226,7 +226,7 @@ async def refresh_session(
     # The GUI refreshes once per page load and once per stream reconnect.
     # 120 per minute per client address leaves room for many users behind
     # one address and still bounds an anonymous loop.
-    check_rate_limit(f"refresh:{ip}", limit=120, window_seconds=60)
+    await check_rate_limit(f"refresh:{ip}", limit=120, window_seconds=60)
     raw = request.cookies.get(SESSION_COOKIE)
     row = await touch_session(session, raw, get_settings()) if raw else None
     if not raw or row is None:

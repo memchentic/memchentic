@@ -30,11 +30,21 @@ helm upgrade --install memchentic ./helm \
 
 Put longer configuration in a values file and pass it with `-f my-values.yaml`.
 
-Use `replicaCount: 1` (the default). More than one replica is not a
-supported configuration: sign-in rate limits are kept in process memory, so
-each pod counts them separately. Boot migrations are serialised by a
-Postgres advisory lock, so pods that start together during a rolling update
-wait for each other.
+`replicaCount` defaults to `1`. Multi-replica is supported: auth rate limits,
+bootstrap and hygiene automation coordinate through Postgres. Size
+`config.dbPoolSize` and `config.dbMaxOverflow` so
+
+```text
+replicas × (pool_size + max_overflow + 1 LISTEN) < postgres max_connections
+```
+
+with headroom. See `helm/examples/scaled.yaml`. When running more than one
+replica, prefer `migrations.initContainer.enabled: true` so app pods do not
+hold the owner-role password. Boot DDL and Alembic still use a Postgres
+advisory lock across rolling updates.
+
+For an external or CloudNativePG database, see `helm/examples/external-cnpg.yaml`.
+The owner role must be a superuser (documented there and under External Postgres).
 
 ## Secret modes
 

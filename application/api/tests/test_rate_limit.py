@@ -1,19 +1,22 @@
-"""Login throttling, rate-limit bucket bounds and the client address."""
+"""Login throttling, shared Postgres rate limits and the client address."""
 
 from __future__ import annotations
 
+import asyncio
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 from starlette.types import Receive, Scope, Send
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
-from memchentic.auth import rate_limit
-from memchentic.auth.rate_limit import client_ip
+from memchentic.auth.rate_limit import check_rate_limit, client_ip
 
 
 def _login(client: TestClient, email: str) -> int:
@@ -46,11 +49,19 @@ def test_login_bucket_ignores_surrounding_whitespace(
     assert _login(client, email.upper()) == 429
 
 
-def test_login_bucket_key_has_a_fixed_size(client: TestClient, fast_password_check: None) -> None:
+@pytest.mark.asyncio
+async def test_login_bucket_key_has_a_fixed_size(
+    client: TestClient, fast_password_check: None, session: AsyncSession
+) -> None:
     """The caller-supplied email never appears in a bucket key."""
     email = f"{'k' * 300}@example.com"
     assert _login(client, email) == 401
-    assert all(email not in key and len(key) < 120 for key in rate_limit._HITS)
+    rows = (
+        await session.execute(text("SELECT DISTINCT bucket FROM auth_rate_limit_hits"))
+    ).scalars()
+    for key in rows:
+        assert email not in key
+        assert len(key) < 120
 
 
 def test_login_rejects_oversized_fields(client: TestClient) -> None:
@@ -64,47 +75,55 @@ def test_login_rejects_oversized_fields(client: TestClient) -> None:
     assert resp.status_code == 422
 
 
-def test_rate_limit_buckets_are_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The bucket map drops the least recently used key when it is full."""
-    monkeypatch.setattr(rate_limit, "_MAX_BUCKETS", 100)
-    for i in range(150):
-        rate_limit.check_rate_limit(f"bound-{i}", limit=5, window_seconds=60)
-    assert len(rate_limit._HITS) == 100
-    assert "bound-0" not in rate_limit._HITS
-    assert "bound-149" in rate_limit._HITS
-
-
-def test_rate_limit_eviction_keeps_recently_used_buckets(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A bucket that is hit again moves to the end and survives eviction."""
-    monkeypatch.setattr(rate_limit, "_MAX_BUCKETS", 3)
-    for key in ("a", "b", "c"):
-        rate_limit.check_rate_limit(key, limit=5, window_seconds=60)
-    rate_limit.check_rate_limit("a", limit=5, window_seconds=60)
-    rate_limit.check_rate_limit("d", limit=5, window_seconds=60)
-    assert list(rate_limit._HITS) == ["c", "a", "d"]
-
-
-def test_rate_limit_still_blocks_inside_the_window() -> None:
-    """The rewrite keeps the sliding-window behaviour."""
+@pytest.mark.asyncio
+async def test_rate_limit_still_blocks_inside_the_window(session: AsyncSession) -> None:
+    """The rewrite keeps the sliding-window behaviour across the shared table."""
+    del session  # engine must be live; limiter opens its own sessions
+    bucket = f"same-bucket-{uuid.uuid4().hex}"
     for _ in range(3):
-        rate_limit.check_rate_limit("same-bucket", limit=3, window_seconds=60)
+        await check_rate_limit(bucket, limit=3, window_seconds=60)
     with pytest.raises(HTTPException) as excinfo:
-        rate_limit.check_rate_limit("same-bucket", limit=3, window_seconds=60)
+        await check_rate_limit(bucket, limit=3, window_seconds=60)
     assert excinfo.value.status_code == 429
 
 
-def test_rate_limit_window_slides(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.asyncio
+async def test_rate_limit_window_slides(session: AsyncSession) -> None:
     """Hits older than the window no longer count."""
-    now = [1_000.0]
-    monkeypatch.setattr(rate_limit.time, "monotonic", lambda: now[0])
+    bucket = f"slide-{uuid.uuid4().hex}"
     for _ in range(3):
-        rate_limit.check_rate_limit("slide", limit=3, window_seconds=60)
+        await check_rate_limit(bucket, limit=3, window_seconds=60)
     with pytest.raises(HTTPException):
-        rate_limit.check_rate_limit("slide", limit=3, window_seconds=60)
-    now[0] += 61
-    rate_limit.check_rate_limit("slide", limit=3, window_seconds=60)
+        await check_rate_limit(bucket, limit=3, window_seconds=60)
+    await session.execute(
+        text(
+            "UPDATE auth_rate_limit_hits SET hit_at = :old WHERE bucket = :bucket"
+        ),
+        {"old": datetime.now(UTC) - timedelta(seconds=61), "bucket": bucket},
+    )
+    await session.commit()
+    await check_rate_limit(bucket, limit=3, window_seconds=60)
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_is_shared_across_concurrent_checkers(
+    session: AsyncSession,
+) -> None:
+    """Two concurrent waiters see one global counter (multi-replica stand-in)."""
+    del session
+    bucket = f"shared-{uuid.uuid4().hex}"
+    limit = 5
+
+    async def hit() -> int | None:
+        try:
+            await check_rate_limit(bucket, limit=limit, window_seconds=60)
+            return 200
+        except HTTPException as exc:
+            return exc.status_code
+
+    codes = await asyncio.gather(*[hit() for _ in range(limit + 3)])
+    assert codes.count(200) == limit
+    assert codes.count(429) == 3
 
 
 def _scope(peer: str | None, forwarded_for: str | None = None) -> dict[str, Any]:

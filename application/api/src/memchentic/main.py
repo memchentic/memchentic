@@ -17,6 +17,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from memchentic import __version__
@@ -46,22 +47,42 @@ _AUTOMATION_INTERVAL_SEC = 15 * 60
 
 
 async def _hygiene_automation_loop() -> None:
-    """Periodically apply admin Automation settings when either toggle is on."""
+    """Periodically apply admin Automation settings when either toggle is on.
+
+    Only one replica runs a pass: ``pg_try_advisory_lock`` elects a leader for
+    the duration of the pass so multi-replica deployments do not double-delete.
+    """
+    from memchentic.db.session import HYGIENE_LOCK_ID
+
     await asyncio.sleep(_AUTOMATION_BOOT_DELAY_SEC)
     while True:
         try:
             from memchentic.services.memory_hygiene import run_hygiene_automation
 
             async with get_session_factory()() as session:
-                await set_rls_context(session, user_id=None, is_admin=True)
-                counts = await run_hygiene_automation(session)
-            forgotten = counts["conflicts_forgotten"] + counts["near_dups_forgotten"]
-            if forgotten:
-                logger.info(
-                    "Hygiene automation: conflicts=%s near_dups=%s",
-                    counts["conflicts_forgotten"],
-                    counts["near_dups_forgotten"],
+                got = await session.scalar(
+                    text("SELECT pg_try_advisory_lock(:k)"), {"k": HYGIENE_LOCK_ID}
                 )
+                if not got:
+                    await session.rollback()
+                else:
+                    try:
+                        await set_rls_context(session, user_id=None, is_admin=True)
+                        counts = await run_hygiene_automation(session)
+                        forgotten = (
+                            counts["conflicts_forgotten"] + counts["near_dups_forgotten"]
+                        )
+                        if forgotten:
+                            logger.info(
+                                "Hygiene automation: conflicts=%s near_dups=%s",
+                                counts["conflicts_forgotten"],
+                                counts["near_dups_forgotten"],
+                            )
+                    finally:
+                        await session.execute(
+                            text("SELECT pg_advisory_unlock(:k)"), {"k": HYGIENE_LOCK_ID}
+                        )
+                        await session.commit()
         except asyncio.CancelledError:
             raise
         except Exception:

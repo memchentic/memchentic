@@ -2,15 +2,13 @@
 # Override with -f / --set. Homelab site overrides live outside this repo.
 # Secrets: use existing or externalSecret — inline values are empty placeholders only.
 
-# Keep one replica. More than one replica is not supported:
-# - auth rate limits are counted per pod, so the effective limit is the
-#   configured limit multiplied by the replica count;
-# - the first start on an empty database creates the admin user and the
-#   built-in groups without a lock, so one of two pods that start together
-#   can fail once and restart.
-# Extensions and schema migrations are serialized by a Postgres advisory lock,
-# so the old and the new pod of a rolling update do not run them at the same
-# time. The old pod serves against the new schema until it is replaced.
+# Default one replica. Multi-replica is supported: auth rate limits, bootstrap
+# and hygiene automation coordinate through Postgres. Size the DB pool with
+# config.dbPoolSize / dbMaxOverflow so
+#   replicas × (pool_size + max_overflow + 1 LISTEN) < postgres max_connections
+# with headroom. Prefer migrations.initContainer.enabled=true when replicaCount > 1
+# (see helm/examples/scaled.yaml). Extensions and schema migrations still use a
+# Postgres advisory lock across rolling updates.
 replicaCount: 1
 
 image:
@@ -71,12 +69,8 @@ ingress:
 resources: {}
 
 probes:
-  # Path of the readiness probe. `/api/ready` checks the database and the
-  # embedder. It exists only in application images that contain that route;
-  # an older image answers 404 there and the pod would never become ready.
-  # Switch this default to /api/ready in the commit that sets `appVersion`
-  # to the first release that contains the route.
-  readinessPath: /api/health
+  # `/api/ready` checks the database and the embedder before the pod takes traffic.
+  readinessPath: /api/ready
 
 nodeSelector: {}
 tolerations: []
@@ -125,6 +119,10 @@ config:
   postgresSslmode: prefer
   # CA bundle path inside the pod; empty = system CAs.
   postgresSslrootcert: ""
+  # Per-process SQLAlchemy pool (see replicaCount comment above).
+  dbPoolSize: "5"
+  dbMaxOverflow: "10"
+  dbPoolTimeout: "30"
   nearDupThreshold: "0.92"
   rrfK: "60"
   searchDefaultLimit: "20"

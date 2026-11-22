@@ -1,0 +1,29 @@
+# Example: point memchentic at an external Postgres (CloudNativePG or managed).
+# The chart does not install CNPG. Create the Cluster (with pgvector) yourself,
+# then disable the bundled Postgres StatefulSet.
+#
+# Owner role (POSTGRES_USER / config.postgresUser) must be a Postgres
+# superuser: the app creates extensions and relies on SECURITY DEFINER
+# helpers that must bypass RLS. Non-superuser owners are not supported.
+#
+# Pair with secrets.mode existing or externalSecret. Use verify-full and a
+# mounted CA when the database is reached over a network you do not own.
+
+postgres:
+  enabled: false
+
+config:
+  postgresHostname: memchentic-db-rw  # CNPG read-write Service in the same namespace
+  postgresPort: 5432
+  postgresSslmode: verify-full
+  postgresSslrootcert: /etc/memchentic/ca/ca.crt
+  # dbPoolSize / dbMaxOverflow — see helm/examples/scaled.yaml
+
+extraVolumes:
+  - name: db-ca
+    configMap:
+      name: db-ca
+extraVolumeMounts:
+  - name: db-ca
+    mountPath: /etc/memchentic/ca
+    readOnly: true

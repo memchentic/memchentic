@@ -1,0 +1,25 @@
+# Example overrides for a multi-replica memchentic Deployment.
+# Usage:
+#   helm upgrade --install memchentic ./helm -n memchentic -f my-values.yaml -f helm/examples/scaled.yaml
+#
+# Requires a values file (or --set) that already supplies config.baseUrl,
+# config.corsOrigins, and secrets (existing / externalSecret / inline).
+# Prefer an external HA Postgres (see helm/examples/external-cnpg.yaml).
+
+replicaCount: 2
+
+migrations:
+  initContainer:
+    enabled: true
+
+config:
+  # Size the pool so replicas × (pool + overflow + 1 LISTEN) fits under
+  # Postgres max_connections with headroom.
+  dbPoolSize: "5"
+  dbMaxOverflow: "10"
+  # Pod CIDR (or addresses) of the ingress controller — required so rate
+  # limits and logs see real client IPs behind the Ingress.
+  # forwardedAllowIps: "10.42.0.0/16"
+
+probes:
+  readinessPath: /api/ready

@@ -144,7 +144,7 @@ async def dynamic_client_register(
         raise HTTPException(
             400, "Dynamic client registration is only available when OAUTH_PROVIDER=internal"
         )
-    check_rate_limit(f"dcr:{client_ip(request)}", limit=10, window_seconds=60)
+    await check_rate_limit(f"dcr:{client_ip(request)}", limit=10, window_seconds=60)
 
     raw_uris = body.get("redirect_uris")
     if isinstance(raw_uris, str):
@@ -354,7 +354,7 @@ async def authorize_post(
 ) -> RedirectResponse | HTMLResponse:
     """Authenticate the user and redirect back to the client with a one-time code."""
     _require_internal_provider()
-    check_rate_limit(f"authorize:{client_ip(request)}", limit=20, window_seconds=60)
+    await check_rate_limit(f"authorize:{client_ip(request)}", limit=20, window_seconds=60)
     cookie_csrf = request.cookies.get(_OAUTH_CSRF_COOKIE, "")
     # Compare bytes: compare_digest raises TypeError on non-ASCII str input.
     if (
@@ -468,7 +468,7 @@ async def token_endpoint(
     session: AsyncSession = Depends(db_session),
 ) -> JSONResponse:
     """Exchange an authorization code or a refresh token for tokens (RFC 6749 section 5)."""
-    check_rate_limit(f"token:{client_ip(request)}", limit=20, window_seconds=60)
+    await check_rate_limit(f"token:{client_ip(request)}", limit=20, window_seconds=60)
     settings = get_settings()
     if not grant_type:
         return _token_error("invalid_request", "grant_type is required")

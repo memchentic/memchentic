@@ -1,22 +1,30 @@
-"""In-process sliding-window rate limiter for auth surfaces."""
+"""Postgres-backed sliding-window rate limiter for auth surfaces.
+
+Every application replica shares the same counters via
+``auth_rate_limit_hits``, so raising ``replicaCount`` does not multiply the
+effective limit.
+"""
 
 from __future__ import annotations
 
-import time
-from collections import OrderedDict, deque
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
+from urllib.parse import unquote, urlparse
 
+import asyncpg
 from fastapi import HTTPException, Request
+from sqlalchemy import text
 
-# Upper bound on tracked buckets. When the map is full the least recently
-# used bucket is dropped, so memory stays bounded when callers rotate keys.
-_MAX_BUCKETS = 10_000
+from memchentic.db.session import advisory_xact_lock, get_session_factory
+from memchentic.settings import get_settings
 
-# bucket -> timestamps of recent hits (monotonic seconds); least recently
-# used bucket first.
-_HITS: OrderedDict[str, deque[float]] = OrderedDict()
+# Drop hits older than this even when a caller uses a shorter window, so the
+# table stays bounded under rotating bucket keys.
+_RETENTION = timedelta(hours=2)
 
 
-def check_rate_limit(bucket: str, *, limit: int, window_seconds: int) -> None:
+async def check_rate_limit(bucket: str, *, limit: int, window_seconds: int) -> None:
     """Raise 429 when ``bucket`` has exceeded ``limit`` hits in ``window_seconds``.
 
     Args:
@@ -28,26 +36,64 @@ def check_rate_limit(bucket: str, *, limit: int, window_seconds: int) -> None:
     Raises:
         HTTPException: 429 when the limit is exceeded.
     """
-    now = time.monotonic()
-    cutoff = now - window_seconds
-    hits = _HITS.get(bucket)
-    if hits is None:
-        hits = deque()
-        _HITS[bucket] = hits
-        while len(_HITS) > _MAX_BUCKETS:
-            _HITS.popitem(last=False)
-    else:
-        _HITS.move_to_end(bucket)
-    while hits and hits[0] < cutoff:
-        hits.popleft()
-    if len(hits) >= limit:
-        raise HTTPException(429, "Too many requests")
-    hits.append(now)
+    now = datetime.now(UTC)
+    cutoff = now - timedelta(seconds=window_seconds)
+    retention_cutoff = now - _RETENTION
+    async with get_session_factory()() as session:
+        await advisory_xact_lock(session, f"memchentic:ratelimit:{bucket}")
+        await session.execute(
+            text("DELETE FROM auth_rate_limit_hits WHERE bucket = :bucket AND hit_at < :cut"),
+            {"bucket": bucket, "cut": retention_cutoff},
+        )
+        count = await session.scalar(
+            text(
+                "SELECT count(*) FROM auth_rate_limit_hits "
+                "WHERE bucket = :bucket AND hit_at >= :cutoff"
+            ),
+            {"bucket": bucket, "cutoff": cutoff},
+        )
+        if int(count or 0) >= limit:
+            await session.commit()
+            raise HTTPException(429, "Too many requests")
+        await session.execute(
+            text("INSERT INTO auth_rate_limit_hits (bucket, hit_at) VALUES (:bucket, :hit_at)"),
+            {"bucket": bucket, "hit_at": now},
+        )
+        await session.commit()
 
 
 def reset_rate_limits() -> None:
-    """Clear all buckets (tests only)."""
-    _HITS.clear()
+    """Clear all rate-limit hits (tests only).
+
+    Uses a one-shot asyncpg connection in a worker thread so it never binds
+    the shared SQLAlchemy engine to a secondary event loop.
+    """
+
+    async def _clear() -> None:
+        settings = get_settings()
+        parsed = urlparse(
+            settings.database_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+        )
+        ssl_arg: object = False
+        if settings.postgres_sslmode != "disable":
+            ssl_arg = settings.postgres_ssl
+        conn = await asyncpg.connect(
+            host=parsed.hostname or "localhost",
+            port=parsed.port or 5432,
+            user=unquote(parsed.username or ""),
+            password=unquote(parsed.password or ""),
+            database=(parsed.path or "/").lstrip("/") or "memchentic",
+            ssl=ssl_arg,
+        )
+        try:
+            await conn.execute("DELETE FROM auth_rate_limit_hits")
+        except asyncpg.UndefinedTableError:
+            pass
+        finally:
+            await conn.close()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pool.submit(lambda: asyncio.run(_clear())).result(timeout=30)
 
 
 def client_ip(request: Request) -> str:

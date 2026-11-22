@@ -18,10 +18,11 @@ from memchentic.settings import get_settings
 _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
 
-# Postgres advisory lock id ("memm"). Serializes boot DDL (extensions, the
-# app-role password and Alembic) across processes. Must differ from every other
-# fixed advisory lock id in the code base (auth/tokens.py uses 0x6D656D6B).
-MIGRATION_LOCK_ID = 0x6D656D6D
+# Postgres advisory lock ids. Must differ from each other and from
+# auth/tokens.py (_SIGNING_KEY_LOCK = 0x6D656D6B).
+MIGRATION_LOCK_ID = 0x6D656D6D  # "memm" — boot DDL / Alembic
+BOOTSTRAP_LOCK_ID = 0x6D656D62  # "memb" — admin + auth-group seed
+HYGIENE_LOCK_ID = 0x6D656D68  # "memh" — hygiene automation leader
 
 
 def create_owner_engine() -> AsyncEngine:
@@ -38,6 +39,9 @@ def create_owner_engine() -> AsyncEngine:
         settings.migration_database_url,
         echo=False,
         pool_pre_ping=True,
+        pool_size=settings.db_pool_size,
+        max_overflow=settings.db_max_overflow,
+        pool_timeout=settings.db_pool_timeout,
         connect_args={"ssl": settings.postgres_ssl},
     )
 
@@ -55,6 +59,9 @@ def get_engine() -> AsyncEngine:
             settings.database_url,
             echo=False,
             pool_pre_ping=True,
+            pool_size=settings.db_pool_size,
+            max_overflow=settings.db_max_overflow,
+            pool_timeout=settings.db_pool_timeout,
             connect_args={"ssl": settings.postgres_ssl},
         )
         event.listen(_engine.sync_engine, "checkin", _reset_rls_on_checkin)

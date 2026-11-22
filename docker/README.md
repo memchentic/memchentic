@@ -101,6 +101,9 @@ or too short. `openssl rand -hex 24` prints a value that satisfies each rule.
 | `POSTGRES_DB` | `memchentic` | Database name |
 | `POSTGRES_SSLMODE` | `prefer` | `disable`, `prefer`, `require`, `verify-ca` or `verify-full`. Use `verify-full` for a database on another host |
 | `POSTGRES_SSLROOTCERT` | empty | CA file for `verify-ca` and `verify-full`. Empty means the system CA store |
+| `DB_POOL_SIZE` | `5` | SQLAlchemy pool size per application process |
+| `DB_MAX_OVERFLOW` | `10` | Extra connections above `DB_POOL_SIZE` under load |
+| `DB_POOL_TIMEOUT` | `30` | Seconds to wait for a free pooled connection |
 | `RUN_MIGRATIONS_ON_BOOT` | `true` | `false` stops the application from applying migrations at start. The `migrate.yaml` overlay sets it and applies them in the service `migrate` |
 
 ## Search and ranking

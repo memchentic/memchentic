@@ -60,6 +60,11 @@ class Settings(BaseSettings):
     postgres_db: str = Field(default="memchentic", alias="POSTGRES_DB")
     postgres_sslmode: PostgresSslMode = Field(default="prefer", alias="POSTGRES_SSLMODE")
     postgres_sslrootcert: str = Field(default="", alias="POSTGRES_SSLROOTCERT")
+    # SQLAlchemy pool per app process. Formula for operators:
+    # replicas x (db_pool_size + db_max_overflow + 1 LISTEN) < postgres max_connections.
+    db_pool_size: int = Field(default=5, ge=1, alias="DB_POOL_SIZE")
+    db_max_overflow: int = Field(default=10, ge=0, alias="DB_MAX_OVERFLOW")
+    db_pool_timeout: float = Field(default=30.0, gt=0, alias="DB_POOL_TIMEOUT")
     # False when a separate one-shot process (python -m memchentic.migrate)
     # applies migrations; the application then needs no owner-role password.
     run_migrations_on_boot: bool = Field(default=True, alias="RUN_MIGRATIONS_ON_BOOT")

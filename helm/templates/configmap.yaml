@@ -57,3 +57,6 @@ data:
   ENABLE_API_DOCS: {{ .Values.config.enableApiDocs | default "false" | quote }}
   POSTGRES_SSLMODE: {{ .Values.config.postgresSslmode | quote }}
   POSTGRES_SSLROOTCERT: {{ .Values.config.postgresSslrootcert | quote }}
+  DB_POOL_SIZE: {{ .Values.config.dbPoolSize | default "5" | quote }}
+  DB_MAX_OVERFLOW: {{ .Values.config.dbMaxOverflow | default "10" | quote }}
+  DB_POOL_TIMEOUT: {{ .Values.config.dbPoolTimeout | default "30" | quote }}

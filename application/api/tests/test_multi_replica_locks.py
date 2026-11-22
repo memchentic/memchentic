@@ -30,7 +30,7 @@ def _dsn_parts() -> dict[str, object]:
     }
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def _client_booted(client: object) -> None:
     """Ensure the app lifespan has applied migrations once."""
     del client

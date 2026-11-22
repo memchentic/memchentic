@@ -14,9 +14,7 @@ from memchentic.settings import get_settings
 
 def _dsn_parts() -> dict[str, object]:
     settings = get_settings()
-    parsed = urlparse(
-        settings.database_url.replace("postgresql+asyncpg://", "postgresql://", 1)
-    )
+    parsed = urlparse(settings.database_url.replace("postgresql+asyncpg://", "postgresql://", 1))
     ssl_arg: object = False
     if settings.postgres_sslmode != "disable":
         ssl_arg = settings.postgres_ssl
@@ -36,7 +34,8 @@ def _client_booted(client: object) -> None:
     del client
 
 
-def test_hygiene_try_lock_is_exclusive(_client_booted: None) -> None:
+@pytest.mark.usefixtures("_client_booted")
+def test_hygiene_try_lock_is_exclusive() -> None:
     """Only one connection can hold the hygiene leader lock at a time."""
 
     async def _run() -> None:
@@ -59,7 +58,8 @@ def test_hygiene_try_lock_is_exclusive(_client_booted: None) -> None:
     asyncio.run(_run())
 
 
-def test_bootstrap_lock_blocks_second_connection(_client_booted: None) -> None:
+@pytest.mark.usefixtures("_client_booted")
+def test_bootstrap_lock_blocks_second_connection() -> None:
     """A second connection waits until the bootstrap session lock is released."""
 
     async def _run() -> None:

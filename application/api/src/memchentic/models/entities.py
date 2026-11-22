@@ -370,6 +370,88 @@ class MemoryRecall(Base):
     source: Mapped[str] = mapped_column(String(32), nullable=False)
 
 
+class MemoryRevision(Base):
+    """Pre-mutation snapshot of a memory row for history and audit."""
+
+    __tablename__ = "memory_revisions"
+    __table_args__ = (
+        Index("ix_memory_revisions_memory_revised_at", "memory_id", "revised_at"),
+        Index("ix_memory_revisions_space_revised_at", "space_id", "revised_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    memory_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("memories.id", ondelete="CASCADE"), nullable=False
+    )
+    space_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("spaces.id", ondelete="CASCADE"), nullable=False
+    )
+    revised_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    revised_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    changed_fields: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), nullable=False, server_default=text("'{}'")
+    )
+    snapshot: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+
+
+class MemoryFeedback(Base):
+    """One user's usefulness signal on a memory (``useful``, ``stale``, or ``wrong``)."""
+
+    __tablename__ = "memory_feedback"
+    __table_args__ = (
+        UniqueConstraint("memory_id", "user_id", name="uq_memory_feedback_memory_user"),
+        Index("ix_memory_feedback_memory_created_at", "memory_id", "created_at"),
+        Index("ix_memory_feedback_space_created_at", "space_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    memory_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("memories.id", ondelete="CASCADE"), nullable=False
+    )
+    space_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("spaces.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    signal: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class MemoryEventLog(Base):
+    """Append-only space-scoped event log for memory lifecycle actions."""
+
+    __tablename__ = "memory_events"
+    __table_args__ = (
+        Index("ix_memory_events_space_created_at", "space_id", "created_at"),
+        Index("ix_memory_events_created_at", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # No FK to memories: delete and synthetic notify payloads may reference an
+    # id that is already gone (or never existed). The UUID stays in ``payload``.
+    memory_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    space_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("spaces.id", ondelete="CASCADE"), nullable=False
+    )
+    action: Mapped[str] = mapped_column(String(16), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class OAuthClient(Base):
     """A dynamically registered OAuth client."""
 

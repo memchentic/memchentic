@@ -7,14 +7,19 @@ import json
 import time
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from memchentic.auth.bearer import resolve_bearer
-from memchentic.auth.principal import bearer_token_from_header
+from memchentic.auth.principal import Principal, bearer_token_from_header
 from memchentic.db.session import get_session_factory, set_rls_context
+from memchentic.deps import db_session, get_principal
 from memchentic.events import STREAM_CLOSED, subscribe_memory_events
+from memchentic.services import limits
 from memchentic.services import spaces as space_service
+from memchentic.services.memory_events_log import list_memory_event_log
+from memchentic.services.validation import parse_uuid
 
 router = APIRouter()
 
@@ -42,6 +47,24 @@ async def _reauth_memory_events(token: str | None) -> set[str] | None:
         return {
             str(sid) for sid in await space_service.accessible_space_ids(session, principal, None)
         }
+
+
+@router.get("/events/memory-log")
+async def memory_event_log(
+    space_id: str | None = Query(None, max_length=limits.ID_TEXT_MAX),
+    limit: int | None = None,
+    offset: int = Query(0, ge=0, le=limits.OFFSET_MAX),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(db_session),
+) -> list[dict]:
+    """Paginated durable mutation log for readable spaces."""
+    return await list_memory_event_log(
+        session,
+        principal,
+        space_id=parse_uuid(space_id, "space_id"),
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get("/events/memories")

@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import uuid
+from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from memchentic.api.schemas import (
     GuideIn,
+    MemoryFeedbackIn,
+    MemoryIngestSuggestIn,
     RememberIn,
     ResolveConflictIn,
     ResolveNearDuplicateIn,
@@ -17,9 +22,17 @@ from memchentic.api.schemas import (
 from memchentic.auth.principal import Principal
 from memchentic.deps import db_session, get_principal
 from memchentic.services import guides as guide_service
-from memchentic.services import limits, memory_hygiene, memory_serialize
+from memchentic.services import (
+    limits,
+    memory_export,
+    memory_hygiene,
+    memory_ingest,
+    memory_serialize,
+)
 from memchentic.services import memories as memory_service
+from memchentic.services import memory_feedback as memory_feedback_service
 from memchentic.services import metrics as metrics_service
+from memchentic.services.memory_revisions import list_history
 from memchentic.services.validation import parse_datetime, parse_uuid, require_uuid
 
 router = APIRouter()
@@ -240,6 +253,78 @@ async def create_memory(
         force=body.force,
     )
     return await memory_serialize.memory_out(session, memory, full=True)
+
+
+@router.get("/memories/export")
+async def export_memories_route(
+    space_id: str | None = Query(None, max_length=limits.ID_TEXT_MAX),
+    space_scope: str | None = Query(None, max_length=limits.TYPE_TEXT_MAX),
+    kind: str | None = Query(None, max_length=limits.TYPE_TEXT_MAX),
+    type: str | None = Query(None, max_length=limits.TYPE_TEXT_MAX),
+    types: str | None = Query(None, max_length=limits.TYPES_QUERY_MAX),
+    include_expired: bool = False,
+    tags: str | None = Query(None, max_length=limits.QUERY_MAX),
+    project_id: str | None = Query(None, max_length=limits.ID_TEXT_MAX),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(db_session),
+) -> StreamingResponse:
+    """Streaming NDJSON export of memories the caller can read."""
+    parsed_types = _parse_types(types)
+
+    async def body() -> AsyncIterator[bytes]:
+        async for row in memory_export.export_memories(
+            session,
+            principal,
+            space_id=parse_uuid(space_id, "space_id"),
+            space_scope=space_scope,
+            kind=kind,
+            entry_type=type,
+            types=parsed_types,
+            include_expired=include_expired,
+            tags=_parse_types(tags),
+            project_id=parse_uuid(project_id, "project_id"),
+        ):
+            yield (json.dumps(row, separators=(",", ":")) + "\n").encode()
+
+    return StreamingResponse(body(), media_type="application/x-ndjson")
+
+
+@router.post("/memories/ingest/suggest")
+async def ingest_suggest(
+    body: MemoryIngestSuggestIn,
+    _: Principal = Depends(get_principal),
+) -> dict:
+    """Suggest memory candidates from prose (heuristic or optional LLM)."""
+    candidates = await memory_ingest.suggest_candidates(
+        body.text,
+        messages=body.messages,
+        use_llm=body.use_llm,
+    )
+    return {"candidates": candidates}
+
+
+@router.get("/memories/{memory_id}/history")
+async def memory_history(
+    memory_id: uuid.UUID,
+    limit: int | None = None,
+    offset: int = Query(0, ge=0, le=limits.OFFSET_MAX),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(db_session),
+) -> list[dict]:
+    """Revision snapshots for one memory, newest first."""
+    return await list_history(session, principal, memory_id, limit=limit, offset=offset)
+
+
+@router.post("/memories/{memory_id}/feedback")
+async def memory_feedback(
+    memory_id: uuid.UUID,
+    body: MemoryFeedbackIn,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(db_session),
+) -> dict[str, str]:
+    """Record usefulness feedback (useful, stale, wrong)."""
+    await memory_feedback_service.submit_feedback(session, principal, memory_id, body.signal)
+    return {"status": "recorded", "signal": body.signal}
 
 
 @router.get("/memories/{memory_id}")

@@ -181,3 +181,26 @@ export async function api<T = unknown>(
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
+
+/** Authenticated fetch that returns the raw Response (for downloads / streams). */
+export async function apiResponse(path: string, options: RequestInit = {}): Promise<Response> {
+  let res = await send(path, options);
+  if (res.status === 401 && !path.startsWith("/api/auth/")) {
+    const outcome = await refreshSession();
+    if (outcome === "ok") {
+      res = await send(path, options);
+      if (res.status === 401) sessionLost();
+    }
+  }
+  if (!res.ok) {
+    const fallback = res.statusText || `HTTP ${res.status}`;
+    let data: unknown = null;
+    try {
+      data = await res.json();
+    } catch {
+      /* non-JSON body */
+    }
+    throw apiErrorFromBody(data, res.status, fallback);
+  }
+  return res;
+}

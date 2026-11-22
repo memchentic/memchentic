@@ -63,6 +63,7 @@ from memchentic.services.memory_ttl import (
     touch_digests,
     touch_memories,
 )
+from memchentic.services.memory_webhooks import schedule_webhook_delivery
 from memchentic.services.spaces import (
     accessible_space_ids,
     can_manage_group,
@@ -158,8 +159,10 @@ async def publish_and_commit(
     Returns:
         The refreshed memory row.
     """
-    await publish_memory_event(session, await async_memory_event_from_row(session, action, memory))
+    event = await async_memory_event_from_row(session, action, memory)
+    await publish_memory_event(session, event)
     await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
+    schedule_webhook_delivery(event)
     await session.refresh(memory)
     return memory
 
@@ -421,6 +424,35 @@ async def revise(
         raise NotFoundError("Memory not found")
     # Same rule as forget/relocate: creator, group manager, or admin.
     await require_memory_manage(session, principal, memory)
+    changed_fields: list[str] = []
+    if title is not None:
+        changed_fields.append("title")
+    if body is not None:
+        changed_fields.append("body")
+    if entry_type is not None:
+        changed_fields.append("type")
+    if tags is not None:
+        changed_fields.append("tags")
+    if clear_expiry or permanent or ttl_days is not None or expires_at is not None:
+        changed_fields.append("expires_at")
+    if path_hint is not None:
+        changed_fields.append("path_hint")
+    if repo_hint is not None:
+        changed_fields.append("repo_hint")
+    if set_project:
+        changed_fields.append("project_id")
+    if set_supersedes:
+        changed_fields.append("supersedes_id")
+    if changed_fields:
+        from memchentic.services.memory_revisions import record_revision
+
+        await record_revision(
+            session,
+            memory,
+            principal,
+            source="revise",
+            changed_fields=changed_fields,
+        )
     new_type: EntryType | None = None
     if entry_type is not None:
         # Validate before any field is changed, so a refused call edits nothing.
@@ -490,6 +522,7 @@ async def forget(session: AsyncSession, principal: Principal, memory_id: uuid.UU
     await session.delete(memory)
     await publish_memory_event(session, event)
     await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
+    schedule_webhook_delivery(event)
 
 
 async def browse(

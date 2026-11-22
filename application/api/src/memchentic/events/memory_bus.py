@@ -416,6 +416,9 @@ async def publish_memory_event(session: AsyncSession, event: MemoryEvent) -> Non
         event: Compact mutation payload. Reduced by ``_encode_event`` when it
             would exceed the NOTIFY size limit.
     """
+    from memchentic.services.memory_events_log import append_memory_event
+
+    await append_memory_event(session, event)
     await session.execute(
         text("SELECT pg_notify(:channel, :payload)"),
         {"channel": MEMORY_CHANNEL, "payload": _encode_event(event)},

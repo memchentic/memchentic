@@ -1,6 +1,8 @@
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { faDownload, faFileImport } from "@fortawesome/free-solid-svg-icons";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
-import { api } from "../api";
+import { api, apiResponse } from "../api";
 import { useAuth } from "../auth";
 import { ComposerReveal } from "../components/overlay";
 import {
@@ -87,7 +89,87 @@ export default function MemoriesPage() {
   // False until the first load attempt has finished.
   const [loaded, setLoaded] = useState(false);
   const [showNew, setShowNew] = useState(false);
+  const [showIngest, setShowIngest] = useState(false);
+  const [ingestText, setIngestText] = useState("");
+  const [ingestBusy, setIngestBusy] = useState(false);
+  const [ingestCandidates, setIngestCandidates] = useState<
+    { kind: string; title: string; body: string; entry_type?: string }[]
+  >([]);
   const searching = filters.q.length > 0;
+
+  async function downloadExport() {
+    try {
+      const qs = new URLSearchParams();
+      if (filters.spaceScope) qs.set("space_scope", filters.spaceScope);
+      if (filters.kind) qs.set("kind", filters.kind);
+      const typeFilter = typesQuery(filters.types);
+      if (typeFilter) qs.set("types", typeFilter);
+      if (filters.tags.length) qs.set("tags", filters.tags.join(","));
+      const res = await apiResponse(`/api/memories/export?${qs.toString()}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "memories.ndjson";
+      a.click();
+      URL.revokeObjectURL(url);
+      setError(null);
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  async function runIngestSuggest() {
+    setIngestBusy(true);
+    try {
+      const row = await api<{ candidates: typeof ingestCandidates }>(
+        "/api/memories/ingest/suggest",
+        {
+          method: "POST",
+          body: JSON.stringify({ text: ingestText, use_llm: false }),
+        },
+      );
+      setIngestCandidates(row.candidates);
+      setError(null);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setIngestBusy(false);
+    }
+  }
+
+  async function confirmIngestCandidate(
+    c: { kind: string; title: string; body: string; entry_type?: string },
+  ) {
+    const spaceId = me?.personal_space_id || undefined;
+    try {
+      if (c.kind === "guide") {
+        await api("/api/guides", {
+          method: "POST",
+          body: JSON.stringify({
+            title: c.title,
+            body: c.body,
+            space_id: spaceId,
+          }),
+        });
+      } else {
+        await api("/api/memories", {
+          method: "POST",
+          body: JSON.stringify({
+            title: c.title,
+            body: c.body,
+            type: c.entry_type || "note",
+            space_id: spaceId,
+          }),
+        });
+      }
+      setIngestCandidates((prev) => prev.filter((x) => x !== c));
+      void load();
+      setError(null);
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
   const loadRef = useRef<() => Promise<void>>(async () => {});
   const loadSeq = useRef(0);
   const rowsRef = useRef<MemoryRow[]>([]);
@@ -307,11 +389,77 @@ export default function MemoriesPage() {
   return (
     <div>
       <PageHeader title="Memories">
+        <button
+          className="btn"
+          type="button"
+          title="Export NDJSON"
+          aria-label="Export NDJSON"
+          onClick={() => void downloadExport()}
+        >
+          <FontAwesomeIcon icon={faDownload} />
+        </button>
+        <button
+          className="btn"
+          type="button"
+          title="Suggest from text"
+          aria-label="Suggest from text"
+          aria-pressed={showIngest}
+          onClick={() => setShowIngest((s) => !s)}
+        >
+          <FontAwesomeIcon icon={faFileImport} />
+        </button>
         {!searching && (
           <NewToggleButton open={showNew} onToggle={() => setShowNew((s) => !s)} />
         )}
       </PageHeader>
       <div className="page-body">
+        {showIngest ? (
+          <div className="panel mb-4 grid gap-3 p-4">
+            <p className="text-xs text-muted">
+              Paste notes or a transcript. Candidates are suggestions only —
+              confirm each one to store it.
+            </p>
+            <textarea
+              className="input min-h-32"
+              aria-label="Text to suggest memories from"
+              value={ingestText}
+              onChange={(e) => setIngestText(e.target.value)}
+            />
+            <div className="flex justify-end">
+              <button
+                className="btn"
+                type="button"
+                disabled={ingestBusy || !ingestText.trim()}
+                onClick={() => void runIngestSuggest()}
+              >
+                Suggest
+              </button>
+            </div>
+            {ingestCandidates.length > 0 ? (
+              <ul className="grid gap-2">
+                {ingestCandidates.map((c, i) => (
+                  <li key={`${c.title}-${i}`} className="panel p-3 text-sm">
+                    <div className="text-xs text-muted mb-1">
+                      {c.kind}
+                      {c.entry_type ? ` · ${c.entry_type}` : ""}
+                    </div>
+                    <div className="font-medium text-ink">{c.title}</div>
+                    <pre className="mt-1 whitespace-pre-wrap font-sans text-xs text-muted">
+                      {c.body}
+                    </pre>
+                    <button
+                      className="btn mt-2"
+                      type="button"
+                      onClick={() => void confirmIngestCandidate(c)}
+                    >
+                      Remember
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        ) : null}
         <form className="toolbar metrics-filter-bar mb-3" onSubmit={submitSearch}>
           <div className="toolbar-search metrics-query-wrap">
             <input

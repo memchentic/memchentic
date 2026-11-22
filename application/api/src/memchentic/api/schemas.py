@@ -204,6 +204,31 @@ class AutomationSettingIn(BaseModel):
 
     resolve_supersedes: bool | None = None
     resolve_near_dups: bool | None = None
+    propose_consolidations: bool | None = None
+    auto_apply_consolidations: bool | None = None
+
+
+class MemoryFeedbackIn(BaseModel):
+    """Usefulness signal for one memory."""
+
+    signal: TypeStr
+
+
+class MemoryIngestSuggestIn(BaseModel):
+    """Heuristic or LLM extraction of memory candidates from prose."""
+
+    text: BodyStr
+    messages: list[dict[str, str]] | None = None
+    use_llm: bool = False
+
+
+class WebhookSettingIn(BaseModel):
+    """Admin webhook delivery settings (secret never returned on GET)."""
+
+    enabled: bool | None = None
+    url: str | None = Field(default=None, max_length=limits.QUERY_MAX)
+    secret: str | None = Field(default=None, max_length=limits.PASSWORD_INPUT_MAX)
+    clear_secret: bool = False
 
 
 class ResolveConflictIn(BaseModel):

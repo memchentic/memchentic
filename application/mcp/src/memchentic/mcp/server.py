@@ -14,7 +14,13 @@ from mcp.types import ToolAnnotations
 from memchentic.mcp.context import require_principal, require_session
 from memchentic.services import guides as guide_service
 from memchentic.services import memories as memory_service
-from memchentic.services import memory_hygiene, memory_serialize
+from memchentic.services import (
+    memory_export,
+    memory_feedback,
+    memory_hygiene,
+    memory_ingest,
+    memory_serialize,
+)
 from memchentic.services import spaces as space_service
 from memchentic.services.errors import (
     NotFoundError,
@@ -23,8 +29,10 @@ from memchentic.services.errors import (
     tool_error_text,
 )
 from memchentic.services.memories import EntryTypeName, MemoryKindName
+from memchentic.services.memory_revisions import list_history
 from memchentic.services.validation import parse_datetime, parse_uuid, require_uuid
 from memchentic.services.write_target import Visibility
+from memchentic.settings import get_settings
 
 SERVER_INSTRUCTIONS = (
     "memchentic is a shared memory store for AI agents. Entries and guides are written "
@@ -821,9 +829,8 @@ async def trace(id: str) -> dict[str, Any]:
     Returns the id, title and kind; the creator (created_by,
     created_by_email, created_by_display_name) and created_at; the space
     (space_id, space_name, space_kind); and the user who last edited the
-    memory, when it has been edited. There is no edit history: only the
-    creator and the last editor are recorded. ``provenance`` is reserved and
-    is normally an empty object.
+    memory, when it has been edited. For field-level edit history use the
+    ``history`` tool. ``provenance`` is reserved and is normally an empty object.
     """
     principal = require_principal()
     session = require_session()
@@ -854,6 +861,9 @@ async def overlap_report(
     soonest first. Without ``expiring_within_days`` this is the next ``limit``
     expiries however far away they are; pass ``expiring_within_days=N`` to
     list only memories that expire within N days.
+
+    proposals: {keep, drop, action: "merge"} derived from near-duplicates
+    (keep the newer row, drop the older). Same ACL as resolve_near_duplicate.
 
     conflicts: pairs {a, b, title, reason} where memory a declares that it
     supersedes memory b (``reason`` is "supersedes"). Both ends must still be
@@ -916,3 +926,84 @@ async def resolve_near_duplicate(keep: str, drop: str) -> dict[str, Any]:
         keep_id=require_uuid(keep, "keep"),
         drop_id=require_uuid(drop, "drop"),
     )
+
+
+@mcp.tool(annotations=_READ_ONLY)
+@_reported
+async def history(
+    id: str,
+    limit: int | None = None,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    """List revision snapshots for one memory, newest first.
+
+    Each row has ``source``, ``changed_fields``, ``revised_at`` and a
+    ``snapshot`` of the fields before that edit.
+    """
+    principal = require_principal()
+    session = require_session()
+    return await list_history(
+        session,
+        principal,
+        require_uuid(id, "id"),
+        limit=limit,
+        offset=offset,
+    )
+
+
+@mcp.tool(annotations=_DESTRUCTIVE)
+@_reported
+async def feedback(id: str, signal: Literal["useful", "stale", "wrong"]) -> dict[str, str]:
+    """Record usefulness feedback for one memory (replaces your prior signal)."""
+    principal = require_principal()
+    session = require_session()
+    await memory_feedback.submit_feedback(session, principal, require_uuid(id, "id"), signal)
+    return {"status": "recorded", "signal": signal}
+
+
+@mcp.tool(annotations=_READ_ONLY)
+@_reported
+async def export(
+    space_id: str | None = None,
+    space_scope: SpaceScope | None = None,
+    kind: MemoryKindName | None = None,
+    type: EntryTypeName | None = None,
+    limit: int | None = None,
+    include_expired: bool = False,
+    tags: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Export full memory rows the caller can read (bounded by ``limit``).
+
+    ``limit`` defaults to the server browse default and is capped at the
+    server maximum (normally 100).
+    """
+    principal = require_principal()
+    session = require_session()
+    cap = get_settings().resolve_browse_limit(limit)
+    rows: list[dict[str, Any]] = []
+    async for row in memory_export.export_memories(
+        session,
+        principal,
+        space_id=parse_uuid(space_id, "space_id"),
+        space_scope=space_scope,
+        kind=kind,
+        entry_type=type,
+        include_expired=include_expired,
+        tags=tags,
+    ):
+        rows.append(row)
+        if len(rows) >= cap:
+            break
+    return rows
+
+
+@mcp.tool(annotations=_READ_ONLY)
+@_reported
+async def ingest_suggest(
+    text: str,
+    use_llm: bool = False,
+) -> dict[str, Any]:
+    """Suggest memory candidates from prose without writing to the database."""
+    _ = require_principal()
+    candidates = await memory_ingest.suggest_candidates(text, use_llm=use_llm)
+    return {"candidates": candidates}

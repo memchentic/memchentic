@@ -26,9 +26,9 @@ describe("writableSpaces", () => {
 });
 
 describe("spaceLabel", () => {
-  it("names other users' personal spaces", () => {
+  it("labels every personal space as Personal", () => {
     expect(spaceLabel(me, "p1")).toBe("Personal");
-    expect(spaceLabel(me, "p2")).toBe("Personal (another user)");
+    expect(spaceLabel(me, "p2")).toBe("Personal");
     expect(spaceLabel(me, "g1")).toBe("Platform");
     expect(spaceLabel(me, "missing")).toBe("");
   });

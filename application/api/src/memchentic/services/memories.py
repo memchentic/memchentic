@@ -33,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from memchentic.auth.principal import Principal
 from memchentic.db.session import advisory_xact_lock, commit_with_rls, set_rls_context
 from memchentic.embeddings import get_embedder
-from memchentic.events import memory_event_from_row, publish_memory_event
+from memchentic.events import async_memory_event_from_row, publish_memory_event
 from memchentic.events.memory_bus import Action
 from memchentic.models.entities import EntryType, Memory, MemoryKind
 from memchentic.search.hybrid import (
@@ -153,7 +153,7 @@ async def publish_and_commit(
     Returns:
         The refreshed memory row.
     """
-    await publish_memory_event(session, memory_event_from_row(action, memory))
+    await publish_memory_event(session, await async_memory_event_from_row(session, action, memory))
     await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
     await session.refresh(memory)
     return memory
@@ -440,7 +440,7 @@ async def forget(session: AsyncSession, principal: Principal, memory_id: uuid.UU
     if not memory:
         raise NotFoundError("Memory not found")
     await require_memory_manage(session, principal, memory)
-    event = memory_event_from_row("deleted", memory)
+    event = await async_memory_event_from_row(session, "deleted", memory)
     await session.delete(memory)
     await publish_memory_event(session, event)
     await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
@@ -591,12 +591,14 @@ async def relocate(
         raise NotFoundError("Memory not found")
     await require_memory_manage(session, principal, memory)
     target = await resolve_write_space(session, principal, target_space_id)
-    left = memory_event_from_row("deleted", memory)
+    left = await async_memory_event_from_row(session, "deleted", memory)
     memory.space_id = target.id
     memory.updated_at = datetime.now(UTC)
     memory.updated_by_user_id = principal.user_id
     await publish_memory_event(session, left)
-    await publish_memory_event(session, memory_event_from_row("created", memory))
+    await publish_memory_event(
+        session, await async_memory_event_from_row(session, "created", memory)
+    )
     await commit_with_rls(session, user_id=principal.user_id, is_admin=principal.is_admin)
     await session.refresh(memory)
     return memory

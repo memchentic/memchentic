@@ -2,6 +2,8 @@
 export type MemoryRow = {
   id: string;
   space_id?: string;
+  space_name?: string | null;
+  space_kind?: string | null;
   kind: string;
   type: string | null;
   title: string;

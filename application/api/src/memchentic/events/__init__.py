@@ -2,6 +2,7 @@
 
 from memchentic.events.memory_bus import (
     STREAM_CLOSED,
+    async_memory_event_from_row,
     close_memory_streams,
     memory_event_from_row,
     memory_listener_state,
@@ -13,6 +14,7 @@ from memchentic.events.memory_bus import (
 
 __all__ = [
     "STREAM_CLOSED",
+    "async_memory_event_from_row",
     "close_memory_streams",
     "memory_event_from_row",
     "memory_listener_state",

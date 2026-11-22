@@ -49,12 +49,15 @@ def test_create_memory_fans_out_local_subscribers(
         json={"title": title, "body": "appears on the wire", "type": "note", "force": True},
     )
     assert create.status_code == 200
-    found = memory_events_tap.wait_for(create.json()["id"])
+    body = create.json()
+    found = memory_events_tap.wait_for(body["id"])
     assert found is not None
     assert found["action"] == "created"
     assert found["title"] == title
     assert found.get("created_at")
-    assert found.get("created_by") == create.json()["created_by"]
+    assert found.get("created_by") == body["created_by"]
+    assert found.get("space_kind") == "personal"
+    assert found.get("space_name") == body.get("space_name")
 
 
 def test_personal_memory_event_space_not_readable_by_peer(

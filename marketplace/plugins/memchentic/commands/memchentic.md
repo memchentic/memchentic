@@ -6,8 +6,8 @@ description: >-
 
 # /memchentic
 
-1. If memchentic is not connected/ready, say so and stop — no invented tool
-   calls.
+1. If no memchentic server is configured, or a call fails, say so and stop —
+   no invented tool calls.
 2. Otherwise load `memchentic` (index), then:
    - Need context → follow `memchentic-recall` (`guide_find` + `find`;
      `about_path` when editing a tree; `open` decisive digests)

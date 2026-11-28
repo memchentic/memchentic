@@ -10,7 +10,9 @@ description: >-
 
 ## Gate
 
-Not connected/ready → skip saves; finish the primary task.
+memchentic server configured → assume it is available, even when its tools
+load lazily. No server configured, or a call fails → skip saves for this turn
+only; finish the primary task.
 
 ## When to save
 

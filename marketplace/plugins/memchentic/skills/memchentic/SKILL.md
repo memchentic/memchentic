@@ -1,7 +1,7 @@
 ---
 name: memchentic
 description: >-
-  Gated memchentic MCP index: skip when disconnected; otherwise recall early
+  memchentic MCP index: skip only when no server is configured; recall early
   and often, capture verified durable insights into entries and guides, and
   respect personal+group spaces. Load when unsure which memchentic playbook
   to use. Deeper playbooks: memchentic-recall, memchentic-capture,
@@ -12,10 +12,11 @@ description: >-
 
 ## Gate
 
-If memchentic is **not** connected/ready → **no memchentic tools**; continue
-the task. Do not invent calls.
+When a memchentic server is configured, assume it is available, even when
+its tools load lazily. No server configured, or a call fails → skip
+memchentic for this turn only; continue the task. Do not invent calls.
 
-When connected, prefer the smallest tool set:
+Prefer the smallest tool set:
 
 | Need | Load |
 | --- | --- |

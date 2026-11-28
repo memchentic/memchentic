@@ -1,8 +1,8 @@
 ---
 description: >-
-  Gated memchentic capture: remember entries and guide_write after verified
-  insights. Skip entirely when the memchentic MCP is not connected. Never
-  store secrets.
+  memchentic capture: remember entries and guide_write after verified
+  insights. Skip only when no memchentic MCP server is configured or its
+  calls fail. Never store secrets.
 alwaysApply: true
 ---
 
@@ -10,8 +10,8 @@ alwaysApply: true
 
 ## Gate
 
-If memchentic is **not** connected/ready, **skip this entire rule** — no
-memchentic writes. Complete the task normally.
+Same Gate and Precedence as `memchentic-recall`. After a failed save, save
+the insight on the next turn.
 
 ## Default (when connected) — lean aggressive
 
@@ -91,6 +91,5 @@ policy. A `find` / `guide_find` hit or an `open` renews a live memory.
 
 ## More detail
 
-Type meanings and the type pick map, every write parameter (`path_hint`,
-`repo_hint`, `tags`, `expires_at`), the lifetime table, admin-key notes and
-`overlap_report` hygiene → skill `memchentic-capture`.
+Type pick map, write parameters (`path_hint`, `repo_hint`, `tags`,
+`expires_at`), lifetimes and `overlap_report` → skill `memchentic-capture`.

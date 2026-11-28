@@ -173,9 +173,10 @@ def check_hooks(files: Files) -> list[str]:
             continue
         data = parse(files, path, errors)
         events = sorted(data.get("hooks", {}))
-        if sorted(data) != ["hooks"] or events != ["SessionStart"]:
+        if sorted(data) != ["hooks"] or events != ["SessionStart", "UserPromptSubmit"]:
             errors.append(
-                f"{path}: expected only hooks.SessionStart, got keys {sorted(data)} events {events}"
+                f"{path}: expected hooks.SessionStart and hooks.UserPromptSubmit, "
+                f"got keys {sorted(data)} events {events}"
             )
     copilot = parse(files, COPILOT_HOOKS, errors)
     if copilot.get("version") != 1 or sorted(copilot.get("hooks", {})) != ["sessionStart"]:
@@ -282,7 +283,11 @@ def check_script(files: Files) -> list[str]:
             f"{HOOK_SCRIPT}: CONTEXT must be one single-quoted string without apostrophes"
         )
     env = {k: v for k, v in os.environ.items() if k != "COPILOT_CLI"}
-    for args, key in (([], "hookSpecificOutput"), (["copilot"], "additionalContext")):
+    for args, key in (
+        ([], "hookSpecificOutput"),
+        (["prompt"], "hookSpecificOutput"),
+        (["copilot"], "additionalContext"),
+    ):
         run = subprocess.run(
             ["bash", "-s", "--", *args],
             input=text,

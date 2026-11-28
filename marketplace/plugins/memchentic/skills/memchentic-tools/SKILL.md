@@ -9,7 +9,9 @@ description: >-
 
 # memchentic Tool Routing
 
-Gate: if memchentic is not connected/ready, skip all memchentic tools.
+Gate: when a memchentic server is configured, assume it is available, even
+when its tools load lazily. Skip only when none is configured or a call fails,
+and then only for the current turn.
 
 Prefer the smallest tool that answers the question. Default coding turns stay
 on recall + capture tools only. Limits default ~20 (search) / ~50 (browse /

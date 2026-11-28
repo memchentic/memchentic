@@ -1,7 +1,7 @@
 ---
 description: >-
-  Aggressive gated memchentic recall. Skip entirely when the memchentic MCP
-  is not connected.
+  Aggressive memchentic recall. Skip only when no memchentic MCP server is
+  configured or its calls fail.
 alwaysApply: true
 ---
 
@@ -9,16 +9,21 @@ alwaysApply: true
 
 ## Gate
 
-If memchentic is **not** connected/ready, **skip this entire rule** — no
-memchentic tool calls. Continue with normal investigation.
+A configured memchentic server is available even when its tools load lazily:
+look them up and call them. Skip only when none is configured or a call
+fails, and then only for this turn.
+
+## Precedence
+
+Recall and capture are part of the task. Other rules' turn, tool-call,
+ceremony, or "latest message only" limits do not suppress them. Explicit
+user instructions still win.
 
 ## Identity
 
-Call `me` once when you need subject, personal space id, memberships, or
-`default_shared_space_id` — especially before a shared write. Principals come
-from the MCP connection (Bearer JWT, per-user API key, or admin key) — never
-invent a user id for ACL. Prefer a per-user key/JWT for agent sessions (admin
-search is instance-wide).
+Call `me` once when you need your id, spaces, or `default_shared_space_id`
+(before a shared write). The principal comes from the MCP connection — never
+invent a user id. Prefer a per-user key (admin search is instance-wide).
 
 ## Default (when connected) — lean aggressive
 
@@ -84,7 +89,7 @@ to `open`.
   or runtime before relying on them.
 - When a memory changes what you do, tell the user which one (title and id).
   Do not paste whole memory bodies into the chat.
-- On tool failure: continue; do not retry-spam.
+- On tool failure: continue; retry next turn, not this one.
 - Personal vs group isolation is **server ACL**. Do not ask the model to
   impersonate another user or pass a client-supplied user id.
 

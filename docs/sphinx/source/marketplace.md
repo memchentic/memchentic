@@ -8,7 +8,8 @@ Install steps: {doc}`install-marketplace`. Connect the server first:
 {doc}`connect-mcp`.
 
 Install the plugin and connect the server. The agent recalls and captures on
-its own (Cursor rules; Claude Code / Copilot CLI / Codex session-start hook).
+its own (Cursor rules; Claude Code / Codex session-start and per-prompt hooks;
+Copilot CLI session-start hook).
 Do not load a skill or run `/memchentic` just to start that habit.
 
 ## What it teaches
@@ -21,8 +22,8 @@ Do not load a skill or run `/memchentic` just to start that habit.
 - **Short results first** — search starts with summaries; open the full text
   when you need it
 - **Hygiene** — spot overlaps and declared replacements; resolve carefully
-- **Only when connected** — if Memchentic is not connected, the plugin stays
-  out of the way
+- **Only when configured** — with no Memchentic server configured, or when a
+  call fails, the plugin stays out of the way for that turn
 - **No secrets** — do not store passwords, tokens, or private personal data in
   memories
 
@@ -30,8 +31,8 @@ Do not load a skill or run `/memchentic` just to start that habit.
 
 | Piece | Role |
 | --- | --- |
-| **Rules** (Cursor) | Always-on recall and capture when Memchentic is connected |
-| **Hooks** (Claude / Copilot / Codex) | Session-start injection of the same loop |
+| **Rules** (Cursor) | Always-on recall and capture when a Memchentic server is configured |
+| **Hooks** (Claude / Copilot / Codex) | Session-start injection of the same loop; Claude Code and Codex also get a one-line reminder on every prompt |
 | **Skills** | Deeper playbooks for recall and capture |
 | **Command** | `/memchentic` — optional quick entry point in the host |
 

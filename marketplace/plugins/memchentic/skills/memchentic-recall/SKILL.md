@@ -11,7 +11,9 @@ description: >-
 
 ## Gate
 
-Not connected/ready → skip all memchentic tools; investigate normally.
+memchentic server configured → assume it is available, even when its tools
+load lazily. No server configured, or a call fails → skip memchentic for this
+turn only; investigate normally.
 
 ## Identity
 
@@ -72,7 +74,8 @@ On `find`, pass `type`, `tags` (AND), `path_hint`, `repo_hint`, `space_id`, or
 4. Digests are leads — verify in-repo before acting.
 5. When a memory changes what you do, tell the user which one (title and
    id). Do not paste whole memory bodies into the chat.
-6. On tool failure: continue; do not retry-spam.
+6. On tool failure: continue; do not retry in the same turn; try again next
+   turn.
 7. Isolation is server ACL from the connection principal — never invent a
    user id.
 
